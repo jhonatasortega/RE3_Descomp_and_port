@@ -1,0 +1,75 @@
+# === CONTEÚDO PROTEGIDO POR COPYRIGHT — NUNCA versionar/distribuir ===
+rom/
+extracted/
+assets/
+godot/assets/
+godot/assets_hd/
+godot/data/
+port/assets/
+port/data/
+v2/reconstruction/
+v2/assets/
+*.bin
+*.iso
+*.cue
+*.img
+*.mdf
+*.mds
+
+# === Ferramentas (binários grandes baixados) ===
+tools/bin/
+tools/jpsxdec/
+tools/vgmstream/
+tools/fluidsynth/
+tools/ffmpeg/
+tools/video_src/
+tools/*.jar
+tools/*.zip
+tools/re3.idx
+tools/*.exe
+
+# === Godot ===
+godot/.godot/
+godot/.import/
+godot/export_presets.cfg
+port/.godot/
+port/.import/
+port/export_presets.cfg
+*.translation
+
+# === Python ===
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# === Sistema ===
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# logs de ferramentas (jPSXdec etc.)
+*.log
+
+# === Saídas de diagnóstico do port (renders/screenshots de validação) ===
+port/_shot*.png
+port/_ui_*.png
+port/_diag_*.png
+port/*.png
+
+# === Dependências de terceiros (reinstaláveis: npm i) ===
+v2/editor/node_modules/
+v2/editor/package-lock.json
+v2/editor/playwright-report/
+v2/editor/test-results/
+
+# === Renders/screenshots: contêm PIXELS DO JOGO (copyright) ===
+docs/**/*.png
+docs/**/*.jpg
+docs/**/*.webp
+godot/anim_shots/
+godot/dev/*.png
+port/dev/*.png
+
+# Config local do Claude Code
+.claude/settings.local.json

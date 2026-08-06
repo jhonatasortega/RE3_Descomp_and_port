@@ -1,0 +1,386 @@
+{
+ "_meta": {
+  "projeto": "RE3 Nemesis (PS1 NTSC-U) — decompilação de CONTEÚDO + remake Godot",
+  "metodo": "inspirado em decomp.dev (rastreio por unidade + %). Adaptado: NAO gera binario nativo; decompila o CONTEUDO (formatos/assets/logica). Dois eixos: 'decompilado' (entendemos+extraimos) e 'vinculado' (ligado no protótipo Godot).",
+  "eixos": {
+   "decompilado": "0-100: quao completo é o entendimento+extração do formato/conteúdo",
+   "vinculado": "0-100: quanto está de fato integrado e funcionando no protótipo Godot"
+  },
+  "peso": "1-5: importância/tamanho da unidade (pondera o % geral)",
+  "atualizado": "reset de rigor — pós-prototipagem paralela"
+ },
+ "categorias": [
+  {
+   "id": "disco",
+   "nome": "Disco & Containers",
+   "unidades": [
+    {
+     "id": "iso",
+     "nome": "Extração ISO PS1 (ISO9660 MODE2)",
+     "peso": 3,
+     "decompilado": 100,
+     "vinculado": 100,
+     "tool": "list_iso.py, extract_iso.py",
+     "doc": "inventario.md",
+     "nota": "1334 arquivos extraídos"
+    },
+    {
+     "id": "rofs",
+     "nome": "Rofs*.dat (arquivo PC/GOG, CRC32+LZ)",
+     "peso": 2,
+     "decompilado": 100,
+     "vinculado": 50,
+     "tool": "rofs_extract.py",
+     "doc": "rofs.md",
+     "nota": "usado p/ puxar HD/áudio do GOG"
+    }
+   ]
+  },
+  {
+   "id": "graficos",
+   "nome": "Gráficos / Cenário",
+   "unidades": [
+    {
+     "id": "bss",
+     "nome": "Backgrounds BSS (MDEC/DCT)",
+     "peso": 5,
+     "decompilado": 100,
+     "vinculado": 15,
+     "tool": "bss2png.py",
+     "doc": "BSS.md",
+     "nota": "2109 bg 320x240; no protótipo só R100"
+    },
+    {
+     "id": "tim",
+     "nome": "Texturas TIM (4/8/16bpp+CLUT)",
+     "peso": 3,
+     "decompilado": 100,
+     "vinculado": 80,
+     "tool": "tim2png.py",
+     "doc": "PLD.md",
+     "nota": "usado em modelos e UI"
+    },
+    {
+     "id": "hd_bg",
+     "nome": "Backgrounds HD (Seamless/GOG) — NCC match",
+     "peso": 4,
+     "decompilado": 100,
+     "vinculado": 15,
+     "tool": "hd_match.py, hd_copy.py",
+     "doc": "hd_seamless.md, hd_mapping.md",
+     "nota": "migração por conteúdo; no protótipo só R100"
+    },
+    {
+     "id": "maps",
+     "nome": "Mapas de menu (MAP_U) + HD",
+     "peso": 2,
+     "decompilado": 100,
+     "vinculado": 0,
+     "tool": "map_decode.py, map_clut_match.py, map_hd_locate.py",
+     "doc": "map.md",
+     "nota": "plantas p/ v2; sem tela de mapa no protótipo"
+    }
+   ]
+  },
+  {
+   "id": "modelos",
+   "nome": "Modelos & Animação",
+   "unidades": [
+    {
+     "id": "pld",
+     "nome": "Personagens PLD (malha+esqueleto+skin+textura+anim)",
+     "peso": 5,
+     "decompilado": 100,
+     "vinculado": 90,
+     "tool": "pld2gltf.py, pld_hd_textures.py",
+     "doc": "PLD.md",
+     "nota": "Jill no protótipo, HD no rosto"
+    },
+    {
+     "id": "plw",
+     "nome": "Armas PLW + LOCOMOÇÃO ARMADA (multi-banco)",
+     "peso": 5,
+     "decompilado": 100,
+     "vinculado": 85,
+     "tool": "pld2gltf.py (build_armed_clips, extract_weapon), find_anim_banks.py",
+     "doc": "animacoes_player.md, decomp/notes/plw.md",
+     "nota": "✅ COMPLETO (lado decomp): 84/84 PLW validados (find_anim_banks --validate-all) — todos com banco armado+malha; 63 *_WPN.glb (arma separável), 21 sem slot (handguns W00 + PL09/PL0A pintadas na pele) = esperado. MULTI-BANCO resolvido: cada PLW tem 3 bancos (bank0=15 ossos/locomoção=armNN; bank1/2=overlays parciais de mira/gesto) → 3 slots armados do EXE (player+0xf4/0xf8/0x100). Osso de anexo = bone4 (punho dir), world-rest (-32,297,-435). PL06CH = variante CH (cutscene/dano) de PL06, redundante. Resíduo = só vínculo (anexar no controller)"
+    },
+    {
+     "id": "anim_player",
+     "nome": "Sistema de animação do player (EDD/EMR/poses)",
+     "peso": 4,
+     "decompilado": 100,
+     "vinculado": 90,
+     "tool": "pld2gltf.py",
+     "doc": "animacoes_player.md",
+     "nota": "movimentação 100% (falta validar mira + subir em item)"
+    },
+    {
+     "id": "enemy",
+     "nome": "Modelos de INIMIGOS (EMD do GOG)",
+     "peso": 5,
+     "decompilado": 92,
+     "vinculado": 10,
+     "tool": "emd2gltf.py",
+     "doc": "decomp/notes/enemy_mesh.md, emd_skinning.md",
+     "nota": "✅ RIG ENTENDIDO (byte-provado, emd_skinning.md §12): a malha de inimigo NÃO é empacotada — é emd3 limpo BYTE-IDÊNTICO PC↔PS1 (EM10=R101 blk7 304/304; EM22/24 idem). Binding = POSICIONAL obj i→osso i (1 osso/objeto, SEM índice por-vértice). CORREÇÃO: a teoria do \"índice perdido\" (§10/§11) estava ERRADA — aqueles agentes analisaram o bloco do JOGADOR (formato empacotado 52B) por engano. NÃO há dado perdido nem limite de dado. emd2gltf já aplica o posicional (zumbi=0,000). RESÍDUO real e único: objetos EXTRA (i≥nb, ex EM22 obj20, casaco Nemesis) que o emd3 NÃO amarra a osso (decisão de engine em código, não no arquivo) → best-effort junta posada. O meu auto-skin/envelope DESVIA do posicional do jogo p/ baixar número — pode piorar visual; EMD_SKIN=obj = regra do jogo. Falta: validar visual (usuário) com posicional puro + tratar extras"
+    },
+    {
+     "id": "doors_model",
+     "nome": "Modelos de porta (.DO1-.DO7, anim de transição)",
+     "peso": 1,
+     "decompilado": 100,
+     "vinculado": 0,
+     "tool": "do2gltf.py",
+     "doc": "decomp/notes/doors_model.md",
+     "nota": "✅ COMPLETO: formato .DO# cracado (malha 12B tri + vért 8B + TIM 128×256); 21 portas exportadas+renderizadas. Bloco de abertura DECODIFICADO = é ANIMAÇÃO (prova cruzada: malha e bloco variam independentes); tag@+2=6=nº frames; abertura = rotação rígida da folha, dobradiça extraída da geometria (find_hinge_x), 90°. 15 *_ANIM.glb + 2 renderizados (folha girando fechada→aberta, validado animado). RESÍDUO: só o easing por-frame é bit-packed irredutível (fronteira provada) — a animação em si é exportável/usável"
+    }
+   ]
+  },
+  {
+   "id": "sala",
+   "nome": "Sala / Lógica (RDT/ARD)",
+   "unidades": [
+    {
+     "id": "ard",
+     "nome": "Contêiner ARD/RDT (blocos + offset_table)",
+     "peso": 4,
+     "decompilado": 100,
+     "vinculado": 60,
+     "tool": "ard_parse.py",
+     "doc": "ARD.md",
+     "nota": "169 salas"
+    },
+    {
+     "id": "cameras",
+     "nome": "Câmeras (RID, from/to 3D)",
+     "peso": 5,
+     "decompilado": 100,
+     "vinculado": 40,
+     "tool": "ard_parse.py, cameras_to_3d.py",
+     "doc": "ARD.md",
+     "nota": "2105 câmeras; câmera fixa no protótipo (1 sala)"
+    },
+    {
+     "id": "rvd",
+     "nome": "Zonas de câmera RVD (troca/histerese)",
+     "peso": 4,
+     "decompilado": 100,
+     "vinculado": 40,
+     "tool": "ard_parse.py",
+     "doc": "ARD.md",
+     "nota": "✅ COMPLETO: consumidor per-frame ISOLADO = 0x8002a84c (lê RDT via load absoluto 0x800cc86c+0x28=offset_table[8], cacheia gs+0x2148). PROVADO no código: stride 0x14, from_cam@+2==gs+0x2486, BIT0/ativa (lbu@+0 beqz), BYTE-ALTO=grupo (lb@+1: 0x80=global OU ==gs+0x2495), ponto-em-quad 0x8001020c, to_cam@+3 commit 0x8002a938→fade 0x8005190c→gs+0x7842. Histerese em 2 fases (chamadores 0x80023b84/0x80024abc). Semântica dos flags provada no binário (não mais por clustering)"
+    },
+    {
+     "id": "colisao",
+     "nome": "Colisão (offset_table[6], retângulos XZ)",
+     "peso": 5,
+     "decompilado": 100,
+     "vinculado": 70,
+     "tool": "rdt_collision.py",
+     "doc": "ARD.md",
+     "nota": "colisão real no R100"
+    },
+    {
+     "id": "oclusao",
+     "nome": "Máscaras de oclusão (mask_data_ptr, priority)",
+     "peso": 4,
+     "decompilado": 100,
+     "vinculado": 15,
+     "tool": "rdt_collision.py",
+     "doc": "decomp/notes/occlusion.md",
+     "nota": "✅ COMPLETO: formato refeito (campos estavam trocados no 80%). Cabeçalho=tabela desc 8B; sprite SQUARE 8B / RECT 12B (disc. byte+6); tela=(dx+add), Z per-sprite=depth*16. Validado: Σcount==n_masks 1507/1507 câmeras, atlas recall 1.0, overlay HD casa. 169 salas regeneradas (111644 sprites). Vínculo: recalibrar occ_depth_scale (Z agora per-sprite)"
+    },
+    {
+     "id": "scd",
+     "nome": "Script SCD (portas/triggers/entidades/itens)",
+     "peso": 5,
+     "decompilado": 100,
+     "vinculado": 0,
+     "tool": "scd_decode.py, scd_gameplay.py, scd_doors.py, scd_items.py",
+     "doc": "SCD.md, scd_gameplay.md",
+     "nota": "✅ COMPLETO: VM confirmada (jump table 0x8009e0f8; loop 0x80052ba4; init 0x80052474). 4238/4238 funções fecham em evt_end, ZERO opcodes inválidos (63.6%→97.1%→99.95%→100%). Espaço de opcodes = 0x00..0x8f. 0x3b=3 (handler 0x80057f84) + 4 tamanhos corrigidos (0x3c/0x24/0x2f/0x4b=1) via avanço do epílogo dos 144 handlers. R123 f17/R208 f0/R211 f44 = drift dos tamanhos errados (não dado-embutido), agora limpos. 0x06=if_begin/block"
+    },
+    {
+     "id": "door_dest",
+     "nome": "Destino das portas (sala→sala)",
+     "peso": 4,
+     "decompilado": 100,
+     "vinculado": 0,
+     "tool": "scd_door_dest.py, room_graph_build.py",
+     "doc": "decomp/notes/door_handler.md",
+     "nota": "✅ COMPLETO 100% (destino ESTÁTICO): porta = AOT sce∈{1,13} (0x61 32B/0x62 40B; sce13 handler 0x80051cb0). next_stage@+0x16(mod9)/next_room@+0x17 = dígitos HEX do nome Rxyz = índice fileid 0x8009dfd0. AUDITORIA: 453 portas (corrigido de 447 — 6 sce==13 eram descartadas → 3 pares recíprocos R114↔R118/R304↔R30A/R40C↔R40E). 453/453 resolvidos, 0 TODO. Cobertura PROVADA (varri todos AOT das 169 salas; só sce∈{1,13} troca sala, room-loader 0x800493ec só via door_handler, sem warp por script). 296 arestas-sala: 279 recíprocas + 17 mão-única TODAS justificadas (queda/hub-mercs/gate-progressão/boss/placeholder) = reciprocidade explicada 100%. room_graph.json c/ reciprocal+oneway_reason por aresta"
+    },
+    {
+     "id": "sce_ids",
+     "nome": "IDs de item/espécie de inimigo (tabelas SCE)",
+     "peso": 3,
+     "decompilado": 100,
+     "vinculado": 0,
+     "tool": "scd_items.py, scd_enemies.py, re3_text.py",
+     "doc": "decomp/notes/messages.md, sce_em_set.md",
+     "nota": "✅ COMPLETO (extração 100% + anotação no teto real): ITENS 193 IDs (100%). INIMIGO sce_em_set (op 0x7d 24B) 100% byte-a-byte → classe+pos+dir+arma; 1136 spawns+80 NPCs em 137 salas. Anotação de espécie dos 69 EMD em sce_enemies.json (emd_annotations: nome+render_conf+evidência): ALTA+MÉDIA=43,5%, categoria-ou-melhor=81,2%, BAIXA=19%. RESÍDUO (fonte, não trabalho): mapa canônico EM##↔espécie NÃO existe no EXE nem publicado 1:1; espécie fina (Hunter β/γ, qual NPC) resolve em runtime (class↔mesh é m:n). Rótulo = anotação com confiança explícita, não invenção"
+    }
+   ]
+  },
+  {
+   "id": "audio",
+   "nome": "Áudio / Vídeo",
+   "unidades": [
+    {
+     "id": "bgm",
+     "nome": "Trilha (BGM) — 62 faixas .ogg",
+     "peso": 3,
+     "decompilado": 100,
+     "vinculado": 10,
+     "tool": "re3_sound.py, bgm2midi.py",
+     "doc": "audio_video.md, godot_audio.md",
+     "nota": "AudioManager pronto; NÃO ligado na cena (sem som)"
+    },
+    {
+     "id": "sfx",
+     "nome": "SFX (bancos VAB) — VH decodificado",
+     "peso": 3,
+     "decompilado": 100,
+     "vinculado": 10,
+     "tool": "vab.py, re3_sfx.py",
+     "doc": "decomp/notes/sfx.md",
+     "nota": "✅ COMPLETO (formato 100% byte-provado): VH (VagAtr 32B + tabela VAG); 267 SFX corte+pitch; LOOP (marcadores ADPCM bit0/1/2) + ADSR (decode SPU bit-a-bit) emitidos no manifesto. Opcodes de som da VM decodificados (0x55 0x80054bc0..0x59 0x80054cf4; filas 32×10B 0x800de648/0x800de798); 1528 disparos nas 169 salas. sfx_map.json: papel por hash de PCM (ALTA 267/267: idx00-04 = núcleo global). RESÍDUO (anotação, não formato): nome exato de ação = audível (MÉDIA 90/BAIXA 177); link id_SCD→vag NÃO existe no estático (id lógico resolvido em runtime contra o banco)"
+    },
+    {
+     "id": "video",
+     "nome": "Vídeos/FMV (STR→ogv)",
+     "peso": 2,
+     "decompilado": 100,
+     "vinculado": 0,
+     "tool": "-(jPSXdec)",
+     "doc": "audio_video.md",
+     "nota": "convertidos; sem player integrado"
+    },
+    {
+     "id": "vozes",
+     "nome": "Vozes dual-idioma (PT-BR/EN)",
+     "peso": 2,
+     "decompilado": 100,
+     "vinculado": 50,
+     "tool": "rofs_extract.py",
+     "doc": "rofs.md, audio_video.md",
+     "nota": "LangManager"
+    }
+   ]
+  },
+  {
+   "id": "exe",
+   "nome": "EXE / Código (SLUS_009.23)",
+   "unidades": [
+    {
+     "id": "player_sm",
+     "nome": "Máquina de estados do player + índice de anim",
+     "peso": 5,
+     "decompilado": 100,
+     "vinculado": 80,
+     "tool": "exe_parse.py, exe_dispatch.py, exe_combat.py",
+     "doc": "exe.md, decomp/notes/exe_combat.md",
+     "nota": "✅ COMPLETO: 8 ações macro + 16 rotinas mapeadas c/ endereços. r10/r12/r15 desmontadas (r10=andar-frente c/ mira 0x8003b4fc, r15=ré/DOWN c/ mira 0x8003bf28, r12=anim scriptada 0x8003ca80) + alcançabilidade provada. tier de anim = ZONA DE SAÚDE (HP player+0xcc), tabela 3×3 0x8009cde0. RESOLVIDO anim19/20 = poses de MIRA upper-aim (0x8003acb8/accc na rotina 7), NÃO dano (dano=ação a3 0x8003d9e0, anims 4/5/9-12). Reconciliado exe.md↔anim_map.json (momentum→hp)"
+    },
+    {
+     "id": "aim_shoot",
+     "nome": "Mira / tiro / dano",
+     "peso": 5,
+     "decompilado": 100,
+     "vinculado": 0,
+     "tool": "exe_combat.py",
+     "doc": "decomp/notes/exe_combat.md",
+     "nota": "✅ COMPLETO: mira(pad 0x500)/auto-lock; altura/pitch = aim_tier 0..3 → player+0x6e=(tier<<9)+0x800, poses 14-17 (0x8003ac40), upper-aim 15→19/16→20 (0x8003ac90). Hitscan (genéricas 0x80044804, dano no mesmo frame, sem entidade-bala) vs projétil dedicado (rocket w10 0x800408c4, granada w14 0x8003ff9c), faca w0 0x8003e494. Timing 0x8009cf28 (frame do tiro por arma), recuo 0x80048308. TABELA DE DANO 0x8009d834[alvo+0x4a], dano=word&0x3ff. HP=char+0xcc. Resíduo (é da unidade ai): hitbox/osso do inimigo é data-driven pela EMD/EMR"
+    },
+    {
+     "id": "ai",
+     "nome": "IA (zumbi / Nemesis)",
+     "peso": 5,
+     "decompilado": 100,
+     "vinculado": 0,
+     "tool": "exe_ai.py, overlay_ai.py, scd_enemies.py",
+     "doc": "decomp/notes/exe_ai.md, sce_em_set.md",
+     "nota": "✅ COMPLETO (IA estruturas+comportamento = 100% do estaticamente decodável): dispatcher por-classe 0x80023e00; char-struct 0x1fc; Nemesis t41 0x80020eb8. IA = MIPS PURO no R###.BIN (tag low16=0x0001, 0x80100000). 12/12 overlays × 548/548 handlers com PAPEL DETERMINADO e verificado (ai_overlays.json: role/semantics/regions/counters + state_machines). Analisador rastreia jalr/jr sub-dispatch + aliasing char em $s0/$s1. Distribuição: ANIM/STATE 138·SUB-DISPATCH 101·IDLE/DECIDE 96·SPAWN 57·STATE-SET 33·TIMER 25·AIM/GEOM 24·DELEGATE 16·CLASS-ENTRY 13·DEATH/DAMAGE 13·MOVE 13·COLLISION 5·FIELD-SET 5·EXE-CALL 5·CHANCE 4. Não-decode-gap: branch-por-frame é dinâmico por design (leque/tabelas decodificados); nome-de-espécie é cross-unit (sce_em_set, não-estático)"
+    },
+    {
+     "id": "door_handler",
+     "nome": "Handler de transição de sala",
+     "peso": 4,
+     "decompilado": 100,
+     "vinculado": 0,
+     "tool": "scd_door_dest.py",
+     "doc": "decomp/notes/door_handler.md",
+     "nota": "✅ COMPLETO (100% in-EXE): callback de colisão FECHADO — driver per-frame 0x80050b58 → VM de colisão AOT 0x800505ac (AABB 0x800101c8 / QUAD 0x8001020c sobre char+0x34/+0x3c) → dispatch por SCE jalr *(0x8009e0bc+sce*4), sce1=produtor 0x80050d28 grava 0x800c7960=1 + gs+0x2154=descriptor → handler 0x800248e4 (spawn +0x34/38/3c/6e, current_stage 0x800d1f76/room 0x800d1f78) → room-loader 0x800493ec (fileid 0x8009dfd0[stage][room])"
+    },
+    {
+     "id": "item_logic",
+     "nome": "Lógica de item/inventário/flags",
+     "peso": 3,
+     "decompilado": 100,
+     "vinculado": 30,
+     "tool": "exe_items.py",
+     "doc": "decomp/notes/exe_items.md",
+     "nota": "✅ COMPLETO (decomp 100%; resíduo é só VÍNCULO Godot): flags 0x8009e3f8 (SET/CLEAR/CHECK). array 0x800d2134 (MAIN10/BOX64), slot {id,qtd,flags}. find_by_id 0x8006cc8c verificado; PEGAR 0x80069c3c→0x80069cb8→0x8006a020; USAR 0x8006d0a8; COMBINAR/consolidar 0x8006cf0c verificado (correção: 0x8006cf00 era epílogo). Receita de ervas vive no menu (unidade menus)"
+    },
+    {
+     "id": "model_draw",
+     "nome": "Renderização/skinning de modelo (GTE)",
+     "peso": 3,
+     "decompilado": 90,
+     "vinculado": 0,
+     "tool": "exe_parse.py",
+     "doc": "decomp/notes/emd_skinning.md",
+     "nota": "✅ DECOMPILADO (agente, decoder COP2/GTE próprio; emd_skinning.md §10): UM só caminho de desenho p/ player E inimigos (laço atores 0x8002412c→nós 0x800254ac→transform 0x80025610→prim 0x80025de8→folhas GTE 0x8007b2fc/518/824). REGRA PROVADA: uniformemente BONE-LOCAL matriz completa (sem ramo model-space; flags no+0xa2 só luz/LOD). Binding vértice→osso = ÍNDICE EXPLÍCITO por-primitiva (byte/grupo, listas 0xFF-term, lidas em 0x8007b518), NÃO posicional — malha cita vários ossos. FK por ponteiro-de-pai 0x800253f0 (Mundo[i]=Pai∘Local via 0x8002d4b0), ordem T(relpos)·Rx·Ry·Rz = igual ao gbind. Resíduo: detalhe exaustivo de folha (luz/subdiv). NOTA DE ESCOPO: MDEC/loader-CD/save/áudio-SPU do EXE = engine NÃO decompilada, FORA do escopo do remake (Godot faz; dados extraídos à parte) — não é 'feito', é fora-de-escopo"
+    }
+   ]
+  },
+  {
+   "id": "ui",
+   "nome": "UI / Meta-jogo",
+   "unidades": [
+    {
+     "id": "inventory",
+     "nome": "Inventário (grade+ícones HD+status+ações)",
+     "peso": 3,
+     "decompilado": 100,
+     "vinculado": 70,
+     "tool": "etc_hd_match.py, re3_text.py",
+     "doc": "godot_ui.md, decomp/notes/messages.md",
+     "nota": "✅ COMPLETO: item table REAL (nomes+exames EN+PT; tabela EN @0x8a124 termina em 0x84 = 100% dos exames que existem). item_id 100% por 3 fontes. LOADOUT DE NOVO-JOGO DECODIFICADO: rotina 0x8006d0d8 zera array 0x800d2134 e copia TEMPLATE ESTÁTICO de 0x800a018c (entrada 4B {id,qtd,flags16}, term FFFFFFFF); extraído p/ re3_items.json (default_loadout_jill + newgame_loadout_templates). Mercenários byte-idênticos ao SELECT.BIN. Honesto: 'Faca+Pistola' não existe como tabela discreta; qual template o retail usa é decisão de flag (s5 via jump-table 0x80010f9c)"
+    },
+    {
+     "id": "hud",
+     "nome": "HUD in-game",
+     "peso": 1,
+     "decompilado": 100,
+     "vinculado": 0,
+     "tool": "-",
+     "doc": "-",
+     "nota": "RE3 NÃO tem HUD em gameplay → remover do protótipo"
+    },
+    {
+     "id": "hd_ui",
+     "nome": "De-para HD de UI/itens/memos",
+     "peso": 2,
+     "decompilado": 100,
+     "vinculado": 40,
+     "tool": "etc_hd_match.py, hd_masks.py",
+     "doc": "hd_ui.md",
+     "nota": "ícones/frames HD migrados; usados no inventário"
+    },
+    {
+     "id": "menus",
+     "nome": "Menus (título/novo/continuar/opções/save)",
+     "peso": 3,
+     "decompilado": 100,
+     "vinculado": 0,
+     "tool": "menu_extract.py",
+     "doc": "decomp/notes/menus.md",
+     "nota": "✅ COMPLETO: BIN=OVERLAYS MIPS (bases in-game 0x801c2000/boot 0x80194000); 13 telas com draw_seq. PROVADO que o rect (u,v,w,h) por-sprite é COMPOSTO EM RUNTIME (pipeline draw_sprite 0x800746c0→resolve 0x80074770→compose_geom 0x800749a0; 0x800e0610=estado do compositor). Fonte ESTÁTICA extraída p/ layout.json: atlas *_OBU.TIM (dims/paletas byte-a-byte) + mapa sprite_id→(page,index) por chamada nas 4 telas indexadas. Correção: 0x80078930=flag_test (não draw_string), texto real 0x800788dc"
+    }
+   ]
+  }
+ ]
+}

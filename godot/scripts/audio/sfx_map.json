@@ -1,0 +1,16 @@
+{
+  "_meta": {
+    "descricao": "Mapa nome_logico->arquivo de SFX. Caminhos relativos a res://assets/SOUND/SFX/ (sem extensao; o AudioManager tenta .wav). Amostras extraidas do VAB real (bancos C_/A_) por tools/re3_sfx.py.",
+    "TODO": "Os alvos abaixo sao PROVISORIOS (escolhidos por heuristica de duracao, sem validacao audivel). C_00/C_01 = banco global (acoes do jogador). Validar por ouvido e corrigir os indices. O item_get do RE3 e' um jingle de BGM (ver bgm_map.context.ITEM_GET_JINGLE).",
+    "banco_global": "C_00 (Jill) / C_01 = SFX comuns do jogador"
+  },
+  "sfx": {
+    "menu_move":    "C_00/C_00_01",
+    "menu_confirm": "C_00/C_00_03",
+    "footstep":     "C_00/C_00_04",
+    "gunshot":      "C_00/C_00_05",
+    "item_get":     "C_00/C_00_02",
+    "door":         "C_00/C_00_06",
+    "hurt":         "C_00/C_00_08"
+  }
+}

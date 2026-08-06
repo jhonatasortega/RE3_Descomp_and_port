@@ -1,0 +1,28 @@
+{
+  "_meta": {
+    "descricao": "Mapa BGM->area do RE3. Faixas em res://assets/SOUND/BGM/gog/<track>.ogg (fonte GOG DATA_A/SOUND, decodificadas com instrumentos reais).",
+    "areas": ["UPTOWN", "DOWNTOWN", "CLOCK_TOWER", "PARK", "DEAD_FACTORY", "POLICE_STATION", "HOSPITAL"],
+    "TODO": "Os pares area->faixa sao PROVISORIOS (confianca baixa). O vinculo exato BGM_ID->sala vive nos scripts SCD/RDT (instrucao de 'set bgm'). Quando o grafo de salas com BGM_ID for decodificado, preencher 'room_override' com id_sala->track e validar por ouvido. Ver docs/godot_audio.md.",
+    "fallback": "Se a area nao existir aqui, o AudioManager usa 'default'."
+  },
+  "default": "main2c",
+  "area_default": {
+    "UPTOWN": "main2c",
+    "DOWNTOWN": "main17",
+    "CLOCK_TOWER": "main19",
+    "PARK": "main1a",
+    "DEAD_FACTORY": "main18",
+    "POLICE_STATION": "main1d",
+    "HOSPITAL": "main2d"
+  },
+  "context": {
+    "TITLE": "main00",
+    "SAVE": "main32",
+    "SAVE_ALT": "main33",
+    "DANGER": "main0a",
+    "NEMESIS": "main0b",
+    "GAMEOVER": "main1e",
+    "ITEM_GET_JINGLE": "main21"
+  },
+  "room_override": {}
+}

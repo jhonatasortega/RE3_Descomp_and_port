@@ -1,0 +1,14 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/room_viewer.gd" id="1_script"]
+[ext_resource type="Texture2D" path="res://assets/ETC/JILL_BGU.png" id="2_bg"]
+
+[node name="RoomViewer" type="Node2D"]
+script = ExtResource("1_script")
+
+[node name="Background" type="Sprite2D" parent="."]
+centered = false
+texture = ExtResource("2_bg")
+
+[node name="Camera2D" type="Camera2D" parent="."]
+position = Vector2(160, 120)

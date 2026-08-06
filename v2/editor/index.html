@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>RE3 · Editor de Stage 3D</title>
+<link rel="stylesheet" href="/src/style.css" />
+<script type="importmap">
+{
+  "imports": {
+    "three": "/vendor/three/build/three.module.js",
+    "three/addons/": "/vendor/three/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+
+<div id="app">
+  <div id="stage">
+    <canvas id="view"></canvas>
+
+    <!-- gizmo de eixos, como o do canto do viewport do Blender -->
+    <svg id="gizmo" viewBox="-50 -50 100 100" aria-hidden="true"></svg>
+
+    <div id="help">
+      <b>dbl clique</b> entrar · <b>V</b> andar · <b>[ ]</b> câmera ·
+      <b>WASD/QE</b> mover · <b>G</b> arrastar · <b>F</b> focar · <b>Esc</b> sair
+    </div>
+  </div>
+
+  <aside id="panel">
+    <header>
+      <h1>RE3 · Stage 3D</h1>
+      <select id="stageSel" title="Stage a carregar"></select>
+    </header>
+
+    <div class="scroll">
+      <details open>
+        <summary>Layout</summary>
+        <div class="body" id="quality"></div>
+      </details>
+
+      <details open>
+        <summary>Camadas</summary>
+        <div class="body">
+          <div class="grid2">
+            <label><input type="checkbox" id="lyShell" checked> Casca</label>
+            <label><input type="checkbox" id="lyWalls" checked> Paredes</label>
+            <label><input type="checkbox" id="lyProps" checked> Móveis</label>
+            <label><input type="checkbox" id="lyFloor" checked> Piso</label>
+            <label><input type="checkbox" id="lySat"> Sentinelas</label>
+            <label><input type="checkbox" id="lyDoors" checked> Portas</label>
+            <label><input type="checkbox" id="lyLinks" checked> Ligações</label>
+            <label><input type="checkbox" id="lyCams"> Câmeras</label>
+            <label><input type="checkbox" id="lyTriggers"> Gatilhos</label>
+            <label><input type="checkbox" id="lyEntities"> Itens/inim.</label>
+            <label><input type="checkbox" id="lyLights"> Luzes</label>
+            <label><input type="checkbox" id="lyLabels" checked> Rótulos</label>
+            <label><input type="checkbox" id="lyIsolate"> Isolar</label>
+            <label><input type="checkbox" id="lyGrid" checked> Grade</label>
+          </div>
+        </div>
+      </details>
+
+      <details open id="camModeWrap" hidden>
+        <summary>Modo câmera</summary>
+        <div class="body" id="camModeBody"></div>
+      </details>
+
+      <details open>
+        <summary>Salas <span class="dim" id="roomCount"></span></summary>
+        <div class="body">
+          <input type="search" id="roomFilter" placeholder="filtrar" />
+          <ul id="roomList"></ul>
+        </div>
+      </details>
+
+      <details open>
+        <summary>Inspetor</summary>
+        <div class="body" id="inspectorBody"><span class="dim">Clique numa sala.</span></div>
+      </details>
+    </div>
+
+    <footer>
+      <button id="saveBtn" disabled>Salvar</button>
+      <button id="resetBtn" title="Volta a sala ao que o solver calculou">Resetar sala</button>
+      <div id="status" class="dim"></div>
+    </footer>
+  </aside>
+</div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

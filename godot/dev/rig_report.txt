@@ -1,0 +1,85 @@
+[rigcheck] 69 modelos, thresh=0.12×diag, frames=rest,0.0,0.5
+[rigcheck] aranha                         vão=0.000 estica=0.360  ( | rest osso19 estica=0.36)
+[rigcheck] cao_cerberus                   vão=0.000 estica=0.461  ( | 0.5 osso1 estica=0.46)
+[rigcheck] corvo                          vão=0.000 estica=0.772  ( | 0.5 osso0 estica=0.77)  <<< PROBLEMA
+[rigcheck] em22_hunter_incerto            vão=0.041 estica=0.462  (rest osso1 vão=0.04 | 0.0 osso2 estica=0.46)
+[rigcheck] em23_hunter_incerto            vão=0.014 estica=0.373  (rest osso16 vão=0.01 | 0.0 osso0 estica=0.37)
+[rigcheck] em24_incerto                   vão=0.015 estica=0.468  (rest osso15 vão=0.02 | 0.0 osso2 estica=0.47)
+[rigcheck] em26_aranha_cria_incerto       vão=0.000 estica=1.000  ( | rest osso0 estica=1.00)  <<< PROBLEMA
+[rigcheck] em27_incerto                   vão=0.000 estica=1.000  ( | 0.0 osso1 estica=1.00)  <<< PROBLEMA
+[rigcheck] em28_drain_deimos_incerto      vão=0.102 estica=0.479  (0.5 osso7 vão=0.10 | 0.0 osso0 estica=0.48)
+[rigcheck] em2c_humano_incerto            vão=0.000 estica=0.553  ( | rest osso1 estica=0.55)  <<< PROBLEMA
+[rigcheck] em2d_incerto                   vão=0.000 estica=0.639  ( | 0.0 osso8 estica=0.64)  <<< PROBLEMA
+[rigcheck] em2e_incerto                   vão=0.071 estica=0.338  (rest osso11 vão=0.07 | rest osso0 estica=0.34)
+[rigcheck] em2f_incerto                   vão=0.000 estica=0.354  ( | 0.0 osso0 estica=0.35)
+[rigcheck] em30_verme_incerto             vão=0.013 estica=0.355  (rest osso10 vão=0.01 | 0.5 osso8 estica=0.36)
+[rigcheck] em32_verme_incerto             vão=0.054 estica=0.263  (rest osso1 vão=0.05 | 0.5 osso0 estica=0.26)
+[rigcheck] em33_verme_incerto             vão=0.013 estica=0.355  (rest osso10 vão=0.01 | 0.5 osso8 estica=0.36)
+[rigcheck] em34_brain_sucker_incerto      vão=0.017 estica=0.517  (0.5 osso9 vão=0.02 | 0.5 osso8 estica=0.52)
+[rigcheck] em35_drain_deimos_incerto      vão=0.018 estica=0.670  (rest osso9 vão=0.02 | 0.5 osso8 estica=0.67)  <<< PROBLEMA
+[rigcheck] em36_humano_incerto            vão=0.024 estica=0.483  (rest osso9 vão=0.02 | rest osso2 estica=0.48)
+[rigcheck] em37_incerto                   vão=0.087 estica=0.267  (0.0 osso2 vão=0.09 | 0.0 osso5 estica=0.27)
+[rigcheck] em38_nemesis_incerto           vão=0.010 estica=0.600  (rest osso6 vão=0.01 | rest osso1 estica=0.60)  <<< PROBLEMA
+[rigcheck] em39_incerto                   vão=0.069 estica=0.213  (rest osso3 vão=0.07 | 0.0 osso5 estica=0.21)
+[rigcheck] em3a_incerto                   vão=0.024 estica=0.483  (rest osso9 vão=0.02 | rest osso2 estica=0.48)
+[rigcheck] em3b_incerto                   vão=0.087 estica=0.267  (0.0 osso2 vão=0.09 | 0.0 osso5 estica=0.27)
+[rigcheck] em3e_helicoptero               vão=0.000 estica=0.869  ( | rest osso2 estica=0.87)  <<< PROBLEMA
+[rigcheck] em3f_helicoptero               vão=0.000 estica=0.762  (rest osso2 vão=0.00 | rest osso3 estica=0.76)  <<< PROBLEMA
+[rigcheck] em40_incerto                   vão=0.421 estica=0.326  (0.5 osso1 vão=0.42 | 0.5 osso1 estica=0.33)  <<< PROBLEMA
+[rigcheck] em50_humano_incerto            vão=0.021 estica=0.354  (rest osso8 vão=0.02 | 0.5 osso0 estica=0.35)
+[rigcheck] em51_humano_incerto            vão=0.016 estica=0.450  (rest osso14 vão=0.02 | rest osso7 estica=0.45)
+[rigcheck] em52_humano_incerto            vão=0.018 estica=0.369  (0.0 osso13 vão=0.02 | rest osso0 estica=0.37)
+[rigcheck] em53_humano_incerto            vão=0.077 estica=0.403  (rest osso14 vão=0.08 | 0.5 osso0 estica=0.40)
+[rigcheck] em54_humano_incerto            vão=0.000 estica=0.499  ( | rest osso0 estica=0.50)
+[rigcheck] em55_humano_incerto            vão=0.071 estica=0.339  (rest osso11 vão=0.07 | 0.5 osso0 estica=0.34)
+[rigcheck] em56_humano_incerto            vão=0.017 estica=0.369  (0.0 osso13 vão=0.02 | rest osso0 estica=0.37)
+[rigcheck] em57_humano_incerto            vão=0.000 estica=0.350  ( | 0.5 osso0 estica=0.35)
+[rigcheck] em58_humano_incerto            vão=0.077 estica=0.404  (rest osso14 vão=0.08 | 0.5 osso0 estica=0.40)
+[rigcheck] em59_humano_incerto            vão=0.007 estica=0.498  (rest osso4 vão=0.01 | rest osso0 estica=0.50)
+[rigcheck] em5a_humano_incerto            vão=0.000 estica=0.321  ( | 0.5 osso13 estica=0.32)
+[rigcheck] em5b_humano_incerto            vão=0.033 estica=0.324  (rest osso11 vão=0.03 | rest osso0 estica=0.32)
+[rigcheck] em5c_humano_incerto            vão=0.021 estica=0.457  (rest osso8 vão=0.02 | rest osso7 estica=0.46)
+[rigcheck] em5d_humano_incerto            vão=0.021 estica=0.637  (rest osso8 vão=0.02 | 0.0 osso7 estica=0.64)  <<< PROBLEMA
+[rigcheck] em5e_humano_incerto            vão=0.017 estica=0.438  (0.0 osso13 vão=0.02 | rest osso7 estica=0.44)
+[rigcheck] em5f_humano_incerto            vão=0.143 estica=0.338  (rest osso14 vão=0.14 | rest osso0 estica=0.34)  <<< PROBLEMA
+[rigcheck] em60_humano_incerto            vão=0.018 estica=0.369  (0.0 osso13 vão=0.02 | rest osso0 estica=0.37)
+[rigcheck] em61_humano_incerto            vão=0.000 estica=0.342  ( | 0.5 osso13 estica=0.34)
+[rigcheck] em62_humano_incerto            vão=0.026 estica=0.328  (0.0 osso13 vão=0.03 | rest osso10 estica=0.33)
+[rigcheck] em63_humano_incerto            vão=0.032 estica=0.418  (rest osso11 vão=0.03 | rest osso0 estica=0.42)
+[rigcheck] em64_humano_incerto            vão=0.000 estica=0.598  ( | rest osso11 estica=0.60)  <<< PROBLEMA
+[rigcheck] em65_humano_incerto            vão=0.027 estica=0.328  (0.5 osso10 vão=0.03 | rest osso0 estica=0.33)
+[rigcheck] em66_humano_incerto            vão=0.009 estica=0.341  (0.0 osso1 vão=0.01 | rest osso0 estica=0.34)
+[rigcheck] em67_humano_incerto            vão=0.000 estica=0.419  ( | 0.5 osso0 estica=0.42)
+[rigcheck] em70_humano_incerto            vão=0.033 estica=0.324  (rest osso11 vão=0.03 | rest osso0 estica=0.32)
+[rigcheck] em71_humano_incerto            vão=0.026 estica=0.328  (0.0 osso13 vão=0.03 | rest osso10 estica=0.33)
+[rigcheck] zumbi_em11                     vão=0.003 estica=0.319  (0.5 osso9 vão=0.00 | 0.0 osso13 estica=0.32)
+[rigcheck] zumbi_em12                     vão=0.000 estica=0.490  ( | 0.0 osso0 estica=0.49)
+[rigcheck] zumbi_em13                     vão=0.000 estica=0.315  ( | 0.5 osso10 estica=0.32)
+[rigcheck] zumbi_em14                     vão=0.000 estica=0.371  ( | rest osso0 estica=0.37)
+[rigcheck] zumbi_em15                     vão=0.000 estica=0.378  ( | rest osso0 estica=0.38)
+[rigcheck] zumbi_em16                     vão=0.000 estica=0.415  ( | 0.0 osso10 estica=0.42)
+[rigcheck] zumbi_em17                     vão=0.000 estica=0.371  ( | rest osso0 estica=0.37)
+[rigcheck] zumbi_em18                     vão=0.000 estica=0.406  ( | 0.0 osso10 estica=0.41)
+[rigcheck] zumbi_em19                     vão=0.000 estica=0.411  ( | 0.0 osso10 estica=0.41)
+[rigcheck] zumbi_em1a                     vão=0.000 estica=0.467  ( | 0.5 osso0 estica=0.47)
+[rigcheck] zumbi_em1b                     vão=0.000 estica=0.511  ( | 0.0 osso0 estica=0.51)
+[rigcheck] zumbi_em1c                     vão=0.000 estica=0.396  ( | 0.0 osso10 estica=0.40)
+[rigcheck] zumbi_em1d                     vão=0.000 estica=0.417  ( | 0.0 osso10 estica=0.42)
+[rigcheck] zumbi_em1e                     vão=0.000 estica=0.415  ( | 0.0 osso10 estica=0.42)
+[rigcheck] zumbi_em1f                     vão=0.000 estica=0.413  ( | 0.0 osso10 estica=0.41)
+[rigcheck] zumbi_macho                    vão=0.000 estica=0.372  ( | rest osso0 estica=0.37)
+[rigcheck] ===== 13 DESCOLADOS (>= 0.12) =====
+[rigcheck]   em40_incerto                   0.421  vão 0.5 osso1 vão=0.42 / estica 0.5 osso1 estica=0.33
+[rigcheck]   em5f_humano_incerto            0.143  vão rest osso14 vão=0.14 / estica rest osso0 estica=0.34
+[rigcheck]   em5d_humano_incerto            0.021  vão rest osso8 vão=0.02 / estica 0.0 osso7 estica=0.64
+[rigcheck]   em35_drain_deimos_incerto      0.018  vão rest osso9 vão=0.02 / estica 0.5 osso8 estica=0.67
+[rigcheck]   em38_nemesis_incerto           0.010  vão rest osso6 vão=0.01 / estica rest osso1 estica=0.60
+[rigcheck]   em3f_helicoptero               0.000  vão rest osso2 vão=0.00 / estica rest osso3 estica=0.76
+[rigcheck]   corvo                          0.000  vão  / estica 0.5 osso0 estica=0.77
+[rigcheck]   em26_aranha_cria_incerto       0.000  vão  / estica rest osso0 estica=1.00
+[rigcheck]   em27_incerto                   0.000  vão  / estica 0.0 osso1 estica=1.00
+[rigcheck]   em2c_humano_incerto            0.000  vão  / estica rest osso1 estica=0.55
+[rigcheck]   em2d_incerto                   0.000  vão  / estica 0.0 osso8 estica=0.64
+[rigcheck]   em3e_helicoptero               0.000  vão  / estica rest osso2 estica=0.87
+[rigcheck]   em64_humano_incerto            0.000  vão  / estica rest osso11 estica=0.60
+[rigcheck] fim.

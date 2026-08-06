@@ -1,0 +1,17 @@
+{
+  "name": "re3-stage-editor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Editor 3D de stages do RE3 — importa v2/reconstruction/STAGE{n} e monta o blockout navegavel",
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node server.mjs"
+  },
+  "dependencies": {
+    "three": "^0.169.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.1"
+  }
+}

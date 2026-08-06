@@ -1,0 +1,151 @@
+/*
+ * Estilo baseado na linguagem visual do Blender: painel denso, seções
+ * colapsáveis, tipografia pequena e uniforme, cores neutras frias e um
+ * acento único. A área 3D fica limpa; tudo que é controle vive no painel.
+ */
+:root {
+  --panel-w: 300px;
+  --bg: #1d1d1d;          /* viewport */
+  --panel: #303030;       /* fundo do painel */
+  --box: #282828;         /* caixa de seção */
+  --field: #545454;       /* campos e botões */
+  --line: #3d3d3d;
+  --fg: #e5e5e5;
+  --dim: #9a9a9a;
+  --accent: #4772b3;      /* azul de seleção do Blender */
+  --accent2: #e8a33d;
+  --ok: #6fbf73;
+  --warn: #e0704f;
+  --axis-x: #e05c5c;
+  --axis-y: #7cc96b;
+  --axis-z: #5b8ede;
+  --row: 22px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; }
+body {
+  background: var(--bg); color: var(--fg);
+  font: 11px/1.5 "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+#app { display: flex; height: 100vh; }
+
+/* ---------------------------------------------------------------- viewport */
+#stage { position: relative; flex: 1; min-width: 0; }
+#view { display: block; width: 100%; height: 100%; outline: none; }
+
+#gizmo {
+  position: absolute; top: 10px; right: 10px;
+  width: 72px; height: 72px; pointer-events: none;
+  overflow: visible;
+}
+#gizmo text { font: 600 9px "Segoe UI", sans-serif; }
+
+#help {
+  position: absolute; left: 8px; bottom: 8px; max-width: calc(100% - 16px);
+  font-size: 10px; color: var(--dim);
+  background: rgba(20,20,20,.85); padding: 4px 8px;
+  border-radius: 3px; pointer-events: none;
+}
+#help b { color: #cfcfcf; font-weight: 600; }
+
+.label-layer {
+  position: absolute; inset: 0; overflow: hidden; pointer-events: none;
+}
+.label3d {
+  position: absolute; transform: translate(-50%, -50%);
+  font: 10px Consolas, monospace; color: #ffd07a;
+  background: rgba(0,0,0,.6); padding: 0 3px; border-radius: 2px;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ painel */
+#panel {
+  width: var(--panel-w); flex: none; background: var(--panel);
+  border-left: 1px solid #111;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+#panel header {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px; background: var(--box); border-bottom: 1px solid #111;
+}
+#panel h1 { font-size: 11px; font-weight: 600; margin: 0; flex: 1; }
+
+.scroll { flex: 1; overflow-y: auto; padding: 4px; }
+.scroll::-webkit-scrollbar { width: 9px; }
+.scroll::-webkit-scrollbar-thumb { background: #555; border-radius: 5px; }
+
+/* seções colapsáveis, como os painéis da sidebar do Blender */
+details {
+  background: var(--box); border-radius: 3px; margin-bottom: 4px;
+  border: 1px solid #262626;
+}
+summary {
+  cursor: pointer; list-style: none; user-select: none;
+  padding: 4px 8px 4px 18px; position: relative;
+  font-size: 11px; font-weight: 600; color: #cdcdcd;
+}
+summary::-webkit-details-marker { display: none; }
+summary::before {
+  content: "▸"; position: absolute; left: 6px; color: var(--dim);
+  transition: transform .12s;
+}
+details[open] > summary::before { transform: rotate(90deg); }
+summary:hover { color: #fff; }
+.body { padding: 4px 8px 8px; }
+
+/* ------------------------------------------------------------- componentes */
+select, input[type=search], input[type=number], button {
+  background: var(--field); color: var(--fg); border: 1px solid #232323;
+  border-radius: 3px; padding: 2px 5px; font: inherit; height: var(--row);
+}
+select:hover, button:hover:not(:disabled) { background: #656565; }
+button { cursor: pointer; }
+button:disabled { opacity: .4; cursor: default; }
+input[type=search] { width: 100%; margin-bottom: 4px; }
+input[type=number] { width: 100%; text-align: right; }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+input[type=checkbox] { accent-color: var(--accent); margin: 0 4px 0 0; }
+
+.dim { color: var(--dim); }
+.ok { color: var(--ok); }
+.warn { color: var(--warn); }
+
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1px 6px; }
+.grid2 label {
+  display: flex; align-items: center; cursor: pointer;
+  height: 18px; white-space: nowrap; overflow: hidden;
+}
+
+/* linhas rótulo/valor, como as propriedades do Blender */
+.rows { display: grid; grid-template-columns: 42% 1fr; gap: 2px 6px; align-items: center; }
+.rows > .k { color: var(--dim); text-align: right; }
+.rows > .v { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.btnrow { display: flex; gap: 4px; margin: 6px 0; flex-wrap: wrap; }
+.btnrow button { flex: 1; min-width: 34px; }
+
+/* ------------------------------------------------------------ lista salas */
+#roomList { list-style: none; margin: 0; padding: 0; max-height: 190px; overflow-y: auto; }
+#roomList li {
+  display: flex; align-items: center; gap: 5px;
+  padding: 1px 4px; border-radius: 2px; cursor: pointer; height: 18px;
+}
+#roomList li:hover { background: #3a3a3a; }
+#roomList li.sel { background: var(--accent); color: #fff; }
+#roomList li.sel .rid, #roomList li.sel .rdesc { color: #fff; }
+#roomList li.edited::after { content: "●"; color: var(--accent2); margin-left: auto; }
+#roomList .rid { font-family: Consolas, monospace; color: var(--accent2); }
+#roomList .rdesc { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+h3.sub {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--dim); margin: 8px 0 3px; font-weight: 600;
+}
+
+/* ------------------------------------------------------------------ rodapé */
+#panel footer {
+  padding: 6px 8px; border-top: 1px solid #111; background: var(--box);
+  display: flex; gap: 4px; align-items: center; flex-wrap: wrap;
+}
+#status { flex-basis: 100%; font-size: 10px; min-height: 13px; }

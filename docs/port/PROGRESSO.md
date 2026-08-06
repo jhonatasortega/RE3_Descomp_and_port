@@ -1,0 +1,489 @@
+# Port 1:1 RE3 → Godot — PROGRESSO
+
+> **GERADO** por `tools/port_progress.py` a partir de [`port_progress.json`](port_progress.json). Não edite à mão — edite o JSON e rode o script.
+>
+> Estratégia e critérios em [`PLANO_MIGRACAO.md`](PLANO_MIGRACAO.md). Destino: **`port/`**. Escopo: campanha completa + 2 finais + Mercenários (Operation Mad Jackal) + dificuldades.
+>
+> **impl** = código existe no port/ e roda · **valid** = conferido contra o original pelo critério do item. Checkbox: `[ ]` a fazer · `[~]` implementado, não validado · `[x]` validado.
+
+## Geral (ponderado por peso, 86 itens)
+
+- **Implementado:** `████████░░░░░░░░░░░░` **38%**
+- **Validado:**    `███████░░░░░░░░░░░░░` **33%**
+- Itens: **10 validados** · **30 em andamento** · **46 a fazer**
+
+## Por fase
+
+| Fase | Título | O QUÊ (entrega) | COMO se prova (gate) | Itens | Impl | Valid |
+|---|---|---|---|--:|---|---|
+| **F0** | Fundação do projeto port/ | Esqueleto + bases determinísticas (30 Hz, ângulo 4096, coords, flags) | Importa com 0 erro + suíte de testes roda + 0 asset faltante | 11 | ████████ 98% | ███████░ 92% |
+| **F1** | Sala fiel (fatia vertical R100 + R10E) | Uma sala completa: HD por câmera, RID, RVD, colisão, oclusão, Jill armada | 6 pontos de referência lado-a-lado com o emulador (P1-14) | 16 | █████░░░ 68% | ████░░░░ 54% |
+| **F2** | VM do SCD (o cérebro do jogo) | Intérprete dos 144 opcodes do script de sala (threads, flags, AOT) | Dry-run das 4238 funções: 0 opcode faltante, 100% fecham (P2-10) | 10 | ██████░░ 69% | █████░░░ 59% |
+| **F3** | Mundo inteiro (169 salas, 453 portas, save) | 169 salas ligadas: portas, spawn de chegada, streaming, save | 453/453 portas auditadas + rota crítica por replay (P3-06 / P3-07) | 10 | ███░░░░░ 40% | ███░░░░░ 37% |
+| **F4** | Combate e entidades | Entidade de personagem, animação de inimigo, mira, tiro, dano | Tiros para matar == original em 6 pares arma×inimigo (P4-09) | 9 | ░░░░░░░░ 0% | ░░░░░░░░ 0% |
+| **F5** | IA por classe (12 overlays) | Máquinas de estado por classe (zumbi → cão → hunter → Nemesis) | Vídeo lado-a-lado por classe, no mesmo estímulo (P5-09) | 9 | ░░░░░░░░ 0% | ░░░░░░░░ 0% |
+| **F6** | Meta-jogo | Menus, inventário, mapa, files, FMV HD, finais, Mercenários | Completável do título ao epílogo nos 2 finais + Mercenários | 12 | ░░░░░░░░ 2% | ░░░░░░░░ 1% |
+| **F7** | Fidelidade final e release | Tempos/fades, mixagem, input, regressão, performance, export legal | Suíte de regressão verde + build sem asset da Capcom/SHDP | 9 | ░░░░░░░░ 0% | ░░░░░░░░ 0% |
+
+## Checklist por fase
+
+### F0 — Fundação do projeto port/  ·  impl 98% / valid 92%
+
+**Objetivo:** Esqueleto do projeto novo, pipeline de assets reapontado e as bases que TUDO depende: relógio determinístico de 30 Hz, matemática de ângulo/fixed-point do PS1, conversão de coordenadas, flags globais e harness de teste.
+
+**Gate de saída:** Projeto importa com 0 erro, abre 1280x960 4:3 com pillarbox, a suíte de testes roda por linha de comando e o verificador de assets acusa 0 faltante.
+
+- [~] **P0-01** (peso 2, impl 100%, valid 50%) — Criar projeto Godot 4 em port/ (4:3 1280x960, pillarbox, renderer definido)
+  - **Validação:** godot --headless --path port --import sai 0; janela abre 1280x960; em monitor 16:9 aparece pillarbox (nada cortado/esticado).
+  - **Reaproveita:** godot/project.godot (referência de config)
+  - **Nota:** FEITO: esqueleto criado (core/ script_vm/ room/ actors/ present/ meta/ dev/ assets/ data/), project.godot (stretch=canvas_items + aspect=keep, physics_ticks_per_second=30, max_physics_steps=1), README.md e .gitignore protegendo port/assets, port/data, port/.godot. PROVADO: import headless no Godot 4.7.1 sai 0, sem erro. PARCIAL: a metade visual do critério (janela 1280x960 + pillarbox em 16:9) só pode ser provada com uma cena mínima — vem junto com P1-15.
+- [x] **P0-02** (peso 3, impl 100%, valid 100%) — Reapontar o pipeline canônico de assets para port/assets e port/data
+  - **Validação:** Rodar o pipeline num diretório limpo reproduz a contagem por pasta do manifesto (DOOR 144, ENEMY 279, ETC 116, MAP 39, MASK 2236, MENU 222, PLD 700, SOUND 840, STAGE1-7, UI 120, VOICE 1812, ZMOVIE) e os 519 JSON de data/.
+  - **Fonte:** docs/formatos/README.md
+  - **Reaproveita:** tools/*.py (todos)
+  - **Nota:** FEITO: tools/paths.py centraliza o destino (env NOSTALGIA_OUT, default 'godot' p/ compatibilidade) + 26 scripts repontados por patch mecânico exato (backup em c:/tmp/nostalgia_tools_backup; 46/46 compilam, 26/26 importam) + tools/build_assets.py com 31 etapas declarando comando/deps/fonte/saída, ordem topológica, --list/--only/--dry-run/--manifest/--verify/--continue-on-error. PROVADO no port/: rooms 169/169 (2105 câmeras), collision 169/169 (5289 retângulos), scd+doors+items+door_dest+room_graph (296 arestas, reciprocidade 100% explicada), text (193 ids, 129 salas), hd_map (170 salas/1521 câmeras, EQUIVALENTE ao arquivo antigo). FALTA p/ valid=100: rodar as etapas pesadas (imagens/modelos/áudio) e bater a contagem do manifesto; 4 etapas seguem MANUAIS por dependerem de ferramenta externa (voices_en, voices_ptbr, fmv, ptbr_text). | FECHADO: 35 etapas rodadas no port/. Comparacao contra godot/assets (referencia): ENEMY 70/70, ETC 58/58, MASK 2235/2235, PLD 172/172 glb, STAGE1-7 todos identicos (441/422/282/214/198/191/368), MAP 35 (era 20), DOOR 42 glb, MENU 111/112. 4 bugs de etapa achados e corrigidos: menu_extract 'all' achava 0 TIM (o grafico nao esta nos overlays BIN -> comandos menu+hdmatch); pld2gltf --all so pegava os 25 .PLD (faltava --plw e --weapons-all -> 172); do2gltf faltava --anim-all; caminho do EMD errado (rofs_extract grava PLANO, nao em ROOM/EMD) -> 69/69 inimigos. Lacunas restantes TODAS declaradas como manuais: VOICE (906), ZMOVIE (14), SOUND -148 (XA por stage + render de BGM no fluidsynth), UI (60, curada a mao)
+- [~] **P0-03** (peso 2, impl 90%, valid 80%) — Manifesto de assets + verificador de integridade
+  - **Validação:** asset_manifest.json com caminho+hash; verificador lista faltantes/órfãos; 0 faltante no projeto montado.
+  - **Nota:** É o que permite distribuir código sem asset (política 'traga sua cópia'). PARCIAL: --manifest/--verify já existem em build_assets.py (caminho relativo + TAMANHO por arquivo, contagem por etapa). Falta trocar tamanho por HASH e fechar com 0 faltante depois do build completo. | Manifesto gerado no port/: 5638 arquivos, 1456 MB, --verify = 0 faltando / 0 tamanho diferente. Falta so trocar tamanho por HASH para valid=100
+- [x] **P0-04** (peso 4, impl 100%, valid 100%) — Relógio determinístico: gameplay em 30 Hz fixo, desacoplado do render
+  - **Validação:** Trace de 1000 ticks com step constante; o MESMO replay de input dá o MESMO trace com render a 60 e a 144 Hz.
+  - **Fonte:** docs/formatos/exe.md, godot/data/physics.json
+  - **Nota:** PS1 NTSC = 60 Hz de vídeo, gameplay/física a 30. Toda constante do decomp é por-frame de 30. | FEITO: port/core/clock.gd (30 Hz fixo, tick contado, step()/step_n() para harness, checa physics_ticks_per_second e max_physics_steps_per_frame no _ready). PROVADO por test_clock.gd: 30 ticks = 1,0 s; 1,133 s = 34 frames (ciclo do anim00); sinal 1x por tick; pausa nao avanca; e o teste de determinismo (100 ticks com delta 1/30 vs delta 0,001 dao o MESMO frame) = delta de render e ignorado | BUG REAL CORRIGIDO (achado ao investigar um 'nao anda' relatado em jogo, que no fim era foco de entrada do editor): a versao com _physics_process + max_physics_steps_per_frame=1 rodava o gameplay a ~7 Hz, nao 30 - medido com instrumentacao (em 180 quadros do harness o relogio produzia 39-40 ticks). Pior: limitar a 1 passo por quadro ACOPLA o gameplay ao render, exatamente o que este relogio existe para evitar. Trocado por ACUMULADOR DE TEMPO com passo fixo em _process, com MAX_CATCHUP=8. MEDIDO depois: soma_delta=1,57 s -> 47 ticks = 29,9 Hz. Testes atualizados: 1 s de tempo real da 30 ticks tanto em 30 quadros de 1/30 s quanto em 300 de 1/300 s, e um engasgo de 1 s recupera no maximo MAX_CATCHUP
+- [x] **P0-05** (peso 3, impl 100%, valid 100%) — Matemática PS1: ângulo de 4096 unidades + tabela sin/cos + fixed-point
+  - **Validação:** Os 4096 ângulos conferidos contra sin_cos_table com erro 0 (inteiro); rotação de vetor idêntica à do EXE em 100 amostras.
+  - **Fonte:** godot/data/physics.json (sin_cos_table, angle_units)
+  - **Reaproveita:** godot/data/physics.json
+  - **Nota:** Usar ângulo inteiro do PS1 como verdade e converter só na hora de desenhar. | FEITO: tools/exe_sincos.py extrai a tabela do EXE (file offset 0x93b10, 1025 x s16) para data/ps1_sincos.json + port/core/ps1_math.gd (angulo 12 bits, rsin/rcos por simetria, rotate_xz em ponto-fixo, angle_diff com o bit 0x800, angle_towards, angle_of_xz). PROVADO: (a) no extrator, a tabela do jogo e EXATAMENTE round(4096*sin(i*pi/2/1024)) - erro 0 nas 1025 entradas - e a simetria fecha nos 4096 angulos com erro 0; (b) em test_ps1_math.gd, os 4096 angulos do GDScript batem com a tabela do EXE (erro maximo 0) e sin2+cos2 fica a 0,03 por cento de 1.0
+- [x] **P0-06** (peso 2, impl 100%, valid 100%) — Conversão de coordenadas centralizada (PS1 Y-down <-> Godot Y-up, world_scale=808)
+  - **Validação:** Round-trip de 10k pontos com erro < 1e-4; as 2105 câmeras projetam o próprio 'to' em ndc_x ~ 0.
+  - **Fonte:** docs/godot_gameplay.md
+  - **Reaproveita:** godot/scripts/room_game.gd
+  - **Nota:** world_scale=808 = 2400/2.971 (altura do personagem). | FEITO: port/core/coords.gd (world_scale 808, Y invertido, comprimentos, angulo->yaw). PROVADO por test_coords.gd: ida-e-volta de 10.000 pontos com erro 0 unidades; e sobre as 2105 CAMERAS REAIS: inversao de Y consistente em 2105/2105 e distancia camera->alvo preservada pela escala (erro relativo < 1e-4). NOTA METODOLOGICA: descartei o teste 'a camera projeta seu alvo no centro' porque e TAUTOLOGICO com look_at (passa mesmo com eixo errado) - esse fica para a F1/P1-04 com render real. YAW_OFFSET_DEG=180 segue como convencao herdada, a validar na F1 | BUG GRAVE CORRIGIDO (achado por render, a partir de prints do usuario): a conversao negava SO o Y, e negar UM eixo troca a mao do sistema (PS1 e canhoto, Y para baixo; Godot e destro) - o mundo 3D saia ESPELHADO em relacao ao background. Prova numerica: o fichario da R100, que aparece a DIREITA no cenario, projetava em x=543 com a Jill em 640 (a esquerda); com (x,-y,-z) projeta em 736 (direita). CONSEQUENCIAS que isso explicava: caixa de gatilho da porta desenhada no meio da sala (o E nao funcionava), colisao pegando nos moveis errados, spawn deslocado, profundidade de mascara invertida, e as inversoes de W/S e A/D que o usuario reportou duas vezes. Teste atualizado para cobrar os DOIS eixos negados
+- [x] **P0-07** (peso 4, impl 100%, valid 100%) — Estado global: bancos de flags (0xc0..0xf1), variáveis, inventário, progresso
+  - **Validação:** SET/CLEAR/CHECK por banco/bit reproduzem o comportamento do EXE em 50 casos derivados do script; serializa e desserializa sem perda.
+  - **Fonte:** docs/decomp/notes/exe_items.md, docs/decomp/notes/scd_opcodes.md
+  - **Nota:** Base do save e de todo o progresso — errar aqui contamina tudo. | FEITO: port/core/game_state.gd com a FORMULA do EXE (word = ((bit>>3)&0x1c)/4, mask = 0x80000000 >> (bit&0x1f), MSB-first), 16 bancos, banco 1 = progresso; inventario MAIN 10 / BOX 64 com slot {id,qtd,flags} e as rotinas replicadas (find_by_id(0)=1o livre, consume, compact, load_loadout); save/load JSON. PROVADO por test_game_state.gd (56 asserts): mascara por bit, independencia entre bancos/vizinhos, a VOLTA em 256 bits que o &0x1c implica, e ida-e-volta por ARQUIVO byte-identica. O teste de arquivo pegou um bug real meu: os slots voltavam como FLOAT (JSON nao tem inteiro) porque eu copiava o dicionario cru -> corrigido com _slot_from()
+- [~] **P0-08** (peso 2, impl 100%, valid 80%) — Arquitetura de cenas/autoloads (Game, RoomRuntime, ScriptVM, Audio, Lang, UI)
+  - **Validação:** Diagrama na doc do port bate com o código; nenhum sistema acessa outro fora das interfaces declaradas.
+  - **Fonte:** docs/godot_ui.md, docs/godot_audio.md
+  - **Reaproveita:** godot/scripts/audio/audio_manager.gd, godot/scripts/lang_manager.gd
+  - **Nota:** Erro do protótipo antigo: lógica de sala e apresentação misturadas em room_game.gd. | FEITO: autoload unico Game (core/game.gd) dono de clock+state+pad, com a ORDEM DE UPDATE por tick fixa (pad.poll -> state -> sinal tick -> ouvintes) e a regra de dependencia declarada (core nao conhece nada; present so le e desenha). Registrado no project.godot; sobe limpo inclusive em modo --script ('[Game] pronto - 30 Hz, angulo de 4096 unidades, tabela sin/cos do EXE: sim'). Diagrama em port/README.md. valid=80: o diagrama sera reconferido quando room/ e script_vm/ existirem de fato (F1/F2)
+- [x] **P0-09** (peso 3, impl 100%, valid 100%) — Harness de dev: screenshot headless, test runner GDScript, gravação/replay de input
+  - **Validação:** dev/run_tests.gd roda a suíte e retorna exit code != 0 se falhar; replay de um input gravado reproduz o trace.
+  - **Fonte:** docs/godot_gameplay.md (harness antigo)
+  - **Reaproveita:** godot/dev/tools_*.gd (20 harnesses)
+  - **Nota:** --headless usa driver dummy e não renderiza: usar --rendering-driver opengl3 para screenshot. | PARCIAL: port/dev/run_tests.gd (roda res://dev/tests/test_*.gd, filtro por nome, exit code != 0 se falhar; base do P7-04) + 3 arquivos de teste, 76 asserts VERDES em 0,6 s. Falta: screenshot headless e gravacao/replay de input | FEITO: core/pad.gd (entrada como MASCARA de bits com os bits provados do EXE - FWD=0x01 e AIM=0x500 - e os hipoteticos marcados como tal; gravacao, replay e ida-e-volta por arquivo com checagem de Hz) + dev/shot.gd (screenshot com override por env, avisa se rodar em --headless). PROVADO por test_pad.gd (20 asserts): gravar N ticks e reproduzir da a sequencia identica, e o replay lido do disco bate com o gravado. valid=90: o screenshot so pode ser exercitado de verdade quando existir cena (F1/P1-15) - hoje falha limpo dizendo isso | HUD de diagnostico em jogo (F1): sala, camera (attr e FOV), posicao PS1, angulo, acao, clipe, MASCARA DO PAD com as teclas, tick, fps e faixa de trilha. Foi o que transformou 'nao anda' em medida - e o que permitiu localizar o bug de 7 Hz do relogio. Mais F5/F6 para percorrer as 125 faixas de trilha em jogo (o mapa area->faixa e declaradamente provisorio; ouvir e a unica forma de fixar)
+- [x] **P0-10** (peso 1, impl 100%, valid 100%) — Triagem do protótipo antigo: o que migra, o que vira referência, o que morre
+  - **Validação:** Lista escrita item a item (AudioManager/LangManager/inventário ui/ migram; HUD in-game morre — RE3 não tem HUD; oclusão por caixa de profundidade morre em favor do atlas HD).
+  - **Fonte:** docs/decomp/PLANO_ACAO.md (Fase A)
+  - **Reaproveita:** godot/
+  - **Nota:** godot/ fica intacto como arquivo morto consultável. | FEITO: docs/port/TRIAGEM_PROTOTIPO.md - veredito arquivo por arquivo (MIGRA / REFERENCIA / MORRE) dos 13 scripts, 10 cenas e 20 harnesses, mais a tabela das 6 APROXIMACOES que nao migram (camera por enquadramento -> RVD; oclusao por caixa -> atlas HD; velocidade escalar -> root-motion; FOV global -> por camera; raio a olho -> raio do EXE; eventos em GDScript -> VM do SCD). Achado ao ler o codigo: jill_controller.gd usa model_yaw_offset_deg=90 VERIFICADO por render (godot_gameplay.md diz 180 - a doc esta defasada) e velocidades armadas 2.8/8.3 vindas do PLW; corrigi o comentario do coords.gd que confundia esse offset de MESH com a conversao angulo PS1 -> yaw (essa segue sem prova, a fixar na F1)
+- [~] **P0-11** (peso 3, impl 90%, valid 80%) — Fechar a dívida das 6 sementes: escrever o gerador de cada JSON não regenerável
+  - **Validação:** Cada um dos 6 arquivos é produzido por um script do repo a partir da fonte (EXE/disco/instalação) e o resultado é EQUIVALENTE ao arquivo semente (mesmo método de prova do hd_map_build.py: --compare sem divergência). Depois disso a etapa 'seed' do build sai.
+  - **Fonte:** docs/port/PLANO_MIGRACAO.md §7
+  - **Reaproveita:** tools/exe_parse.py, exe_ai.py, exe_player_anim.py, overlay_ai.py, etc_hd_match.py, scd_items.py
+  - **Nota:** FECHADO para 5 dos 6 (dívida resolvida). Cada JSON agora tem GERADOR ligado ao build_assets.py, provado equivalente à semente (build limpo em port/data reproduz godot/data byte-a-byte): (1) ai_overlays.json = `overlay_ai.py catalog --json` sobre STAGE#/R###.BIN — BYTE-IDÊNTICO. (2) re3_items.json = `re3_text.py --build-items` do EXE (nomes @0x8c6e5/exames @0x8a124/descritor @0x800a0514) + mod PT do GOG; agora RODA EM PASTA LIMPA lendo o resíduo mínimo godot/data/re3_items_curation.json (esqueleto de UI do protótipo, 9.6KB) — arquivo completo EQUIVALENTE (incl. _meta). (3) sce_items.json = `scd_items.py --build-json` (itens 0x68 por sala + contagem sce dos opcodes 0x63/0x64) — dados por-sala idênticos; contagens sce corrigidas p/ o valor autoritativo atual (MSG 397/EVT 231, total 738) vs semente estagnada (393/229/732). (4) physics.json = `exe_physics.py` (tabela sin/cos validada no EXE @0x93b10 + root-motion/velocidades medidos de PL00.PLD) — DADOS equivalentes; resíduo embutido no tool: 2 medianas de world_scale e 3 giro/frame (metadados medidos). (5) anim_map.json = `exe_anim_map.py` (valida a tabela 3x3 @0x8009cde0 no EXE + mede root_motion_por_clipe/timing dos 22 clipes de PL00.PLD) + curadoria mínima godot/data/anim_map_curation.json (rótulos/papéis/evidência de RE, 9.9KB); root-motion net_x/net_z/un-frame 22/22 e timing 100% idênticos, netY 20/22 idêntico (anim06/anim11 divergem <=1° por método: semente usou o caminho de quaternion do glTF, o gerador mede o ângulo direto). RESÍDUO HONESTO que sobra = hd_ui_map.json: NÃO reproduzível estaticamente (a própria semente declara: o hash é o sub-retângulo BLITADO pelo engine; os .webp HD vêm de PC russo e são REDESENHADOS, não upscale). Produzi-lo exige o dump do plugin bio3hd rodando o jogo — não é transformação estática do disco. O build agora só copia esse 1 arquivo como seed mínimo DECLARADO (etapa 'seed' reduzida de 6 p/ 1). Precedente: hd_map_build.py (7º caso, já resolvido).
+
+### F1 — Sala fiel (fatia vertical R100 + R10E)  ·  impl 68% / valid 54%
+
+**Objetivo:** Uma sala indistinguível do original: background HD por câmera, câmera RID, troca por RVD com a semântica PROVADA, colisão real, oclusão por atlas HD, Jill com PLW armado, SM do player e root-motion real.
+
+**Gate de saída:** P1-14 — comparação lado-a-lado (emulador vs port) em 6 pontos de referência de R100 e R10E: enquadramento, escala, oclusão, colisão, corte de câmera e som.
+
+- [x] **P1-01** (peso 5, impl 100%, valid 100%) — Loader genérico de sala (qualquer R###: RDT + _col + _scd JSON)
+  - **Validação:** Carregar as 169 salas em sequência via harness: 0 exceção, todos os campos esperados presentes, relatório por sala.
+  - **Fonte:** docs/formatos/ARD.md
+  - **Reaproveita:** tools/ard_parse.py, godot/data/STAGE*/
+  - **Nota:** O protótipo antigo era hardcoded na R100. | FEITO: port/room/room_data.gd carrega qualquer R### (RDT + _col + _scd) em estruturas tipadas, em unidades PS1 inteiras, com lista de erros por sala (nunca silencioso). PROVADO por test_room_data.gd (27 asserts) nas 169 SALAS: 0 erro de carga, 2105 cameras, 5289 retangulos, 453 portas todas com destino resolvido, 1507 cameras com sprite de oclusao. Inclui consultas de gameplay (is_walkable com raio, door_at)
+- [~] **P1-02** (peso 3, impl 90%, valid 90%) — Background por câmera: HD 1280x960 com fallback PS1 320x240
+  - **Validação:** As 2105 câmeras resolvem uma imagem; relatório quantifica HD vs SD (esperado ~1500 HD de 1232 arquivos + ~600 SD) e nenhuma câmera fica sem imagem.
+  - **Fonte:** docs/formatos/hd_mapping.md, docs/formatos/BSS.md
+  - **Reaproveita:** tools/hd_copy.py, tools/bss2png.py
+  - **Nota:** ~600 câmeras sem HD (salas nunca visitadas no cache do mod): decidir upscale do SD ou casar pelo Método A (pHash). | FEITO: core/asset_io.gd carrega imagem E modelo (.glb via GLTFDocument) de DISCO em runtime, porque assets/ tem .gdignore - exigencia da politica P7-06 (o usuario traz a copia; assets nao entram no .pck) e de quebra o import do projeto caiu de >5min para 25s. MEDIDO (corrige a estimativa do plano): 2005 das 2105 cameras tem HD (95,2 por cento), 100 em SD, ZERO sem imagem, e NENHUMA sala e 100 por cento SD. A estimativa antiga de ~600 sem HD estava errada: os 1232 arquivos HD sao REUSADOS entre cameras/salas. Resta decidir o tratamento das 100 em SD (upscale vs pHash)
+- [x] **P1-03** (peso 3, impl 100%, valid 100%) — Fechar o alinhamento índice de câmera HD (cache PC) <-> câmera PS1
+  - **Validação:** Para as 170 salas, n_cameras(hd_map) == n_cameras(RDT); cada divergência listada e resolvida por render (o HD mostrado é o ângulo certo).
+  - **Fonte:** docs/formatos/hd_mapping.md §6
+  - **Reaproveita:** tools/hd_match.py
+  - **Nota:** ÚNICA pendência aberta do HD. stage_offset=1 já confirmado. Se o índice estiver trocado em alguma sala, o jogo mostra o cenário errado. | RESOLVIDO: o HD estava colado na CAMERA ERRADA em 1002 de 1853 imagens (54 por cento). Causa: hd_copy.py grava na ORDEM do cache do Classic REbirth, que so contem as cameras visitadas no PC - so 58 das 169 salas tem a mesma contagem do RDT. Nenhum teste de contagem pegava isso (os arquivos existiam, o numero fechava, e o jogo mostrava outro angulo). Detectado por CONTEUDO: tools/hd_verify.py compara o HD reduzido com cada slot do .BSS por correlacao normalizada (casamentos com NCC ~0,999, ou seja exatos) e gera o de-para; tools/hd_realign.py aplica e decodifica o .BSS para as cameras que ficam sem HD. RESULTADO: 1002 movidas, 280 PNG do PS1 gerados, 0 camera sem imagem, e a re-verificacao da 100 por cento de alinhamento (R101 saiu de 2/23 para 14/14). Fecha a ultima pendencia aberta do hd_mapping.md secao 6
+- [~] **P1-04** (peso 4, impl 100%, valid 70%) — Câmera fixa por RID (from/to) com FOV por câmera
+  - **Validação:** Overlay do 3D sobre o background em 20 câmeras amostradas: piso e linhas de fuga coincidem. Usar o campo attr como FOV em vez do 55° global do protótipo.
+  - **Fonte:** docs/formatos/ARD.md (struct de 32B: flag, attr/FOV, from, to, mask_data_ptr)
+  - **Reaproveita:** godot/scripts/room_game.gd, tools/cameras_to_3d.py
+  - **Nota:** FOV global de 55° é aproximação do protótipo antigo — aqui tem que sair do dado. | PARCIAL: room/camera_rid.gd monta a Camera3D do RID (from/to, keep_aspect=KEEP_HEIGHT, FOV por attr) e resolve o background da camera. ACHADO SOBRE O FOV (medido nas 2105 cameras): o campo attr NAO decodifica como FOV - sao apenas 24 valores distintos, 3 deles cobrem 88 por cento (29623 -> 902 cameras, 37165 -> 486, 32946 -> 461), nao correlaciona com a distancia camera->alvo e nao e constante por sala (54 de 169) nem por stage. CONSEQUENCIA UTIL: FOV por camera e um problema de 24 incognitas, nao 2105, calibraveis por render. Hoje so a classe 29623 esta calibrada (55 graus, herdado do render do prototipo na R100) = 43 por cento das cameras; o resto usa o default e o codigo declara isso (is_calibrated) | DECIFRADO: attr E o FOV. attr = distancia de projecao da GTE em ponto-fixo (h = attr/128) e FOV_vertical = 2*atan(120/h). EVIDENCIA: (a) os 24 valores distintos dao FOV em graus INTEIROS - desvio medio 0,11 grau, maximo 0,47; (b) hipotese nula rejeitada - 2000 amostras de 24 attrs aleatorios na mesma faixa dao desvio medio 0,25 e NENHUMA das 2000 chega tao perto de inteiros quanto o dado real; (c) a classe dominante (29623, 42,9 por cento das cameras, inclusive as duas da R100) da 54,81 graus = exatamente o 55 que o prototipo havia calibrado A MAO por render. As 3 principais: 55, 45 e 50 graus. Consequencia: as 2105 cameras tem FOV proprio vindo do DADO, sem calibracao manual. Implementado em CameraRID.fov_for. valid=70: a conferencia por camera contra o cenario e o gate P1-14 (o overlay de colisao em R100 ja mostra os moveis coincidindo)
+- [~] **P1-05** (peso 4, impl 95%, valid 85%) — Troca de câmera por RVD com a semântica PROVADA (não heurística)
+  - **Validação:** Implementar stride 0x14, bit0/ativa, byte-alto=grupo, ponto-em-quad e histerese em 2 fases (0x80023b84/0x80024abc). Travessia ida/volta em R100, R10E e R208 troca nos MESMOS limites do original (medido no emulador).
+  - **Fonte:** docs/formatos/ARD.md §3.5, consumidor 0x8002a84c
+  - **Reaproveita:** godot/scripts/room_game.gd (heurística de enquadramento — a substituir)
+  - **Nota:** O protótipo escolhia câmera por 'melhor enquadramento' (aproximação boa, mas NÃO é o algoritmo do jogo). Para 1:1, usar o RVD como o EXE usa. | FEITO: room/camera_rvd.gd implementa o consumidor per-frame PROVADO no EXE (0x8002a84c): from_cam == camera atual, zona ativa por byte-baixo dos flags, grupo por byte-alto (0x80=global ou == seletor corrente), ponto-em-quad por sinal de produto vetorial (0x8001020c) e commit do to_cam ancorando a entrada (gs+0x2148) = a HISTERESE. Zonas from==to tratadas como 'mantenha a camera aqui'. PROVADO por test_player_camera.gd: ponto-em-quad nos dois sentidos de orientacao, flags 0x8001/0x8000/0x0100, e travessia ida+volta da R100 sem flicker. valid=60: falta comparar a POSICAO do corte com o emulador (isso e 1:1 de verdade, entra no gate P1-14) | TRES BUGS CORRIGIDOS depois do usuario reportar 'cameras nao transicionam': (1) o SELETOR DE GRUPO nao estava ligado - eu fixava 0x80 (global) e as zonas de grupo especifico (0..31) eram todas rejeitadas; achei quem escreve gs+0x2495: 0x800249d8 faz lbu $v0,0xb($a1) -> sb, ou seja o byte +0xb do DESCRIPTOR DA PORTA e o grupo de camera (a doc do door_handler chamava de 'flag/needs_key-ish'); no disco e +0x19 no 0x61 e +0x21 no 0x62, e a distribuicao de valores casa com os grupos usados no RVD. (2) as zonas 'from == to' (mantenha aqui) vinham primeiro e cobriam quase a sala, ganhando das zonas de troca - agora a troca tem prioridade. (3) eu ancorava tambem nas zonas 'manter', e o EXE grava a ancora SO no commit da troca (0x8002a938) - ancorar na zona grande fazia a fase 1 retornar cedo para sempre. MEDIDO depois: R100 alcanca as 2 cameras (92 trocas na varredura), R101 com grupo 1 alcanca 4. E o MEU TESTE tinha furo: cobrava 'trocas <= 4', que passa com ZERO trocas - trocado por 'trocas >= 2, nos dois sentidos, e as 2 cameras alcancadas' | Mais dois ajustes vindos de teste em jogo: (a) a ancora bloqueava QUALQUER troca dentro do quad, e como as zonas se sobrepoem o jogador ficava preso na camera antiga e andava para FORA do quadro (medido: em (-21489,-24874) a zona 0->1 estava ativa e contendo o ponto, sem trocar) - agora a ancora barra so o REVERSO da ultima troca; (b) travamento de 6 ticks apos trocar, como rede de seguranca contra flicker (aproximacao DECLARADA: a histerese de 2 fases do EXE, 0x80023b84 detecta / 0x80024abc commita, nao esta reproduzida). Medido depois: 260 ticks de caminhada com 2 trocas e nenhuma rajada consecutiva | 2026-08-01: consumidor RVD reescrito 1:1: varre so a corrida contigua da camera atual COMECANDO NA SEGUNDA zona (0x8002a968 + delay slot: a 1a zona de cada corrida e sentinela — e dai que vem a histerese, nao de ancora/carencia, que foram removidas). point_in_quad exato (orientacao fixa, produtos truncados em 32 bits — mult/mflo); 4585/4585 zonas passam com o centroide. R100: 45 trocas por travessia -> 1. | 2026-08-02b: FECHADO o seletor de grupo: gs+0x2495 = player+0x09 = NIVEL do piso (-Y/1800), reescrito todo frame pelo passe de piso — o grupo das zonas RVD e o ANDAR (R101: grupos 1..4 == niveis de piso). Porta so da o valor inicial. Camera troca ao descer escada (medido 4->3 no nivel 3). | 2026-08-02c: REGRESSAO RELATADA (prints): R200 (rua plana, Y=0) camera presa na 11 — se grupo = -Y/1800, sala plana fica grupo 0 e as zonas de grupo 1..N nunca valem. Hipotese H2 em investigacao: player+0x09 = campo +0x0D do REGISTRO DE PISO pisado (indice de area de autoria), nao funcao do Y. Ver ARD.md 3.8.1; workflow de desassembly + medicao em andamento. | 2026-08-04: mecanica real do anti-flicker: entrar numa camera TIRA DE JOGO a 1a zona da corrida dela (fade 0x80051864 destroi o quad; carga 0x80049728 ancora). Port: mortas{} por visita, from==to nunca commita, corrida de 1 zona preservada (regra declarada; P1-14 confirma no emulador). R200 8..11 destravadas; R100 ida-e-volta ok; suite 415 verde.
+- [~] **P1-06** (peso 4, impl 85%, valid 70%) — Colisão real da sala (retângulos XZ, parede vs móvel, deslize por eixo)
+  - **Validação:** Nas 169 salas, o personagem nunca atravessa retângulo nem fica preso; em R100 para nas mesmas faces medidas no original (tolerância < 100 un PS1).
+  - **Fonte:** docs/formatos/ARD.md §3.6, tools/rdt_collision.py
+  - **Reaproveita:** godot/scripts/room_game.gd, godot/data/STAGE*/*_col.json
+  - **Nota:** REESCRITO sobre o achado do P3-10 (2026-08-01): nao existe raio -- o motor testa o TRAJETO contra SEGMENTOS, sem inflar nada (o collider_radius=380 do prototipo era invencao, e a caixa cheia era premissa errada). room/collision.gd implementa o laco 0x8004e830 com os 16 tipos de forma, o filtro de altura por nivel e o quadrante de 2 centros; player.gd deslize por eixo (aproximacao declarada) e SEM a regra de escape, que so existia porque metade das chegadas parecia encravada. PROVADO: 450/450 chegadas com primeiro passo livre, e na R100 ela para em parede nas 4 direcoes. FALTA para valid=100: comparar a FACE de parada com o emulador (P1-14) e reproduzir a resposta de colisao real.
+- [~] **P1-07** (peso 4, impl 85%, valid 70%) — Oclusão por ATLAS HD (mask0/mask1 2048² + mask_data_ptr, Z per-sprite)
+  - **Validação:** Silhueta 2D exata: em 10 câmeras com pose fixa, os pixels ocluídos coincidem com o original; Sum(count)==n_masks nas 1507 câmeras e o overlay HD casa.
+  - **Fonte:** docs/decomp/notes/occlusion.md (formato refeito: desc 8B, sprite SQUARE 8B/RECT 12B, Z=depth*16)
+  - **Reaproveita:** tools/hd_masks.py, godot/assets/MASK/ (2236 arquivos)
+  - **Nota:** O protótipo usava caixas 3D de profundidade (aproximação). 111644 sprites já extraídos nas 169 salas. | FEITO (posicao e fonte PROVADAS): room/occlusion.gd desenha os priority sprites por retangulo de tela (dx,dy,w,h x4) com Z per-sprite, sobre o viewport 3D. ACHADO que mudou a abordagem: o atlas de mascara HD NAO e indexavel por (sx*8, sy*8) - medi o bbox do alpha e a escala nao fecha (m0 da x~7,96 mas y=3,27 na cam0 e 2,47 na cam1; m1 da x=2,24 e 5,05), ou seja o atlas HD usa o empacotamento do proprio mod, nao as coordenadas de VRAM do PS1. O 'recall=1.0' que validava isso na decomp e teste FRACO (a uniao das regioes em 8x cobre a faixa toda). SOLUCAO: o recorte de primeiro plano E o proprio cenario naquela posicao, entao os pixels saem do BACKGROUND HD no mesmo retangulo - sem atlas. PROVA FORTE: renderizar os 77 recortes da R100 cam0 sem personagem e comparar com o cenario puro da 0 PIXEL de diferenca (bbox vazio). FALTA (valid<100): calibrar o depth_scale - a R100 cam0 e degenerada (todos os 77 sprites com Z=2368, ou todos cobrem ou nenhum); calibrar em R217 cam3 (85 grupos de Z), R101 cam20 (84) ou R114 cam2 (84). LIMITE DECLARADO: blocos com alpha parcial (grade, vao de escada) ficam opacos | 2026-08-02: REGRA REAL implementada (spec provada no EXE): painter's algorithm na OT — chave do sprite = depth CRU; chave do personagem = banco(secao 14 do RDT, 78 salas exportadas)*1024 + SZ>>5; menor chave = na frente. depth_scale=0.57 (calibracao a olho) REMOVIDO. Render de validacao: Jill atras do arquivo da R100 cam0 fica coberta pelos 77 recortes. Aproximacao declarada: decisao por personagem (torso), nao por poligono. Suite 411 verde.
+- [~] **P1-08** (peso 4, impl 60%, valid 30%) — Jill: PLD + PLW armado (3 bancos por arma, anexo no bone4/punho direito)
+  - **Validação:** As 10 armas equipáveis trocam malha+banco de locomoção; a arma aparece na mão (rest world -32,297,-435); 84/84 PLW carregam sem erro.
+  - **Fonte:** docs/formatos/PLD.md, docs/decomp/notes/plw.md
+  - **Reaproveita:** godot/assets/PLD/ (700 arquivos), tools/pld2gltf.py
+  - **Nota:** bank0=locomoção (armNN), bank1/2=overlays de mira/gesto -> 3 slots do EXE (player+0xf4/0xf8/0x100). | PARCIAL: o modelo da Jill carrega em runtime com os 40 clipes (22 animNN do PLD + 18 armNN retargetados do PLW) e toca o idle armado. FALTA o essencial do item: anexar a malha da ARMA no bone4 (punho direito) e trocar de banco conforme a arma equipada. Achado ao testar: PL00W00.glb e SO a malha da arma (1 no, sem skin, sem anim) - quem tem o corpo e os clipes e o PL00.glb | AVANCO + PENDENCIA MEDIDA: anexo no punho implementado (BoneAttachment3D em bone04, cadeia FK 0->2->3->4 confirmada no modelo: 15 ossos bone00..bone14). PROVA de que o anexo esta certo: o osso fica 1,58 un acima dos pes e 0,38 ao lado - altura de mao. Os 63 *_WPN.glb existem e carregam; as 21 armas sem slot (W00 e PL09/PL0A) sao pintadas na pele e nao precisam de anexo (dado, nao bug). NAO FECHA: a malha cai no punho mas ORIENTADA PARA DENTRO do corpo. Causa localizada no EXPORTADOR: pld2gltf.extract_weapon grava os vertices CRUS (bone-local do PLW) e o PLW tem 1 unico objeto com arma (23 prims) + mao (17); o rest do bone04 do PLD nao tem a mesma orientacao do espaco de osso do PLW. Corrigir = aplicar o rest do proprio PLW ao exportar o _WPN.glb (tarefa de tools/, nao de ajuste as cegas no GDScript)
+- [~] **P1-09** (peso 5, impl 40%, valid 20%) — Máquina de estados do player (8 ações macro, 16 rotinas, tier de anim por zona de HP)
+  - **Validação:** Cada transição do anim_map.json reproduzida; tier de anim segue a tabela 3x3 (0x8009cde0) conforme o HP; comparação de 8 sequências de input com o original em vídeo.
+  - **Fonte:** docs/decomp/notes/exe_combat.md, godot/data/anim_map.json
+  - **Reaproveita:** godot/scripts/jill_controller.gd, godot/data/anim_map.json
+  - **Nota:** r10=andar-frente c/ mira, r15=ré/DOWN, r12=anim scriptada. anim19/20 = poses de mira (não dano). | PARCIAL: actors/player.gd com 7 acoes (PARADO/ANDANDO/CORRENDO/RE/GIRANDO/QUICKTURN/MIRANDO), tick de 30 Hz sem delta, unidades PS1 inteiras, angulo de 12 bits, clipe por acao (bancos ARMADOS) e health_zone() para o tier de animacao. FALTA o miolo do item: as 16 rotinas do EXE, o dispatch por acao macro e o tier de anim pela tabela 3x3 (0x8009cde0)
+- [~] **P1-10** (peso 4, impl 50%, valid 30%) — Root-motion REAL por pose (substituir velocidade escalar)
+  - **Validação:** Deslocamento por frame == motion_por_pose_xyz; 10 passos de caminhada cobrem a mesma distância em unidades PS1 que no original (medida no emulador).
+  - **Fonte:** godot/data/physics.json (velocidades.*.motion_por_pose_xyz), anim_map.json (root_motion_por_clipe)
+  - **Reaproveita:** godot/data/physics.json
+  - **Nota:** O protótipo usava walk 2.2 / run 8.5 un/s escalar — aproximação explícita a ser eliminada. | PARCIAL: root motion por TABELA quando o dado existe (anim_map.json timing_e_loop: anim00 com 34 deltas por frame, anim10 com 10) e por media medida quando nao existe. LIMITE DECLARADO no codigo (usando_tabela()): os clipes ARMADOS (arm00/01/09), que sao os de gameplay, NAO tem vetor por-frame extraido - so a media (78/222/68 un por frame). Extrair o por-frame do PLW e tarefa de tools/, nao de GDScript
+- [~] **P1-11** (peso 3, impl 85%, valid 70%) — Tank controls completos: giro, ré, quick-turn, correr, subir/descer obstáculo e escada
+  - **Validação:** Todas as ações do anim_map disparam a anim certa; 'subir em item/obstáculo' e escada validados por render nas salas onde existem.
+  - **Fonte:** docs/formatos/animacoes_player.md
+  - **Reaproveita:** godot/scripts/jill_controller.gd
+  - **Nota:** Pendência conhecida do protótipo: mira e subir em item não validados. | FEITO: tank controls completos por mascara de Pad - frente/re na direcao atual, esquerda/direita giram no lugar (39 unidades de angulo por tick = 3,386 graus medidos), correr so para frente, re sempre em velocidade de andar, quick-turn de 180 graus disparado na BORDA de re+correr (256 un/tick = 8 ticks). PROVADO por teste headless com pad injetado: girar 10 ticks e voltar 10 fecha no angulo inicial; quick-turn fecha exatamente em 2048. FALTA: subir em obstaculo/escada e validar a mira (P4-04) | CORRECAO VINDA DE JOGO (usuario, 2026-07-31): W e S estavam invertidos. Causa: com facing=0 eu movia para +Z, mas a frente do no (e do mesh, com MESH_YAW_OFFSET_DEG=90 verificado por render) e -Z. Corrigido com rotate_xz(0,-d,facing) e a convencao ficou FIXADA por teste de regressao (facing 0 -> -Z; facing 90 -> -X; re -> oposto). Isso tambem fecha a pendencia que coords.gd declarava como 'a validar na F1' | SEGUNDA CORRECAO DE JOGO: A e D tambem estavam invertidos. Causa da mesma familia: no Godot (Y-up) yaw crescente gira ANTI-horario visto de cima, e como a frente e -Z, somar ao facing virava para a esquerda. Agora D DIMINUI o facing (horario). Fixado por 3 asserts de regressao: D reduz o angulo, A aumenta, e virada de 90 graus a direita faz a frente apontar +X. Licao registrada: os dois bugs sairam de convencao de eixo assumida, nao medida - e so jogar revelou | 2026-08-02: BUG DE DIRECAO fechado: o passo era rotate_xz(0,-d,facing) = ESPELHO em Z do forward do render — coincidia em ±X (onde a validacao a olho foi feita) e andava DE COSTAS perto de 0/2048 (print do usuario: facing 3628, modelo olhando para a camera, passo indo NE). Agora passo = (-rsin, +rcos)*d — alinhado ao render em todo angulo (erro 0.01 un). Quick-turn so na borda do RE com correr segurado (matava os 'controles invertidos'). Testes de convencao atualizados.
+- [~] **P1-12** (peso 2, impl 30%, valid 20%) — Iluminação/tom por câmera (o 3D casando com o background)
+  - **Validação:** Em 10 câmeras de tons diferentes (escuro, néon, exterior), o personagem não parece 'colado'; sem descasamento de tonemap entre 3D e bg 2D.
+  - **Fonte:** docs/godot_gameplay.md
+  - **Nota:** O bg 2D não passa pelo tonemap; o SubViewport sim. Resolver de forma global aqui, não por sala. | Ferramentas de calibracao por render adicionadas (F7 = grade no chao em Y ajustavel, F4 = caixas de gatilho e wireframe de colisao, SHOT_POS/SHOT_CAM/SHOT_ANIM/SHOT_GRADE no harness). Com elas ficou PROVADO que o Y do chao (-258) e a projecao estao certos na R100: a grade assenta nas lajotas nas duas cameras, e o menor Y do mesh coincide com o plano do chao
+- [~] **P1-13** (peso 3, impl 70%, valid 50%) — Som da sala: BGM ao entrar + SFX de passo/ambiente
+  - **Validação:** Entrar na sala toca a faixa correta (62 BGM, bgm_map.json); passos mudam por superfície; loop e ADSR dos SFX respeitados.
+  - **Fonte:** docs/godot_audio.md, docs/decomp/notes/sfx.md
+  - **Reaproveita:** godot/scripts/audio/audio_manager.gd, godot/assets/SOUND/ (840 arquivos)
+  - **Nota:** No protótipo antigo o AudioManager existia mas NÃO estava ligado (jogo sem som). | FEITO: novo tools/audio_gog.py converte o audio solto do PC para Ogg (125 faixas de DATA_A/SOUND + 441 vozes PT-BR de DATA_A/VOICE) - isso tirou DUAS etapas do estado MANUAL no pipeline (bgm_render virou bgm_gog, voices_ptbr automatizada). port/core/audio.gd toca a trilha por area/sala (mapa data/bgm_map.json), voz por nome de cena e SFX; ligado no autoload Game e disparado ao entrar na sala e ao atravessar porta - PROVADO no log: 'R100 -> faixa main2c'. O jogo nao e mais mudo (o prototipo tinha o AudioManager pronto mas nunca ligado). FALTA: passos por superficie, SFX pelos opcodes de som do script (P2-08) e conferir os pares area->faixa de ouvido (o proprio bgm_map declara que sao PROVISORIOS)
+- [ ] **P1-14** (peso 5, impl 0%, valid 0%) — GATE F1 — R100 e R10E indistinguíveis do original (no modo 4:3)
+  - **Validação:** 6 pontos de referência por sala, screenshot emulador vs port: (1) enquadramento da câmera, (2) escala/pose do personagem, (3) oclusão atrás de móvel, (4) parada na face do móvel, (5) posição exata do corte de câmera, (6) BGM/passos. Você aprova cada um.
+  - **Nota:** Nada da F2 começa antes deste gate. O gate é medido no modo 4:3 (o 16:9 é experimental e por definição não é 1:1).
+- [~] **P1-15** (peso 3, impl 80%, valid 50%) — Camada de apresentação parametrizada: modo de tela 4:3 (padrão) | 16:9 experimental
+  - **Validação:** Trocar o modo em runtime NÃO altera posição no mundo, colisão nem câmera lógica — só o recorte apresentado. Screenshot dos 2 modos na mesma pose: no 16:9 o cenário e o personagem continuam alinhados (o 3D acompanha o crop, sem descolar).
+  - **Fonte:** docs/port/PLANO_MIGRACAO.md §2
+  - **Nota:** O mundo é SEMPRE renderizado em 4:3 1280x960; o modo só decide se emoldura (pillarbox) ou recorta para 1280x720. Desenhar assim desde a F1 é o que torna o 16:9 uma opção, e não uma reescrita. | FEITO (base): present/screen.gd monta background 2D + SubViewport transparente com o 3D por cima; modo de tela como PARAMETRO (4:3 padrao / 16:9 experimental por crop) com crop_offset_y() exposto para quem desenha em coordenada de tela (P1-16/P6-10); troca de camera por [ e ], F9 alterna o modo. PROVADO por screenshot real (docs/port/shot_r100_jill.png): R100 camera 0 com background HD 1280x960 carregado de disco + Jill (PL00.glb, 40 clipes, idle armado arm02) na altura certa (2,97 un), pes no piso, perspectiva casando com o cenario. valid=40: o modo 16:9 ainda nao foi conferido em render, e o gate visual completo e o P1-14 | O loop de jogo esta ligado: present/screen.gd ouve Game.tick, chama player.tick(pad), converte para o no visual e roda a troca de camera pelo RVD. PROVADO por render com REPLAY de input (docs/port/shot_r100_andando.png, 60 ticks andando + 20 girando): a Jill se move e gira no cenario HD
+- [ ] **P1-16** (peso 2, impl 0%, valid 0%) — Oclusão e overlays corretos sob crop 16:9 (origem de tela deslocada)
+  - **Validação:** Em 10 câmeras, os pixels ocluídos coincidem nos dois modos de tela (o offset de crop de 120 px é aplicado à origem dos sprites de oclusão).
+  - **Fonte:** docs/decomp/notes/occlusion.md (tela = dx + add)
+  - **Reaproveita:** P1-07
+  - **Nota:** As máscaras são atlas com coordenada de TELA — se o crop não for propagado, a oclusão desalinha 120 px no modo 16:9.
+
+### F2 — VM do SCD (o cérebro do jogo)  ·  impl 69% / valid 59%
+
+**Objetivo:** Intérprete completo do bytecode de sala em GDScript: 144 opcodes, controle de fluxo, threads, bancos de flags, AOT, spawns, itens, som e cinemáticas scriptadas.
+
+**Gate de saída:** P2-10 — dry-run das 4238 funções das 169 salas: 0 opcode não implementado, 100% terminam em evt_end, diff limpo contra o disassembly do tools/scd_decode.py.
+
+- [~] **P2-01** (peso 5, impl 60%, valid 50%) — Intérprete da VM do SCD (144 opcodes 0x00..0x8f, dispatch, retorno 1=continua/2=fim)
+  - **Validação:** Tabela de 144 handlers implementada com os tamanhos autoritativos (VM_SIZES); nenhum opcode cai em 'não implementado' no dry-run das 169 salas.
+  - **Fonte:** docs/formatos/SCD.md, docs/decomp/notes/scd_opcodes.md
+  - **Reaproveita:** tools/scd_decode.py (VM_SIZES, OPCODE_SEM), godot/data/STAGE*/*_scd.json
+  - **Nota:** Espaço de opcodes PROVADO = 0x00..0x8f; não existem opcodes >= 0x90. | FEITO (camada de dispatch): port/script_vm/vm.gd com os 144 opcodes, PC, pilha de chamada, evt_end e os tamanhos vindos de data/scd_opcodes.json - gerado por tools/scd_export.py a partir de tools/scd_decode.py, que os leu byte a byte dos 144 handlers do EXE (uma verdade so, nao numeros copiados a mao no GDScript). Novo tool scd_export.py exporta tambem o BYTECODE CRU por sala (data/STAGE*/R###.scd, 17,5 MB, 4238 funcoes). FALTA: o EFEITO de cada opcode de gameplay (P2-03..P2-09) - hoje sem handler o opcode e NOP que avanca o PC
+- [~] **P2-02** (peso 4, impl 70%, valid 60%) — Controle de fluxo e threads (if/else/while/switch 4B/gosub, múltiplas threads de script)
+  - **Validação:** 4238/4238 funções fecham em evt_end na execução (não só na varredura); switch resolve a case-table a partir de +4.
+  - **Fonte:** docs/decomp/notes/scd_opcodes.md (0x06=if_begin, 0x14=switch 4B, init 0x80052474)
+  - **Reaproveita:** tools/scd_decode.py
+  - **Nota:** O PC do script é campo +0x1c do objeto; opcodes de controle escrevem o PC em vez de avançar fixo. | PARCIAL (andaime): evt_end com pop da pilha de chamada e as constantes dos opcodes de controle (if 0x06 4B, switch 0x14 4B com case-table em +4, for 0x18, while 0x1a, gosub 0x1d). O percurso atual e LINEAR de proposito (visita todo o codigo da funcao, que e o que o gate P2-10 mede). FALTA: desviar de verdade (if/else/while/switch/gosub) e as threads | MODO EXECUCAO no ar com desvio REAL: if_begin (0x06) empilhando o alvo em obj+0x140, else/endif (0x07), end-block (0x08), gosub (0x19) com pilha de chamada, evt_end (0x01) com pop, evt_next/yield (0x02/0x0a) encerrando o tick. ACHADO CORRIGIDO PELO TESTE: li o salto do 0x07 por analogia com o 0x06 (PC+4+u16) e 87 das 4238 funcoes aterrissavam fora de instrucao (ex.: R101 f0 -> opcode 0xf3 no PC 4590); a leitura literal da doc (PC += u16, base = PC, SEM o +4) faz 4238/4238 terminarem. Registrado em docs/decomp/notes/scd_opcodes.md. FALTA: switch (0x14) com a case-table e os lacos (0x0d/0x0e/0x18/0x1a/0x1b) - seguem lineares e DECLARADOS como tal, porque o layout da case-table/frame de laco ainda nao esta confirmado | 2026-08-02: carga da sala passou a executar SO a f0 (init) — as demais sao eventos chamados por gosub/flags, como no motor. Suite/travessias 40 salas continuam verdes.
+- [~] **P2-03** (peso 4, impl 80%, valid 70%) — Flags e variáveis do script (bancos 0xc0..0xf1) ligados ao estado global
+  - **Validação:** Sequência de SET/CHECK/CLEAR derivada de 20 salas produz o mesmo caminho de execução que o disassembly prevê.
+  - **Fonte:** docs/decomp/notes/exe_items.md (0x8009e3f8)
+  - **Reaproveita:** P0-07
+  - **Nota:** FEITO: CHECK (0x4c) e SET/CLEAR (0x4d) ligados ao GameState com o layout provado - CHECK le byte1=banco e u16@+2=bit (BYTE ALTO = negacao, testado com sltiu) e avanca +4; SET le byte1=banco, byte2=bit, byte3=modo (0=clear, senao set). PROVA de que gateia o fluxo de verdade: executando as 4238 funcoes DUAS vezes, com todas as flags zeradas e com todas ligadas, houve 2678 leituras, 2349 escritas e 558 FUNCOES TOMARAM CAMINHO DIFERENTE - se o CHECK nao gateasse nada os dois percursos seriam identicos | 2026-08-02: carga da sala passou a executar SO a f0 (init) — as demais sao eventos chamados por gosub/flags, como no motor. Suite/travessias 40 salas continuam verdes.
+- [~] **P2-04** (peso 4, impl 70%, valid 60%) — AOT/gatilhos (0x63 aot_set / 0x64 / 0x65 aot_reset) com colisão AABB e QUAD
+  - **Validação:** 738 gatilhos das 169 salas registram e disparam; teste de ponto-em-quad conferido contra 200 casos calculados em Python.
+  - **Fonte:** docs/decomp/notes/door_handler.md (VM de colisão 0x800505ac, AABB 0x800101c8, QUAD 0x8001020c)
+  - **Reaproveita:** tools/scd_gameplay.py
+  - **Nota:** O dispatch é por SCE: jalr *(0x8009e0bc + sce*4). | FEITO: port/script_vm/aot.gd + handlers na VM para 0x61 (32B) / 0x62 (40B, 4 pontos) / 0x63 (20B AABB) / 0x64 (28B quad) / 0x65 (aot_reset) / 0x68 (item), lendo os offsets PROVADOS (sce@+2, aot@+1, floor@+3, caixa em s16@+6/+8 e +10/+12) e testando ponto-em-quad/AABB como o motor (0x800101c8 / 0x8001020c). DIFERENCIAL: a VM conhece a fronteira real da instrucao, entao instala AOT SEM a heuristica de varredura que o extrator Python precisa usar. MEDIDO no cruzamento com o Python nas 169 salas: VM=403 portas vs 453 estaticas; 371 destinos casados, so-VM=1, so-Python=18. A diferenca NAO e bug: a VM instala so os AOT dos caminhos que EXECUTA (e o comportamento do jogo - a sala tem ou nao aquela porta conforme o progresso). PROVA: executando tambem com todas as flags LIGADAS aparecem 14 destinos que nao apareciam com flags zeradas, e a uniao dos dois estados cobre 386. O resto do vao depende de estado de jogo real (variaveis, nao so flags)
+- [~] **P2-05** (peso 4, impl 85%, valid 70%) — Transição de sala por AOT sce∈{1,13} (produtor -> handler -> room-loader)
+  - **Validação:** As 453 portas produzem o descriptor correto (next_stage/next_room em +0x16/+0x17) e o loader carrega o fileid certo.
+  - **Fonte:** docs/decomp/notes/door_handler.md
+  - **Reaproveita:** tools/scd_door_dest.py, godot/data/room_graph.json
+  - **Nota:** Cobertura provada: só sce 1 e 13 trocam sala; não há warp por script. | PARCIAL: o descriptor de porta e lido do bytecode com os offsets provados (0x61: chegada s16@+0xe/+0x10/+0x12/+0x14, next_stage@+0x16 com mod 9, next_room@+0x17, cut@+0x18; 0x62: +0x16..+0x20) e o de-para indice->nome (Rxyz = digitos hex) resolve o destino: a porta da R100 resolve R101, com posicao de chegada. FALTA: o produtor/consumidor de troca (gravar o descriptor, disparar o room-loader, aplicar spawn e camera de chegada) - e o P3-01/P3-03 | FEITO: port/room/world.gd fecha a cadeia AOT->descriptor->troca de sala. A porta da R100 leva a R101 com posicao/direcao/camera de chegada aplicadas. PROVADO por travessia real em 40 salas: 40/40 idas funcionam e 38 tem VOLTA reciproca funcionando
+- [~] **P2-06** (peso 4, impl 80%, valid 60%) — sce_em_set (opcode 0x7d, 24B) -> spawn de inimigo/NPC
+  - **Validação:** 1136 spawns + 80 NPCs em 137 salas instanciam na posição/direção certas com a classe certa (sem IA ainda — só presença e pose).
+  - **Fonte:** docs/decomp/notes/sce_em_set.md
+  - **Reaproveita:** tools/scd_enemies.py, godot/data/sce_enemies.json, godot/assets/ENEMY/
+  - **Nota:** class<->mesh é m:n; a espécie fina resolve em runtime. Usar emd_annotations com a confiança registrada. | FEITO: opcode 0x7d (sce_em_set, 24B) implementado na VM com o layout do handler 0x80056a2c (slot s8@+2, classe@+3, arma@+4, status@+6, model_id@+0xb, pos s16@+0xc/+0xe/+0x10, dir@+0x12, mira@+0x14/+0x16) e port/script_vm/spawn.gd resolve especie+modelo via class_to_species, SEMPRE com a confianca declarada (classe 0x10 -> 'Zumbi (macho)', conf ALTA, ENEMY/em10.glb; classe sem anotacao -> conf NENHUMA e nenhum modelo inventado). MEDIDO nas 169 salas: 1678 personagens em 135 salas, 52 classes distintas, todos com .glb no lugar, 71 com conf ALTA, 93 em posicao (0,0,0) (slots especiais, ignorados no render). NOTA sobre a contagem: o extrator Python conta 1136 inimigos + 80 NPCs; a VM acha MAIS porque executa todas as funcoes da sala independentemente, entao acumula spawns de ramos que o jogo real so roda em certas condicoes - mesma natureza da diferenca das portas, e nao um erro de leitura. PROVADO por render: R110 com 2 zumbis, R200 com 34 personagens. RESSALVA: eles flutuam um pouco acima do chao - o pos.y do spawn esta na convencao de Y do motor (mesma questao das chegadas de porta, item P3-10), nao na altura do pe. Sem IA ainda (F5)
+- [~] **P2-07** (peso 3, impl 80%, valid 70%) — Itens no chão (0x68) + pegar/examinar (193 IDs)
+  - **Validação:** Todos os itens colocados por script aparecem e entram no inventário com id/qtd corretos; textos de nome/exame vêm da tabela real EN+PT.
+  - **Fonte:** docs/decomp/notes/exe_items.md, docs/decomp/notes/messages.md
+  - **Reaproveita:** godot/data/re3_items.json, sce_items.json
+  - **Nota:** PEGAR 0x80069c3c; array de inventário 0x800d2134 (slot {id,qtd,flags}). | FEITO: itens no chao pelo opcode 0x68 (30B). ACHADO: a area do item e definida por DOIS CANTOS, nao por (x,z,w,d) como os gatilhos 0x63 - medido no dado (R104 f5: +6/+8 = -8424,-17139 e +10/+12 = -7710,-16350; ambos negativos e crescentes, logo coordenadas). item_id@+22 e qtd@+24 confirmados (id 33, qtd 1). World.pegar_item_sob_o_player() coloca no inventario e desativa o AOT. MEDIDO: 14 itens em 7 salas com 8 ids distintos - exatamente os 14 que a decomp mede (meu limiar inicial de >20 era chute meu; o dado corrigiu). Teste cobre pegar uma vez e nao pegar duas
+- [~] **P2-08** (peso 3, impl 70%, valid 60%) — Opcodes de som da VM (0x55..0x59) + filas de som
+  - **Validação:** Os 1528 disparos de som das 169 salas resolvem um VAG do banco; nenhum disparo silencioso não explicado.
+  - **Fonte:** docs/decomp/notes/sfx.md
+  - **Reaproveita:** tools/re3_sfx.py, godot/scripts/audio/sfx_map.json
+  - **Nota:** O link id_SCD->vag não é estático (resolve em runtime contra o banco) — implementar a resolução, não uma tabela chumbada. | FEITO: opcodes de som do script com o layout do OPCODE_SEM/sfx.md - 0x57 (6B, id=u16@+2, fila de LOOP 0x800de648), 0x58 (6B, id=u16@+2, canal=u8@+1, one-shot 0x800de798) e 0x59 (8B, id=u16@+4, a=u8@+2, b=u8@+3, pan/pitch). MEDIDO nas 169 salas: 1850 disparos (855 do 0x57, 646 do 0x58, 349 do 0x59) e 14 ids distintos em loop - a doc mede 14 ids de loop concentrados em 1..8, o que CASA. O total de 1850 e maior que os 1528 da doc pela mesma razao dos spawns: a VM executa todas as funcoes da sala independentemente. FALTA: ligar id_SE -> arquivo VAG (o link nao existe no estatico; resolve em runtime contra o banco) e tocar de verdade pelo Audio
+- [ ] **P2-09** (peso 4, impl 0%, valid 0%) — Cinemáticas scriptadas (câmera de cena, pose forçada, fade, espera, diálogo)
+  - **Validação:** 5 cenas scriptadas do começo do jogo reproduzidas lado-a-lado com o original (mesma câmera, mesmas poses, mesma duração em frames).
+  - **Fonte:** docs/decomp/notes/scd_opcodes.md, exe_combat.md (r12 = anim scriptada)
+  - **Reaproveita:** godot/assets/VOICE/
+- [x] **P2-10** (peso 4, impl 100%, valid 100%) — GATE F2 — dry-run das 4238 funções de script
+  - **Validação:** Harness executa cada função das 169 salas em modo seco: 0 opcode não implementado, 100% terminam em evt_end, e o trace de opcodes bate com o disassembly do tools/scd_decode.py.
+  - **Reaproveita:** tools/scd_decode.py
+  - **Nota:** Esse teste é o equivalente, no port, do fechamento 100% que a decomp já provou. | GATE CUMPRIDO nos TRES criterios, em GDScript: (1) 4238/4238 funcoes das 169 salas percorridas e TODAS fechando em evt_end; (2) ZERO opcode desconhecido - nenhum byte visitado cai fora do espaco 0x00..0x8f; (3) DIFF contra o Python: a contagem de opcodes por sala e IDENTICA a do tools/scd_decode.py nas 169 salas, 125384 instrucoes no total (duas implementacoes independentes lendo o mesmo bytecode). Teste: port/dev/tests/test_scd_vm.gd (26 asserts, 11 s)
+
+### F3 — Mundo inteiro (169 salas, 453 portas, save)  ·  impl 40% / valid 37%
+
+**Objetivo:** Sair da sala única: grafo de salas, transições com animação de porta, spawn de chegada, streaming, save/load e a rota crítica do jogo inteiro percorrível.
+
+**Gate de saída:** P3-06 (453/453 portas auditadas nos dois sentidos) + P3-07 (replay de input do início ao fim do jogo sem travar).
+
+- [~] **P3-01** (peso 5, impl 75%, valid 85%) — Grafo de salas e carregamento por porta (453 portas, 296 arestas)
+  - **Validação:** Toda porta leva à sala do room_graph.json; 279 arestas recíprocas voltam; as 17 mão-única se comportam como o motivo registrado (queda/gate/boss).
+  - **Fonte:** docs/decomp/notes/room_graph.md, godot/data/room_graph.json
+  - **Reaproveita:** tools/room_graph_build.py
+  - **Nota:** FEITO: World carrega qualquer sala, roda o script (que instala os AOT), troca a colisao e mantem historico. AUDITORIA DAS 453 PORTAS: 453/453 salas de destino CARREGAM e 453/453 cameras de chegada sao validas; 449/451 chegadas caem dentro do envelope da sala de destino (o que valida o espaco de coordenadas). FALTA: usar o room_graph.json para conferir as 296 arestas e as 17 mao-unica | 2026-08-02: interacao com sonda a frente (200/400/600, 0x80045fc0) — portas alcancaveis sem F2. | 2026-08-04: interacao por CONTATO DO CORPO (caixa do AOT inflada pelo raio 450) — nem 'preciso de F2', nem 'abre de longe'. diag_chegadas: 403 portas ok; 1 falha conhecida (R621->R60F: porta no bytecode para sala inexistente no disco — gated).
+- [ ] **P3-02** (peso 3, impl 0%, valid 0%) — Animação de porta (.DO1-.DO7) + fade e tempo da transição
+  - **Validação:** A porta certa por stage abre com rotação da folha na dobradiça; duração da transição igual ao original (contagem de frames em vídeo).
+  - **Fonte:** docs/decomp/notes/doors_model.md
+  - **Reaproveita:** godot/assets/DOOR/ (144 arquivos, 15 *_ANIM.glb), tools/do2gltf.py
+  - **Nota:** O easing por-frame é bit-packed irredutível (limite provado) — aproximar a curva e validar por vídeo.
+- [~] **P3-03** (peso 3, impl 65%, valid 50%) — Spawn de chegada (posição/direção do descriptor) e câmera inicial da sala
+  - **Validação:** Nas 453 chegadas o personagem aparece na posição/ângulo certos e a câmera inicial é a mesma do original em 20 amostras.
+  - **Fonte:** docs/decomp/notes/door_handler.md (+0x34/38/3c/6e)
+  - **Nota:** Bug conhecido do protótipo: entrada centralizada em vez de por lado. | PARCIAL com PENDENCIA MEDIDA: chegada aplica posicao/direcao/camera do descriptor. MAS: se todo retangulo de colisao bloqueia, so 216 das 453 chegadas ficam livres (51 por cento mesmo com raio 0) - e isso NAO e folga de soleira. Investiguei: (1) 449/451 chegadas estao dentro do envelope da sala de destino, logo o campo e a sala estao certos; (2) em R100 todos os 14 retangulos tem y~-447 e h~3900-4044, ou seja y/h NAO discriminam movel de parede; (3) type[1] so assume multiplos de 300 (-300..-28800), com cara de nivel e nao de normal; (4) filtrar por altura sobe as livres so ate 80 por cento, sem ponto de corte natural; (5) bits 0/1 de type[0] estao enriquecidos mas nao sao exclusivos. CONCLUSAO: a semantica POR RETANGULO da colisao esta parcialmente decodificada (novo item P3-10). O port desencrava a chegada procurando o ponto livre mais proximo - decisao DECLARADA do port, nao comportamento provado do motor | DOIS BUGS DE JOGO CORRIGIDOS (reportados pelo usuario como 'controles nao funcionam'): (1) LOOP DE PORTA - ao chegar, o personagem aterrissa DENTRO do gatilho da porta do outro lado e o AOT redisparava a cada tick, teleportando em loop; resolvido com ANCORA (a porta usada so volta a valer quando ele sai da caixa), mesma ideia da histerese do RVD. (2) CONGELADO NA CHEGADA - como a chegada cai dentro de colisao em ~49 por cento dos casos (P3-10), o deslize por eixo negava todo movimento e a personagem ficava imovel; resolvido com REGRA DE ESCAPE (se a posicao atual ja e invalida, qualquer movimento e aceito) + busca de desencravar ampliada para 3000 un em aneis de 22,5 graus. Ambos com teste de regressao: 60 ticks parado na porta = 1 troca so, e FWD apos chegar move de verdade
+- [ ] **P3-04** (peso 3, impl 0%, valid 0%) — Streaming/preload de sala e orçamento de memória
+  - **Validação:** Transição sem stall perceptível; pico de VRAM/RAM medido e documentado (backgrounds HD 1280x960 + máscaras 2048² são pesados).
+  - **Nota:** Descarregar máscaras/bg das câmeras não usadas; carregar por câmera, não por sala inteira.
+- [~] **P3-05** (peso 3, impl 85%, valid 80%) — Save/load (máquina de escrever, fita de tinta, slots)
+  - **Validação:** Salvar/carregar restaura sala, posição, inventário, flags e inimigos mortos; 10 ciclos sem divergência de estado.
+  - **Fonte:** docs/decomp/notes/menus.md, exe_items.md
+  - **Reaproveita:** P0-07
+  - **Nota:** Formato de save próprio (não é preciso ser compatível com o .sav do PS1); o CONTEÚDO salvo é que precisa ser completo. | FEITO: World.salvar/carregar_save gravam estado global (16 bancos de flag, inventario, progresso) + posicao/angulo/HP/arma/camera/sala/historico. PROVADO por teste de ida e volta: sala, posicao, angulo, HP, arma equipada, camera, flag de progresso e inventario todos preservados; save ausente devolve false. Um bug pego pelo proprio teste: eu incrementava save_count DEPOIS de serializar, entao o arquivo guardava o valor antigo. FALTA: multiplos slots, fita de tinta e a maquina de escrever (a mecanica, nao o formato)
+- [~] **P3-06** (peso 4, impl 70%, valid 50%) — Auditoria automática das 453 portas nos dois sentidos
+  - **Validação:** Harness atravessa cada porta e valida sala destino + spawn + câmera; 453/453 sem erro, relatório salvo.
+  - **Fonte:** docs/decomp/notes/door_handler.md
+  - **Nota:** AUDITORIA AUTOMATICA no ar (port/dev/tests/test_world.gd): as 453 portas conferidas quanto a destino que carrega (453/453), camera de chegada valida (453/453) e chegada dentro do envelope da sala (449/451). Travessia real em 40 salas: 40 idas + 38 voltas reciprocas. FALTA para valid=100: atravessar as 453 nos DOIS sentidos dentro do runtime (hoje a amostra e 40) e fechar o P3-10 (semantica da colisao) para poder cobrar spawn livre | Afordancia de teste no jogo real: F2 teleporta para a proxima porta e F3 lista no console os AOT/portas da sala; SHOT_DOOR=1 faz o harness atravessar e capturar. PROVADO por render: R100 -> R101 com chegada e camera 6 aplicadas, e a R101 renderizada com FOV 44,9 (derivado do attr 37165)
+- [ ] **P3-07** (peso 5, impl 0%, valid 0%) — Rota crítica completa (início ao fim do jogo, sem combate)
+  - **Validação:** Replay de input percorre a campanha inteira: nenhuma porta morta, nenhum travamento, nenhum evento de progressão faltando.
+  - **Fonte:** godot/data/room_graph.json
+  - **Reaproveita:** P0-09 (replay)
+  - **Nota:** Marco: 'o jogo inteiro existe'.
+- [~] **P3-10** (peso 4, impl 98%, valid 93%) — Fechar a semântica POR RETÂNGULO da colisão (qual retângulo bloqueia)
+  - **Validação:** Formato da colisao fechado contra o EXE (formas, filtros, altura, rotacao) e as 453 chegadas de porta ficam livres SEM empurrao; a colisao da R100 para na face.
+  - **Fonte:** docs/formatos/ARD.md (seção 'Achado do PORT')
+  - **Reaproveita:** tools/rdt_collision.py, tools/exe_parse.py
+  - **Nota:** FECHADO (2026-08-01). O registro de 16 B NAO e uma caixa solida: e uma LISTA DE SEGMENTOS, e o teste do motor (laco 0x8004e830) e o do TRAJETO cruzando um segmento, com a interseccao feita na GTE por 0x8004ef74 (4x NCLIP = straddle). Tabela de 16 formas em 0x8009e088, todas desassembladas: forma 0 = circulo inscrito (632 registros), 1/7 = as duas diagonais do retangulo (3163), 2 e 3 = linha media + 2 diagonais deslocadas (857), 4 = cruz das medianas (17), 5 = uma diagonal (3), 6 = 'L' de 2 arestas com o canto em bits&0x30 -- o que explica os tipos 6/22/38/54 (463), 9/10 = retangulo com as 4 arestas mascaraveis por +0x0A bits 8-11 (121), 8/11/12 = return 0, nunca colide (33). Campos fechados: +0x0C = base (Y = -1800*valor), +0x0E = topo, e o collider vale onde topo <= y <= base; +0x0A bit 12 = collider girado 45 graus (o motor gira o TRAJETO por 181/256 = 1/raiz(2)); +0x0A bits 0-7 = bitmap de quadrante contra os DOIS centros do cabecalho (0x8004d6b8). PROVADO: (a) o modelo antigo de caixa cheia deixava a R101 com 0% de area caminhavel e so 51% das chegadas livres; com o modelo real sao 450/450 (100%) medidas em dev/diag_col.gd; (b) andando 40 ticks nas 4 direcoes a partir da chegada da R100 ela se move nas 4 e para em parede a 1092/2106/2106/3120 un; (c) 46 asserts novos em dev/tests/test_collision.gd cobrem cada forma, o filtro de altura, o filtro de mascara 0x40 e o quadrante; suite completa 408 asserts VERDE. Colateral: o to_y das portas E o piso (multiplos de 1800; 293 chegadas em 0) -- o -258 do prototipo levantava a Jill do chao, e nao existe raio de personagem no teste do motor (o 380 era invencao). ABERTO: os bits 6-15 de +0x08 (so o 0x40 esta provado) e a resposta de colisao do EXE (0x8004fe70/0x8005003c); o port desliza por eixo, aproximacao declarada em actors/player.gd. | ATUALIZACAO 2026-08-01: o movimento NAO usa o laco de segmentos (que e predicado): usa o resolver 0x8004af04 — caixa cheia inflada por raio 450, faixa de nivel +0x0C..+0x0D, clamp por eixo na face pelo lado de onde se vinha (0x8004c960), flag 0x100 rejeita o passo. Implementado em collision.gd::resolver + player._mover. Opcode 0x6e implementado na VM (348 chamadas/69 salas; reset por visita). Medido: para na face inflada exata (-21321 = f3+451) nas 4 direcoes da R100, nao entra mais no armario, re desliza. Aproximacoes declaradas: resposta radial p/ forma 0 e 'menor fuga' no caso-dentro. Suite 408 verde. Ver ARD.md 3.7. | CORRECOES do veredito adversarial (2026-08-02): mascara do resolver = 0x4000 em +0x08 (nao 0x40); SO a funcao 0 do SCD roda na carga (executar todas as funcoes com o 0x6e implementado deixava colliders de EVENTO ligados: 287/348 chamadas 0x6e sao de evento -> paredes invisiveis em 69 salas, o 'nao consigo andar em nenhuma sala'); escolha de face pelo lado de onde se vinha (canto nao congela); resolver roda todo tick (parado escapa pela face mais proxima). Tour de 500 ticks em R100/R101/R11D/R200: sem congelamento. Suite 408 verde. Ver ARD.md 3.7.1. | 2026-08-02b: floor_height (0x8004d720) implementado — Y rederivado do piso todo frame, rampas 9/10 lineares, cone 12, piso_padrao exportado do cabecalho SCA +0x0E. Escada da R101 desce sem flutuar (validado pelo usuario). | 2026-08-02c: REGRESSAO RELATADA: R201 (garagem, Y=-16200 -> nivel 9 por H1) tem pontos onde W nao anda. Suspeita: filtro de faixa [+0x0C..+0x0D] do resolver com nivel_ator errado (mesma questao do player+0x09, ARD.md 3.8.1). Workflow medindo o registro culpado e a fracao de pontos presos da sala. | 2026-08-04: resposta POR FORMA no resolver (6/2/3/4 = arestas, nao caixa cheia) — 17 chegadas presas -> 0; diag_chegadas atravessa as 403 portas do jogo com 0 presas reais; cross-stage 17/17. +0x0C..+0x0D = FAIXA de niveis (H1 provada: +0x09 = -trunc(y_piso/1800), divisao 0x91A2B3C5).
+- [ ] **P3-08** (peso 3, impl 0%, valid 0%) — Live-selection (escolhas com timer) e ramificações
+  - **Validação:** Cada live-selection do jogo aparece com o mesmo tempo-limite e as duas consequências levam ao caminho certo.
+  - **Fonte:** docs/decomp/notes/scd_opcodes.md
+  - **Nota:** Mecânica-assinatura do RE3 — sem ela não é 1:1.
+- [ ] **P3-09** (peso 4, impl 0%, valid 0%) — Puzzles e eventos de sala (relógio, gerador, bonde, válvulas, etc.)
+  - **Validação:** Cada puzzle da campanha resolve pelo script (não por código ad-hoc) e as flags de progressão batem.
+  - **Fonte:** docs/formatos/scd_gameplay.md
+  - **Reaproveita:** P2-01
+  - **Nota:** Se a VM estiver certa, isso 'sai de graça' — é o teste de verdade da F2.
+
+### F4 — Combate e entidades  ·  impl 0% / valid 0%
+
+**Objetivo:** Entidade genérica de personagem, animação/skinning de inimigo, mira e aim tiers, hitscan e projéteis, tabela de dano e reações.
+
+**Gate de saída:** P4-09 — nº de tiros para matar == original em 6 combinações arma×inimigo, medido no emulador e no port.
+
+- [ ] **P4-01** (peso 4, impl 0%, valid 0%) — Entidade genérica de personagem (char-struct de 0x1fc: pos, dir, HP, estado, timers)
+  - **Validação:** Player e inimigos compartilham a mesma entidade; campos usados pelo script/IA presentes com os mesmos offsets lógicos (HP=+0xcc, pos=+0x34, dir=+0x6e).
+  - **Fonte:** docs/decomp/notes/exe_ai.md, exe_combat.md
+  - **Nota:** Um só caminho de desenho para player e inimigo (provado no EXE).
+- [ ] **P4-02** (peso 4, impl 0%, valid 0%) — Animação/skinning de inimigo (EMD/EMR, bone-local, índice explícito por primitiva)
+  - **Validação:** 69/69 EMD carregam e animam; FK por ponteiro-de-pai na ordem T·Rx·Ry·Rz; nenhuma malha explodida nos 59 modelos com rig bom.
+  - **Fonte:** docs/decomp/notes/emd_skinning.md
+  - **Reaproveita:** tools/emd2gltf.py, godot/assets/ENEMY/ (279 arquivos)
+  - **Nota:** Binding é ÍNDICE EXPLÍCITO por primitiva, não posicional.
+- [ ] **P4-03** (peso 4, impl 0%, valid 0%) — Corrigir o rig dos ~8-10 EMD multi-osso assados (hunters EM22/23/24, deimos EM28/35, Nemesis EM38, EM34/36/3A)
+  - **Validação:** Cada um dos modelos afetados anima sem rasgar/derreter, aprovado por você em render animado.
+  - **Fonte:** docs/decomp/notes/enemy_mesh.md
+  - **Reaproveita:** godot/assets/ENEMY/
+  - **Nota:** ESTE É O 'BUG DE MODELO 3D' CONHECIDO. Limite do dado: o índice vértice->osso foi DESCARTADO no EMD do PC e as 2 fontes (Rofs9/Rofs10) são idênticas. Caminho realista = rig manual no Blender (geometria, UV, textura e animação já estão certas — falta só o peso por osso). Nemesis é obrigatório; sem ele não há 1:1.
+- [ ] **P4-04** (peso 5, impl 0%, valid 0%) — Mira e auto-lock (aim tier 0..3 -> +0x6e, poses 14-17 e upper-aim 19/20)
+  - **Validação:** Mirar seleciona o mesmo alvo que o original em 10 cenários de 2+ inimigos; a altura/pitch do braço muda de tier na mesma condição.
+  - **Fonte:** docs/decomp/notes/exe_combat.md
+  - **Nota:** tier -> player+0x6e = (tier<<9)+0x800.
+- [ ] **P4-05** (peso 4, impl 0%, valid 0%) — Disparo: hitscan genérico + projéteis dedicados (foguete w10, granada w14) + faca w0
+  - **Validação:** Hitscan aplica dano no MESMO frame (sem entidade-bala); foguete/granada viajam como entidade; frame do tiro por arma segue a tabela 0x8009cf28.
+  - **Fonte:** docs/decomp/notes/exe_combat.md
+- [ ] **P4-06** (peso 4, impl 0%, valid 0%) — Dano e HP (tabela 0x8009d834, dano = word & 0x3ff) + zonas de saúde
+  - **Validação:** Dano por arma x alvo idêntico à tabela extraída; zona de saúde do player muda o tier de anim conforme a tabela 3x3.
+  - **Fonte:** docs/decomp/notes/exe_combat.md
+- [ ] **P4-07** (peso 3, impl 0%, valid 0%) — Reações: recuo por arma, hit-stun, queda, morte e gore
+  - **Validação:** Comparação em vídeo: mesmo nº de frames de recuo e mesma animação de morte por arma/inimigo em 6 casos.
+  - **Fonte:** docs/decomp/notes/exe_combat.md (recuo 0x80048308), exe_ai.md (DEATH/DAMAGE)
+- [ ] **P4-08** (peso 3, impl 0%, valid 0%) — Dano recebido, veneno, cura (ervas/spray) e estados FINE..DANGER
+  - **Validação:** Curas restauram os valores certos; veneno drena no ritmo certo; combinação de ervas segue a receita real (vive no menu).
+  - **Fonte:** docs/decomp/notes/exe_items.md, exe_combat.md
+  - **Reaproveita:** godot/scripts/ui/inventory.gd
+- [ ] **P4-09** (peso 4, impl 0%, valid 0%) — GATE F4 — contagem de tiros por arma x inimigo == original
+  - **Validação:** Medir no emulador e no port: handgun/shotgun/magnum x zumbi/cão/hunter (6 pares). Números iguais, incluindo a variação por região do corpo.
+
+### F5 — IA por classe (12 overlays)  ·  impl 0% / valid 0%
+
+**Objetivo:** Reimplementar as máquinas de estado de cada classe de inimigo/NPC a partir de ai_overlays.json (548 handlers com papel determinado), uma classe por vez.
+
+**Gate de saída:** P5-09 — cada classe validada em vídeo lado-a-lado com o original no mesmo cenário/estímulo.
+
+- [ ] **P5-01** (peso 4, impl 0%, valid 0%) — Dispatcher de IA por classe + ciclo de vida das entidades
+  - **Validação:** Cada classe do sce_em_set roteia para o seu comportamento; slots/limite de entidades por sala como no original.
+  - **Fonte:** docs/decomp/notes/exe_ai.md (0x80023e00)
+  - **Reaproveita:** godot/data/ai_overlays.json
+  - **Nota:** 12 overlays, 548 handlers com papel determinado (ANIM/STATE 138, SUB-DISPATCH 101, IDLE/DECIDE 96...).
+- [ ] **P5-02** (peso 5, impl 0%, valid 0%) — Zumbi (andar, virar, notar, agarrar, morder, comer no chão, levantar, rastejar)
+  - **Validação:** Vídeo lado-a-lado no mesmo cenário: mesma distância de percepção, mesmo tempo de reação, mesma frequência de agarrão em 5 aproximações.
+  - **Fonte:** docs/decomp/notes/exe_ai.md (state_machines)
+  - **Reaproveita:** godot/data/ai_overlays.json
+  - **Nota:** Classe mais comum do jogo — acerta ela e 60% do combate está certo.
+- [ ] **P5-03** (peso 3, impl 0%, valid 0%) — Cão Cerberus (investida, salto, circular)
+  - **Validação:** Vídeo lado-a-lado: mesmo padrão de investida/recuo.
+  - **Fonte:** docs/decomp/notes/exe_ai.md
+- [ ] **P5-04** (peso 3, impl 0%, valid 0%) — Corvo, aranha, verme e criaturas menores
+  - **Validação:** Cada classe validada em vídeo no cenário onde aparece.
+  - **Fonte:** docs/decomp/notes/exe_ai.md
+- [ ] **P5-05** (peso 4, impl 0%, valid 0%) — Hunter (β/γ): salto, garra, decapitação
+  - **Validação:** Vídeo lado-a-lado; depende de P4-03 (rig) estar resolvido.
+  - **Fonte:** docs/decomp/notes/exe_ai.md
+  - **Nota:** Bloqueado por P4-03.
+- [ ] **P5-06** (peso 5, impl 0%, valid 0%) — NEMESIS (t41): perseguição entre salas, fases, ataques, tentáculo, foguete
+  - **Validação:** Ele entra/sai das salas nos mesmos gatilhos, persegue entre salas, muda de fase nos mesmos HP e derruba o mesmo dano — validado em 4 encontros scriptados.
+  - **Fonte:** docs/decomp/notes/exe_ai.md (t41 0x80020eb8)
+  - **Nota:** O sistema mais complexo do jogo e a razão de o RE3 ser o RE3. Depende de P4-03 (rig do EM38).
+- [ ] **P5-07** (peso 4, impl 0%, valid 0%) — Deimos, gravedigger e bosses finais
+  - **Validação:** Cada boss com suas fases e padrões validado em vídeo.
+  - **Fonte:** docs/decomp/notes/exe_ai.md
+- [ ] **P5-08** (peso 3, impl 0%, valid 0%) — NPCs (Carlos, Mikhail, Nikolai, Brad) e comportamento em cena
+  - **Validação:** NPCs aparecem, andam e falam nas cenas certas; nenhuma cena bloqueia por NPC parado.
+  - **Fonte:** docs/decomp/notes/sce_em_set.md (80 NPCs)
+  - **Reaproveita:** godot/assets/PLD/
+- [ ] **P5-09** (peso 4, impl 0%, valid 0%) — GATE F5 — todas as classes validadas em vídeo lado-a-lado
+  - **Validação:** Uma pasta de comparações (original vs port) por classe, aprovada por você.
+
+### F6 — Meta-jogo  ·  impl 2% / valid 1%
+
+**Objetivo:** Tudo fora do gameplay puro: 13 telas de menu, inventário fiel, mapa, files, FMV HD, vozes dual-idioma, dificuldades, epílogos/finais e Mercenários.
+
+**Gate de saída:** Jogo completável do menu de título ao epílogo, nos 2 finais, + Mercenários jogável com os 3 personagens.
+
+- [ ] **P6-01** (peso 4, impl 0%, valid 0%) — 13 telas de menu (título, novo, continuar, opções, save, seleção) com composição de sprite em runtime
+  - **Validação:** Cada tela reproduz o draw_seq extraído; navegação, sons de cursor e tempos iguais ao original em vídeo.
+  - **Fonte:** docs/decomp/notes/menus.md
+  - **Reaproveita:** tools/menu_extract.py, godot/assets/MENU/ (222 arquivos)
+  - **Nota:** O rect por sprite é COMPOSTO EM RUNTIME (pipeline 0x800746c0) — reimplementar o compositor, não chumbar coordenadas.
+- [ ] **P6-02** (peso 3, impl 0%, valid 0%) — Inventário/status fiel (grade 2x4, EQUIP/USE/COMBINE/CHECK, ECG, ícones HD)
+  - **Validação:** Layout, cores e verbos idênticos ao original; 193 itens com ícone e texto certos (ou marcados com confiança explícita).
+  - **Fonte:** docs/godot_ui.md, docs/formatos/hd_ui.md
+  - **Reaproveita:** godot/scenes/ui/inventory.tscn, godot/assets/UI/ (120 arquivos)
+  - **Nota:** Melhor peça do protótipo antigo — migra quase direto. RE3 NÃO tem HUD em gameplay: não portar o hud.tscn.
+- [ ] **P6-03** (peso 3, impl 0%, valid 0%) — Tela de mapa (MAP_U + 92 mapas HD) com posição/salas visitadas
+  - **Validação:** Mapa abre na página certa por área, marca sala atual e visitadas como o original.
+  - **Fonte:** docs/formatos/map.md
+  - **Reaproveita:** tools/map_decode.py, godot/assets/MAP/, godot/data/map_graph.json
+- [ ] **P6-04** (peso 2, impl 0%, valid 0%) — Files/memos (280 HD) + tabela de mensagens EN/PT
+  - **Validação:** Todo file lido no jogo abre com o texto certo nos 2 idiomas.
+  - **Fonte:** docs/decomp/notes/messages.md
+  - **Reaproveita:** godot/data/re3_messages.json
+- [ ] **P6-05** (peso 3, impl 0%, valid 0%) — FMV: reencode dos zmovie/*.mp4 (HD do mod) -> Ogg Theora + player integrado
+  - **Validação:** 14 vídeos tocam com áudio em sync, resolução >= 960p, disparados no ponto certo do script, com skip; sem stutter.
+  - **Fonte:** docs/formatos/audio_video.md
+  - **Reaproveita:** tools/ffmpeg, godot/assets/ZMOVIE/ (14 .ogv do PS1, 320x160 — a substituir)
+  - **Nota:** Godot 4 só toca Ogg Theora nativo. MEDIDO: os 14 .mp4 são 1280x960 h264 29,97fps e vêm do pacote PT-BR (Edição Definitiva Dublado) — upscalados E DUBLADOS em PT-BR (não há trilha EN). FMV em inglês exigiria o .dat do PC ou o .STR do PS1 = limitação a declarar. opn.mp4 tem 135 MB. Ver docs/formatos/localizacao_ptbr.md.
+- [~] **P6-06** (peso 2, impl 40%, valid 20%) — Vozes dual-idioma (441 ogg x2) + legendas + seletor
+  - **Validação:** Toda cena com fala toca a voz certa no idioma escolhido; paridade EN/PT verificada por nome de arquivo.
+  - **Fonte:** docs/formatos/rofs.md, docs/formatos/localizacao_ptbr.md, docs/godot_ui.md
+  - **Reaproveita:** godot/scripts/lang_manager.gd, godot/assets/VOICE/ (1812 arquivos)
+  - **Nota:** FONTE DEFINITIVA (medida): PT-BR = DATA_A/VOICE do pacote dublado, 441 WAV sem recompressão (melhor que os .ogg atuais); EN = Rofs*.dat. Paridade de 441 confirmada nas duas fontes. | AVANCO: as 441 vozes PT-BR ja estao em Ogg no port (fonte DATA_A/VOICE, sem recompressao intermediaria) e o Audio.tocar_voz(cena) toca por nome. FALTA: as vozes EN (Rofs), legendas e o seletor
+- [ ] **P6-07** (peso 3, impl 0%, valid 0%) — Dificuldades (Easy/Hard) + loadout de novo jogo (template estático 0x800a018c)
+  - **Validação:** Novo jogo entrega o loadout do template certo; diferenças de dificuldade (munição, dano, inimigos) conforme o dado.
+  - **Fonte:** docs/decomp/notes/menus.md, exe_items.md
+  - **Reaproveita:** godot/data/re3_items.json (newgame_loadout_templates)
+  - **Nota:** Qual template o retail usa é decisão de flag (jump-table 0x80010f9c) — resolver na implementação.
+- [ ] **P6-08** (peso 3, impl 0%, valid 0%) — Epílogos, os 2 finais e ranking/tempo de jogo
+  - **Validação:** Os 2 finais alcançáveis pelas condições certas; tela de ranking com os mesmos critérios (tempo, saves, itens).
+  - **Fonte:** docs/decomp/notes/menus.md
+  - **Reaproveita:** godot/assets/ZMOVIE/ (enda, endb)
+- [ ] **P6-09** (peso 4, impl 0%, valid 0%) — Mercenários — Operation Mad Jackal (3 personagens, regras, loja de tempo)
+  - **Validação:** Os 3 personagens com loadout correto, cronômetro, resgate de NPC e ranking; comparado com o original em 1 run por personagem.
+  - **Fonte:** docs/decomp/notes/menus.md (SELECT.BIN byte-idêntico), re3_items.json (loadouts_mercenaries)
+  - **Reaproveita:** godot/data/re3_items.json
+  - **Nota:** Já decodificado — é implementação, não pesquisa.
+- [ ] **P6-10** (peso 2, impl 0%, valid 0%) — Safe-area de UI: menus, inventário e mapa legíveis nos dois modos de tela
+  - **Validação:** As 13 telas de menu + inventário + mapa + files sem elemento cortado nem esticado em 4:3 e em 16:9; texto legível nos dois.
+  - **Fonte:** docs/decomp/notes/menus.md (composição em base 320x240 escalada 4x)
+  - **Reaproveita:** P1-15
+  - **Nota:** A UI do RE3 é composta numa base 320x240 (x4 = 1280x960). No modo 16:9 ela precisa ancorar numa safe-area, não seguir o crop.
+- [ ] **P6-11** (peso 3, impl 0%, valid 0%) — Tabelas de texto PT-BR do mod (17 xml globais + 129 por sala) casadas por índice
+  - **Validação:** Índice do XML casa 1:1 com o índice de mensagem do RDT/EXE: em 20 salas amostradas o texto PT-BR exibido é o do memo/exame certo; par EN (tabela do EXE 0x8a124) <-> PT (xml) completo por id, divergências listadas.
+  - **Fonte:** docs/formatos/localizacao_ptbr.md
+  - **Reaproveita:** godot/data/re3_messages.json, re3_items.json
+  - **Nota:** DESCOBERTA (2026-07-31): mod_BH3_Portuguese/xml = <Strings><Text> indexado por posição; rdt/R###.xml = texto in-game por sala (129 salas) com marcação {scroll N}. RESOLVE o TODO de godot_ui.md (textos de exame eram aproximação). items_simple.xml dá nome de item por item_id em PT-BR.
+- [ ] **P6-12** (peso 2, impl 0%, valid 0%) — Decodificar DATA_A/BSS/R###.SLD (169 arquivos; hipótese: legenda/slide por sala)
+  - **Validação:** Formato descrito byte a byte com evidência (cabeçalho, contagem, payload) e o conteúdo de 3 salas confere com o que o jogo mostra; OU concluir com prova que não é necessário ao port (registrar fora de escopo).
+  - **Fonte:** docs/formatos/localizacao_ptbr.md §2
+  - **Nota:** Um por sala (169), de 8 B a 464 KB. Cabeçalho de R100.SLD: 01 00 00 00 | 14 2A 00 00 (0x2a14=10772). Não confundir com hires/slide (34 telas de ending). Só investigar se P6-11 não cobrir a legenda in-game.
+
+### F7 — Fidelidade final e release  ·  impl 0% / valid 0%
+
+**Objetivo:** Tempos/fades, mixagem, input, suíte de regressão, performance, export com a política 'traga sua própria cópia' e documentação.
+
+**Gate de saída:** Build limpo que roda sem nenhum asset da Capcom/SHDP embutido + suíte de regressão verde.
+
+- [ ] **P7-01** (peso 2, impl 0%, valid 0%) — Tempos, fades e transições de tela iguais ao original
+  - **Validação:** Contagem de frames de fade/transição igual em 10 momentos-chave (vídeo).
+  - **Fonte:** docs/decomp/notes/menus.md
+- [ ] **P7-02** (peso 3, impl 0%, valid 0%) — Mixagem final de áudio (267 SFX com loop/ADSR, 62 BGM por área e evento)
+  - **Validação:** Nenhum SFX estourando/cortado; BGM troca nos mesmos gatilhos; níveis relativos conferidos de ouvido contra o original.
+  - **Fonte:** docs/decomp/notes/sfx.md, docs/formatos/audio_video.md
+  - **Reaproveita:** godot/assets/SOUND/
+  - **Nota:** BGM é sequência Capcom renderizada com SoundFont do VAB real (re3.sf2) — ADSR/pitch aproximados; avaliar render final por faixa.
+- [ ] **P7-03** (peso 2, impl 0%, valid 0%) — Input: gamepad, esquemas de controle do original (tipo A/B), vibração
+  - **Validação:** Todos os botões mapeados como no original nos 2 esquemas; jogável de ponta a ponta só com controle.
+  - **Fonte:** docs/formatos/exe.md (pad 0x500)
+- [ ] **P7-04** (peso 4, impl 0%, valid 0%) — Suíte de regressão (testes headless + screenshots de referência)
+  - **Validação:** Um comando roda tudo: VM (4238 funções), 453 portas, 169 salas, replay da rota crítica e diff de screenshots; verde antes de qualquer release.
+  - **Reaproveita:** P0-09
+- [ ] **P7-05** (peso 2, impl 0%, valid 0%) — Performance e tempo de carregamento
+  - **Validação:** 60 fps de render estáveis em máquina modesta; transição de sala abaixo do tempo do original.
+  - **Nota:** Backgrounds 1280x960 + máscaras 2048² são o gargalo (ver P3-04).
+- [ ] **P7-06** (peso 4, impl 0%, valid 0%) — Export PC com política 'traga sua própria cópia' (assets fora do binário)
+  - **Validação:** Build roda apontando para a pasta de assets gerada pelo usuário a partir da cópia dele; NENHUM asset da Capcom nem do SHDP no repositório ou no pacote; verificador de licença no build.
+  - **Fonte:** README.md (aviso legal), docs/formatos/hd_seamless.md §6
+  - **Reaproveita:** P0-03 (manifesto)
+  - **Nota:** O SHDP e o Classic REbirth são trabalho de fãs sobre arte da Capcom: redistribuir exigiria aval dos autores E da Capcom. Projeto privado até decidir estratégia.
+- [ ] **P7-09** (peso 2, impl 0%, valid 0%) — Auditoria do modo 16:9: catalogar as câmeras onde o crop estraga o enquadramento
+  - **Validação:** Varredura das 2105 câmeras gerando contact sheet do crop 1280x720: lista das câmeras onde o corte come o piso onde o personagem anda ou elemento essencial (porta, item, inimigo). Relatório com contagem e amostras.
+  - **Reaproveita:** P1-15
+  - **Nota:** Decide se o 16:9 sai como opção suportada, opção 'a seu risco' ou é descartado. Decisão baseada em número, não em impressão.
+- [ ] **P7-07** (peso 2, impl 0%, valid 0%) — Export Android TV (leanback, navegação por controle)
+  - **Validação:** Roda em Android TV com controle, sem depender de teclado/mouse.
+  - **Fonte:** docs/plano.md (Fase 4)
+  - **Nota:** Opcional; não bloqueia o 1:1 no PC.
+- [ ] **P7-08** (peso 2, impl 0%, valid 0%) — Documentação do port (arquitetura, como gerar assets, como buildar)
+  - **Validação:** Um doc que permite a outra pessoa montar e rodar o port do zero a partir da cópia dela.
+
+## Próximo trabalho (ordem do plano)
+
+1. **P0-01** — Criar projeto Godot 4 em port/ (4:3 1280x960, pillarbox, renderer definido)
+1. **P0-03** — Manifesto de assets + verificador de integridade
+1. **P0-08** — Arquitetura de cenas/autoloads (Game, RoomRuntime, ScriptVM, Audio, Lang, UI)
+1. **P0-11** — Fechar a dívida das 6 sementes: escrever o gerador de cada JSON não regenerável
+1. **P1-02** — Background por câmera: HD 1280x960 com fallback PS1 320x240
+
+## Radar — peso alto ainda não implementado (peso ≥ 4, impl 0%)
+
+- **P1-14** (peso 5, F1): GATE F1 — R100 e R10E indistinguíveis do original (no modo 4:3) — Nada da F2 começa antes deste gate. O gate é medido no modo 4:3 (o 16:9 é experimental e por definição não é 1:1).
+- **P3-07** (peso 5, F3): Rota crítica completa (início ao fim do jogo, sem combate) — Marco: 'o jogo inteiro existe'.
+- **P4-04** (peso 5, F4): Mira e auto-lock (aim tier 0..3 -> +0x6e, poses 14-17 e upper-aim 19/20) — tier -> player+0x6e = (tier<<9)+0x800.
+- **P5-02** (peso 5, F5): Zumbi (andar, virar, notar, agarrar, morder, comer no chão, levantar, rastejar) — Classe mais comum do jogo — acerta ela e 60% do combate está certo.
+- **P5-06** (peso 5, F5): NEMESIS (t41): perseguição entre salas, fases, ataques, tentáculo, foguete — O sistema mais complexo do jogo e a razão de o RE3 ser o RE3. Depende de P4-03 (rig do EM38).
+- **P2-09** (peso 4, F2): Cinemáticas scriptadas (câmera de cena, pose forçada, fade, espera, diálogo)
+- **P3-09** (peso 4, F3): Puzzles e eventos de sala (relógio, gerador, bonde, válvulas, etc.) — Se a VM estiver certa, isso 'sai de graça' — é o teste de verdade da F2.
+- **P4-01** (peso 4, F4): Entidade genérica de personagem (char-struct de 0x1fc: pos, dir, HP, estado, timers) — Um só caminho de desenho para player e inimigo (provado no EXE).
+- **P4-02** (peso 4, F4): Animação/skinning de inimigo (EMD/EMR, bone-local, índice explícito por primitiva) — Binding é ÍNDICE EXPLÍCITO por primitiva, não posicional.
+- **P4-03** (peso 4, F4): Corrigir o rig dos ~8-10 EMD multi-osso assados (hunters EM22/23/24, deimos EM28/35, Nemesis EM38, EM34/36/3A) — ESTE É O 'BUG DE MODELO 3D' CONHECIDO. Limite do dado: o índice vértice->osso foi DESCARTADO no EMD do PC e as 2 fontes (Rofs9/Rofs10) são idênticas. Caminho realista = rig manual no Blender (geometria, UV, textura e animação já estão certas — falta só o peso por osso). Nemesis é obrigatório; sem ele não há 1:1.
+- **P4-05** (peso 4, F4): Disparo: hitscan genérico + projéteis dedicados (foguete w10, granada w14) + faca w0
+- **P4-06** (peso 4, F4): Dano e HP (tabela 0x8009d834, dano = word & 0x3ff) + zonas de saúde
+- **P4-09** (peso 4, F4): GATE F4 — contagem de tiros por arma x inimigo == original
+- **P5-01** (peso 4, F5): Dispatcher de IA por classe + ciclo de vida das entidades — 12 overlays, 548 handlers com papel determinado (ANIM/STATE 138, SUB-DISPATCH 101, IDLE/DECIDE 96...).
+- **P5-05** (peso 4, F5): Hunter (β/γ): salto, garra, decapitação — Bloqueado por P4-03.
+- **P5-07** (peso 4, F5): Deimos, gravedigger e bosses finais
+- **P5-09** (peso 4, F5): GATE F5 — todas as classes validadas em vídeo lado-a-lado
+- **P6-01** (peso 4, F6): 13 telas de menu (título, novo, continuar, opções, save, seleção) com composição de sprite em runtime — O rect por sprite é COMPOSTO EM RUNTIME (pipeline 0x800746c0) — reimplementar o compositor, não chumbar coordenadas.
+- **P6-09** (peso 4, F6): Mercenários — Operation Mad Jackal (3 personagens, regras, loja de tempo) — Já decodificado — é implementação, não pesquisa.
+- **P7-04** (peso 4, F7): Suíte de regressão (testes headless + screenshots de referência)
+- **P7-06** (peso 4, F7): Export PC com política 'traga sua própria cópia' (assets fora do binário) — O SHDP e o Classic REbirth são trabalho de fãs sobre arte da Capcom: redistribuir exigiria aval dos autores E da Capcom. Projeto privado até decidir estratégia.
