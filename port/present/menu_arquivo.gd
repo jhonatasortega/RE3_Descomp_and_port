@@ -95,16 +95,23 @@ func fechar() -> void:
 	queue_redraw()
 
 
-func mover(d: int) -> void:
-	if not aberto:
+func mover_lista(d: int) -> void:
+	## W/S (ou ↑/↓) andam na LISTA de documentos — e **não** viram página: no jogo a página é
+	## trocada com esquerda/direita, que é o que o usuário apontou.
+	if not aberto or lendo:
 		return
-	if lendo:
-		var doc: Dictionary = docs[sel]
-		var n := int(doc.get("n_pages", 1))
-		pagina = clampi(pagina + d, 0, n - 1)
-	else:
-		sel = posmod(sel + d, maxi(1, docs.size()))
-		pagina = 0
+	sel = posmod(sel + d, maxi(1, docs.size()))
+	pagina = 0
+	queue_redraw()
+
+
+func virar_pagina(d: int) -> void:
+	## A/D (esquerda/direita) viram a página do documento aberto.
+	if not aberto or not lendo:
+		return
+	var doc: Dictionary = docs[sel]
+	var n := int(doc.get("n_pages", 1))
+	pagina = clampi(pagina + d, 0, n - 1)
 	queue_redraw()
 
 
@@ -175,6 +182,14 @@ func _desenhar_pagina(doc: Dictionary) -> void:
 		var idx := pagina - 1
 		if idx < tp.size():
 			rel = "FILE/pag_%03d.png" % int(tp[idx])
+	## ── POR QUE A PÁGINA NÃO ESTÁ EM HD (medido, não desistência) ──
+	## O pack tem `memo/` com 280 imagens 1024×768 (= 4× de 256×192, e não de 128×256: o HD
+	## REDESENHOU a página em paisagem). Tentei casar por conteúdo (`port/dev/hd_memo.gd`,
+	## normalizando as duas em 32×32 e comparando luminância com atribuição global): fechou 137 de
+	## 183, MAS o resultado é **inconfiável** — a `pag_002`, que é "GAME INSTRUCTIONS A", casou com
+	## uma tabela de pólvora. Pior: as páginas HD estão em **RUSSO** (o pack Seamless é o russo),
+	## então nem seriam ganho num port PT. Fica o SD em inglês, que é correto, até aparecer o
+	## `FILEG` traduzido (o mod PT traduz textos por XML, e a página é bitmap).
 	var tex := AssetIO.texture(rel)
 	if tex == null:
 		Texto.desenhar(self, "pagina ausente", Vector2i(100, 110))

@@ -198,7 +198,8 @@ var _retratos: Texture2D = null         ## stmain0u paleta 2
 var _palavras: Texture2D = null         ## STMOJIU — HD (1024x288) ou o PNG do PS1
 var _palavras_fator := 1                ## 4 quando o atlas é o HD
 var _icones: Dictionary = {}            ## item_id -> Texture2D (itema/NNN.png)
-var _paletas: Dictionary = {}           ## índice de CLUT -> atlas SD do STMOJIU naquela paleta
+var _paletas: Dictionary = {}           ## índice de CLUT -> atlas do STMOJIU naquela paleta
+var _paleta_fator: Dictionary = {}      ## e o fator de escala dele (4 = HD)
 ## Botão destacado: -1 = nenhum · 0 EXIT · 1 FILE · 2 MAP.
 var selecao_botao := -1
 ## Submenu do item: vazio = fechado. Guarda os rótulos na ordem em que aparecem.
@@ -446,7 +447,8 @@ func _desenhar_marcador_combinar(t: float) -> void:
 	var col := combinar_de % GRADE_COLUNAS
 	var lin := combinar_de / GRADE_COLUNAS
 	_blit(_atlas_paleta(2), [160, 0, CELULA.x, CELULA.y,
-		GRADE_ORIGEM.x + col * CELULA.x, GRADE_ORIGEM.y + lin * CELULA.y], t)
+		GRADE_ORIGEM.x + col * CELULA.x, GRADE_ORIGEM.y + lin * CELULA.y],
+		t, Color.WHITE, 0, _fator_paleta(2))
 
 
 func _desenhar_mensagem(t: float) -> void:
@@ -821,13 +823,15 @@ func _desenhar_qtd(qtd: int, onde: Vector2i, t: float, paleta := 2) -> void:
 	## o atlas SD por paleta (`stmojiu_pN.png`): o atlas HD tem uma coloração só, batida.
 	## Não há glifo "x" antes do número (medido) — só os dígitos.
 	var tex := _atlas_paleta(paleta)
+	var fat := _fator_paleta(paleta)
 	var s := str(qtd)
 	var x := onde.x
 	for k in s.length():
 		var d := s.unicode_at(k) - 48
 		if d < 0 or d > 9:
 			continue
-		_blit(tex, [DIGITO_U0 + d * DIGITO_W, DIGITO_V, DIGITO_W, DIGITO_H, x, onde.y], t)
+		_blit(tex, [DIGITO_U0 + d * DIGITO_W, DIGITO_V, DIGITO_W, DIGITO_H, x, onde.y],
+			t, Color.WHITE, 0, fat)
 		x += DIGITO_W
 
 
@@ -848,17 +852,28 @@ func _desenhar_cursor(t: float) -> void:
 	# pedaço da palavra "EQUIP" gigante na primeira célula — foi o "F" que apareceu no teste.
 	## CLUT medida: `(304,483)` = **paleta 3** do STMOJIU (`ctx+0xd3 + 3`), que é o VERMELHO.
 	## Sprite: retângulo VAZADO 40×30 (o crop do atlas mostra três deles em u=120/160/200).
-	_blit(_atlas_paleta(3), r, t, Color(b, b, b, 1.0))
+	_blit(_atlas_paleta(3), r, t, Color(b, b, b, 1.0), 0, _fator_paleta(3))
 
 
 func _atlas_paleta(i: int) -> Texture2D:
-	## STMOJIU na linha de CLUT `i` (SD). O jogo troca de CLUT por elemento — cursor na 3, número
-	## na 2..5 —, e o atlas HD tem coloração única, então quem precisa de paleta usa o SD.
+	## STMOJIU na linha de CLUT `i`. O jogo troca de CLUT por elemento (cursor na 3, número da
+	## quantidade na 2..5), e eu achava que o HD não servia porque tem coloração única — **errado**:
+	## o pack tem **um bloco `1024×288` por paleta**, e o casamento por conteúdo acha qual é qual
+	## com folga (paleta 2 → `71C342F4` erro 0,034 · 3 → `869E4EB0` 0,028 · 4 → `15C630A1` 0,032 ·
+	## 5 → `AED1AF39` 0,032; o 2º colocado fica em ~0,22). Então dá HD com a cor certa.
 	if _paletas.has(i):
 		return _paletas[i]
-	var tex := AssetIO.texture("MENU/status/stmojiu_p%d.png" % i)
+	var rel_hd := "MENU/status/hd/stmojiu_p%d.webp" % i
+	var tex: Texture2D = AssetIO.texture(rel_hd) if AssetIO.exists(rel_hd) 		else AssetIO.texture("MENU/status/stmojiu_p%d.png" % i)
 	_paletas[i] = tex
+	_paleta_fator[i] = 4 if AssetIO.exists(rel_hd) else 1
 	return tex
+
+
+func _fator_paleta(i: int) -> int:
+	if not _paletas.has(i):
+		_atlas_paleta(i)
+	return int(_paleta_fator.get(i, 1))
 
 
 func _icone(item_id: int) -> Texture2D:

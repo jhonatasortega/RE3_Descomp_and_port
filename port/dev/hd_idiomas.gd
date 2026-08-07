@@ -21,7 +21,10 @@ func _initialize() -> void:
 		hw = 320
 		hh = 224
 	elif OS.get_environment("IDIOMA_ALVO") == "stmoji":
-		alvo = AssetIO.image("MENU/status/stmojiu_p0.png")
+		# IDIOMA_PAL=N compara com a PALETA N do STMOJIU: é assim que se acha o bloco HD de cada
+		# cor (o número da quantidade usa as paletas 2..5, e o cursor a 3).
+		var pal := OS.get_environment("IDIOMA_PAL")
+		alvo = AssetIO.image("MENU/status/stmojiu_p%s.png" % (pal if pal != "" else "0"))
 		alvo.convert(Image.FORMAT_RGBA8)
 		hw = 1024
 		hh = 288

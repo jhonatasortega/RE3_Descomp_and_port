@@ -27,14 +27,23 @@ const WORLD_H := 960
 const CROP_H := 720                        ## altura do recorte 16:9 (perde 240 px)
 
 @export var screen_mode: ScreenMode = ScreenMode.RATIO_4_3
-@export var room_id := "R100"
+## SALA INICIAL. **R10D** é onde o jogo começa (informado pelo usuário, que conhece o jogo; a
+## cinemática de abertura roda em `R10D_2`). Eu havia lido `INIT_TBL.DAT` nos offsets 590/592
+## (onde `stage`/`room` cairiam, já que o arquivo vai para `0x800d1d28`) e obtive 0/0 = R100 —
+## mas aquela região do arquivo é **toda zerada**, ou seja eu li padding, não campo. Não era
+## evidência. R10D tem 13 câmeras, 49 funções de script e 13 backgrounds HD.
+@export var room_id := "R10D"
 @export var camera_index := 0
 ## Modelo do personagem (carregado em runtime, ver AssetIO.model). Vazio = não mostrar.
 @export var actor_model := "PLD/PL00.glb"
 ## Posição inicial. O `y` é o NÍVEL do chão do bloco de colisão: 0 no térreo, e múltiplos de
 ## -1800 nos andares (é o mesmo valor que as portas mandam em `to_y`, medido em 453 chegadas).
 ## O -258 que estava aqui vinha do protótipo e levantava a Jill 258 un do chão.
-@export var actor_ps1 := Vector3i(-21820, 0, -21899)
+## Posição de spawn em R10D, MEDIDA: varri uma grade no nível 0 em volta do alvo da câmera 0 e
+## peguei um ponto que o resolver aceita nas 4 direções (99 pontos livres; ver
+## `port/dev/diag_spawn_r10d.gd`). Não é a posição do jogo — essa vem da cinemática de abertura,
+## que não foi implementada — e está declarada como escolha.
+@export var actor_ps1 := Vector3i(11560, 0, -16528)
 @export var actor_anim := "arm02"          ## idle ARMADO (em pé com a arma)
 ## Malha da arma a anexar no punho (P1-08). Vazio = arma "pintada na pele" (caso da W00).
 @export var weapon_model := ""
@@ -155,9 +164,13 @@ func _on_tick(_frame: int) -> void:
 		elif pad.just_pressed(Pad.PAUSA) or pad.just_pressed(Pad.MENU):
 			menu_arquivo.cancelar()
 		elif pad.just_pressed(Pad.FWD) or pad.just_pressed(Pad.HELD_UP):
-			menu_arquivo.mover(-1)
+			menu_arquivo.mover_lista(-1)       ## W/↑ e S/↓ andam na LISTA
 		elif pad.just_pressed(Pad.BACK) or pad.just_pressed(Pad.HELD_DOWN):
-			menu_arquivo.mover(1)
+			menu_arquivo.mover_lista(1)
+		elif pad.just_pressed(Pad.HELD_LEFT):
+			menu_arquivo.virar_pagina(-1)      ## A/D viram a PÁGINA, como no jogo
+		elif pad.just_pressed(Pad.HELD_RIGHT):
+			menu_arquivo.virar_pagina(1)
 		_atualizar_hud()
 		return
 	if menu != null and menu.aberto:

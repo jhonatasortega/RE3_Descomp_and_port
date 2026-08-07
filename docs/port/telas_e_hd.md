@@ -364,3 +364,41 @@ como `stage` e `room` moram em `0x800d1f76`/`0x800d1f78`, eles caem nos offsets 
 arquivo — e valem **0 e 0**, que na convenção do port é **R100**. Então o armazém é a primeira
 sala JOGÁVEL; o que falta antes dela é o fluxo de boot (WARNING → CAPCOM → TÍTULO → dificuldade →
 `INIT_TBL` → OPENING), que está documentado em `menu_titulo.md` e não foi implementado.
+
+
+---
+
+## 15. Números em HD, páginas em russo e a sala inicial (correções)
+
+**Os números ESTÃO em HD.** Eu tinha escrito que o atlas HD "tem coloração única" e por isso o
+número (que muda de cor por estado do slot, paletas 2..5) precisava do SD. **Errado**: o pack tem
+**um bloco `1024×288` por paleta**, e o casamento por conteúdo acha qual é qual com folga —
+comparando cada `stmojiu_pN.png` contra os 14 blocos:
+
+| paleta | bloco HD | erro | 2º colocado |
+|---|---|---|---|
+| 2 | `71C342F4` | 0,034 | 0,238 |
+| 3 | `869E4EB0` | 0,028 | 0,221 |
+| 4 | `15C630A1` | 0,032 | — |
+| 5 | `AED1AF39` | 0,032 | — |
+
+Então dá HD **com a cor certa**: o `250` da ferramenta de recarga e o `15` da pistola saem nítidos
+e verdes.
+
+**Páginas de documento: fica o SD, e o motivo é medido.** O pack tem `memo/` com 280 imagens
+1024×768 (4× de **256×192** — o HD redesenhou a página em paisagem, e não 4× de 128×256). Tentei
+casar por conteúdo normalizando as duas em 32×32 (`port/dev/hd_memo.gd`): fechou 137 de 183, mas o
+resultado é **inconfiável** — a `pag_002`, que é "GAME INSTRUCTIONS A", casou com uma tabela de
+pólvora. E as páginas HD estão em **RUSSO** (o pack Seamless é o russo), então nem seriam ganho num
+port PT. Removi os arquivos casados em vez de mostrar página errada.
+
+**Virar página é ESQUERDA/DIREITA.** Estava em cima/baixo. Agora: W/S (ou ↑/↓) andam na lista de
+documentos, A/D viram a página do documento aberto.
+
+**A sala inicial é R10D, não R100 — e minha "medição" anterior não valia.** Eu havia lido
+`INIT_TBL.DAT` nos offsets 590/592 (onde `stage`/`room` cairiam, já que o arquivo é carregado em
+`0x800d1d28`) e obtido 0/0 = R100. Mas aquela região do arquivo é **toda zerada**: eu li padding e
+tratei como campo. Não era evidência. O usuário corrigiu: o jogo começa em **R10D**, com a
+cinemática de abertura em `R10D_2`. R10D tem 13 câmeras, 49 funções de script e 13 backgrounds HD.
+A posição de spawn do port foi medida por varredura (99 pontos que o resolver aceita nas 4
+direções; `port/dev/diag_spawn_r10d.gd`) — **não** é a posição do jogo, que vem da cinemática.
