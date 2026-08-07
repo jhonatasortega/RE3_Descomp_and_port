@@ -192,6 +192,11 @@ STAGES = [
          cmds=[["do2gltf.py", "--all"], ["do2gltf.py", "--anim-all", "3"]],
          out=["assets/DOOR/*.glb"], doc="docs/decomp/notes/doors_model.md",
          nota="--all = folha estática; --anim-all = com a animação de abertura (*_ANIM.glb)."),
+    dict(id="omodel", titulo="Objetos 3D de cenário do RDT -> glb (712 em 169 salas)", src="iso",
+         deps=[], cmds=[["omodel2gltf.py", "--all", "--out", "{A}/OMODEL"]],
+         out=["assets/OMODEL/*/*.glb"], doc="docs/formatos/ARD.md",
+         nota="São os objetos que o opcode 0x7f instala — inclui a MALHA REAL do item no chão "
+              "(o campo `om` do AOT de item indexa este mesmo diretório, offset_table[10])."),
     dict(id="rofs_emd", titulo="Extrair EMD de inimigo do Rofs9 (69 EMD + 69 TIM)", src="rofs",
          deps=[], cmds=[["rofs_extract.py", "{G}/Rofs9.dat", os.path.join(ROOT, "extracted", "pc", "rofs9")]],
          out=[], doc="docs/formatos/enemy_bin.md"),

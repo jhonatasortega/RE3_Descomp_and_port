@@ -187,7 +187,12 @@ OPCODE_SEM = {
  0x61:("aot_set/entidade 32B","sce type@+2; sce==1 => DOOR (dest +0x16/+0x17)"),
  0x62:("aot_set/entidade 40B","sce type@+2; sce==1 => DOOR_4P (dest +0x1e/+0x1f)"),
  0x63:("sce_aot_set (trigger AABB)","20B"), 0x64:("sce_aot_set_4p (quad)","28B"),
- 0x65:("aot_reset","10B"), 0x66:("aot?","2B"), 0x67:("door_aot_set","22B"), 0x68:("item_aot_set","30B"),
+ 0x65:("aot_reset","10B"), 0x66:("aot?","2B"),
+ # 0x67 NAO e porta (rotulo antigo "door_aot_set"): e o AOT de ITEM de 2 pontos, o mesmo
+ # payload do 0x68 com base em +14. Handlers 0x800574f4 (22B) e 0x800576c4 (30B). Ver ARD.md
+ # secao 3.9 -- sao 330 itens no jogo (316 do 0x67 + 14 do 0x68), nao 14.
+ 0x67:("sce_item_aot_set (2 pontos)","22B; payload em +14; handler 0x800574f4"),
+ 0x68:("sce_item_aot_set_4p (quad)","30B; payload em +22; handler 0x800576c4"),
  0x69:("aot (0x8001a200)","14B"), 0x6a:("aot (0x8001a1d8)","16B"), 0x6b:("item check aot (0x8006cc8c)","2B"),
  0x6c:("aot","4B"), 0x6d:("aot","4B"), 0x6e:("aot member set","4B"), 0x6f:("aot","2B"),
  0x70:("sce_em_set/spawn obj","SPAWN_OBJ 0x8001b484; 16B"), 0x71:("sce_em_set/spawn obj","0x8001b484; 18B"),
@@ -197,7 +202,11 @@ OPCODE_SEM = {
  0x78:("sub-dispatch por byte@+2","tabela 0x80010bb0[b]; 6B"), 0x79:("? (0x80011df4)","4B"),
  0x7a:("? (0x800321c4)","2B"), 0x7b:("map data write","0x80078498; 6B"), 0x7c:("?","1B"),
  0x7d:("sce_em_set (spawn char de combate)","handler 0x80056a2c; 24B (ver sce_em_set.md)"),
- 0x7e:("?","2B"), 0x7f:("door dest/arrival","handler 0x80056510; 40B"),
+ 0x7e:("?","2B"),
+ # 0x7f e om_set: instala o OBJETO 3D de cenario no pool de 32 (gs+0x4328). E daqui que sai a
+ # posicao e a rotacao da malha do item de chao -- o slot em +1 e o mesmo `om` do AOT de item
+ # e o mesmo indice do diretorio de modelos offset_table[10]. Ver ARD.md secao 3.9.
+ 0x7f:("om_set (objeto 3D de cenario)","handler 0x80056510; 40B; pos s16@+16 rot s16@+22"),
  0x80:("?","4B"), 0x81:("?","8B"), 0x82:("?","10B"), 0x83:("som? (0x80034124)","1B"), 0x84:("?","4B"),
  0x85:("?","2B"), 0x86:("?","1B"), 0x87:("?","1B"), 0x88:("?","4B"), 0x89:("?","2B"),
  0x8a:("som? (0x80034124)","1B"), 0x8b:("?","1B"), 0x8c:("?","1B"), 0x8d:("?","1B"),

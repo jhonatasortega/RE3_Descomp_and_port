@@ -48,6 +48,8 @@ const CROP_H := 720                        ## altura do recorte 16:9 (perde 240 
 var background: Sprite2D
 var frame: SubViewportContainer
 var world: SubViewport
+var esp: EspBrilho
+var menu: MenuStatus
 var cam3d: Camera3D
 var sun: DirectionalLight3D
 var room: RoomData
@@ -72,6 +74,9 @@ func _ready() -> void:
 	_montar_spawns()
 	aplicar_modo(screen_mode)
 	_montar_hud()
+	_montar_itens()
+	if mundo != null:
+		mundo.item_pego.connect(func(_id: int, _q: int) -> void: _montar_itens())
 	# A apresentação OUVE o tick do jogo; não avança o mundo por conta própria.
 	var g: Node = get_node_or_null("/root/Game")
 	if g != null:
@@ -132,12 +137,46 @@ func _on_sala_trocada(de: String, para: String, porta: Aot) -> void:
 	if g1 != null and g1.audio != null:
 		g1.audio.tocar_bgm_da_sala(para)
 	mostrar_camera(mundo.camera)
+	_montar_itens()
 
 
 func _on_tick(_frame: int) -> void:
 	if mundo == null or mundo.room == null:
 		return
-	mundo.tick(get_node("/root/Game").pad)
+	var pad: Pad = get_node("/root/Game").pad
+	# ── MENU DE STATUS ──
+	# No jogo, abrir o menu SUSPENDE a task do mundo (`task_suspend(0)` em `0x8006d97c`) e
+	# retomá-la é o `task_resume(0)` de `0x8006e248` — os dois únicos sítios do EXE. Aqui isso é
+	# "não chamar `mundo.tick`": o mundo congela no estado exato, que é o comportamento certo.
+	if menu != null and menu.aberto:
+		if pad.just_pressed(Pad.MENU):
+			menu.alternar()                    ## I alterna
+		elif pad.just_pressed(Pad.PAUSA):
+			menu.cancelar()                    ## ESC só CANCELA (fecha submenu, senão a tela)
+		elif pad.just_pressed(Pad.ACAO):
+			var feito: String = menu.confirmar()   ## Enter/E seleciona
+			if feito != "":
+				print("[menu] %s" % feito)
+		elif pad.just_pressed(Pad.HELD_UP) or pad.just_pressed(Pad.FWD):
+			menu.mover_cursor(0, -1)
+		elif pad.just_pressed(Pad.HELD_DOWN) or pad.just_pressed(Pad.BACK):
+			menu.mover_cursor(0, 1)
+		elif pad.just_pressed(Pad.HELD_LEFT):
+			menu.mover_cursor(-1, 0)
+		elif pad.just_pressed(Pad.HELD_RIGHT):
+			menu.mover_cursor(1, 0)
+		menu.avancar()
+		_atualizar_hud()
+		return
+	if menu != null and pad.just_pressed(Pad.MENU):
+		menu.alternar()
+		return
+	if pad.just_pressed(Pad.PAUSA):
+		# ESC fora do status = MENU DE PAUSA, que ainda não foi extraído do binário. Não abro o
+		# status no lugar dele (o usuário pediu explicitamente) e não invento uma tela.
+		print("[screen] pausa (ESC): o menu de pausa ainda não foi extraído")
+		return
+	mundo.tick(pad)
 	player = mundo.player
 	# posição/orientação do nó a partir do estado em unidades PS1
 	actor.position = Coords.to_godot_i(player.pos.x, player.pos.y, player.pos.z)
@@ -149,6 +188,8 @@ func _on_tick(_frame: int) -> void:
 		occlusion.atualizar_profundidade(room.camera(camera_index), torso)
 	if mundo.camera != camera_index:
 		mostrar_camera(mundo.camera)
+	if esp != null:
+		esp.avancar(cam3d)                     ## o cintilar do item anda no tick de 30 Hz
 	_atualizar_hud()
 
 
@@ -312,6 +353,23 @@ func _montar() -> void:
 	cam3d = Camera3D.new()
 	cam3d.name = "Camera3D"
 	world.add_child(cam3d)
+
+	# Brilho dos itens (efeito ESP): entra ACIMA do 3D e ABAIXO dos recortes de oclusão, para
+	# móvel na frente cobrir o cintilar. Ver esp_brilho.gd para o que é provado e o que é escolha.
+	esp = EspBrilho.new()
+	add_child(esp)
+	if not esp.carregar(WORLD_W):
+		push_warning("Screen: sprites do brilho ausentes — rode "
+			+ "`python tools/esp_decode.py dump port/assets/ESP`")
+
+	# Tela de STATUS/INVENTÁRIO (I ou ESC). Entra por último no `_montar` para ficar ACIMA de
+	# tudo — no PS1 ela é uma task própria que desenha depois do mundo.
+	menu = MenuStatus.new()
+	add_child(menu)
+	var g_menu: Node = get_node_or_null("/root/Game")
+	if not menu.carregar(g_menu.state if g_menu != null else null):
+		push_warning("Screen: assets do menu ausentes — rode "
+			+ "`python tools/status_assets.py --all`")
 
 	# Oclusão: recortes 2D do cenário desenhados POR CIMA do viewport 3D — é a ordem que
 	# reproduz os priority sprites do PS1 (o 3D já está compondo sobre o background).
@@ -653,3 +711,137 @@ func _unhandled_input(e: InputEvent) -> void:
 			KEY_F9:
 				aplicar_modo(ScreenMode.RATIO_4_3 if screen_mode == ScreenMode.RATIO_16_9
 					else ScreenMode.RATIO_16_9)
+
+# ─────────────────────────────── itens no cenário ───────────────────────────────
+
+var itens_nodes: Array[Node3D] = []
+
+
+func _montar_itens() -> void:
+	## Coloca em cena os itens que ainda estão no chão (P2-07).
+	##
+	## POSIÇÃO/ROTAÇÃO: do **objeto de cenário** (`0x7f`) cujo slot é o `om` do payload do item
+	## — `pos` s16 em `+16/+18/+20` e `rot` s16 em `+22/+24/+26` (4096 = 360°). É o mesmo dado
+	## que o motor usa para montar a matriz do objeto, então o item fica exatamente onde e como
+	## o jogo põe: em cima da mesa, na prateleira, deitado na mão do cadáver. A área de coleta
+	## do AOT NÃO é a posição do objeto (mediana de 336 unidades de distância entre as duas).
+	## Sem `0x7f` correspondente (ou `om >= 32`, itens sem 3D), cai no centróide da área com o
+	## Y do `floor_height` — é o melhor que existe nesse caso, e fica declarado.
+	##
+	## VISUAL: a MALHA DO JOGO, `assets/OMODEL/<sala>/om<N>.glb` — o slot `om` do item indexa o
+	## diretório `offset_table[10]` do RDT (`nOmodel` registros de 8 B `{TIM, MD1}`, formato MD1
+	## igual ao dos inimigos), exportado por `tools/omodel2gltf.py` (712 modelos, 0 falhas).
+	## Só cai no marcador dourado quando o slot não tem malha (`om >= 32`, 30 itens) — aí não há
+	## o que desenhar no dado, e um marcador é honesto.
+	##
+	## O item é ESTÁTICO: no jogo não gira. O que se move é o efeito ESP `0x0705` que o motor
+	## cria 90 unidades ACIMA do objeto quando `item_flags & 0x80` (24 itens) — aqui isso é uma
+	## luz, até o sistema de ESP existir (P5-xx).
+	for n in itens_nodes:
+		n.queue_free()
+	itens_nodes.clear()
+	if mundo == null or mundo.room == null:
+		return
+	var sem_lugar := 0
+	var brilhos: Array[Vector3i] = []
+	for a: Aot in mundo.itens_no_chao():
+		var obj := mundo.objeto_do_item(a)
+		var p := Vector3i.ZERO
+		var base := Basis.IDENTITY
+		if obj != null and obj.posicionado():
+			p = obj.pos
+			# TRÊS eixos, na convenção MEDIDA (`Coords.basis_from_ps1_rot`): há item com giro em
+			# X e Z (a Chave do armazém da R100 é um quad plano com `rot(2048,5120,1024)`), e com
+			# só o Y ela ficava de perfil — um risco preto em vez de uma chave na tábua.
+			base = Coords.basis_from_ps1_rot(obj.rot)
+		elif obj == null and a.area_valida():
+			var c := _centro_do_aot(a)
+			var y := mundo.player.pos.y
+			if mundo.room.colisao != null:
+				y = mundo.room.colisao.floor_height(c.x, c.y, mundo.player.pos.y)
+			p = Vector3i(c.x, y, c.y)
+		else:
+			# Objeto parqueado em -32000 (entra por evento) ou área degenerada: não há lugar
+			# no dado. Não se inventa um — o item continua existindo e coletável pela regra do
+			# motor, só não é desenhado.
+			sem_lugar += 1
+			continue
+		var no := _malha_do_item(a)
+		no.name = "Item_%d_0x%02x_om%d" % [a.id, a.item_id, a.item_om]
+		world.add_child(no)
+		no.transform = Transform3D(base, Coords.to_godot_i(p.x, p.y, p.z))
+		if a.tem_brilho():
+			brilhos.append(p)                  ## `iflags & 0x80` — o cintilar do ESP (esp_brilho.gd)
+		itens_nodes.append(no)
+	if esp != null:
+		esp.definir_fontes(brilhos)
+	if not itens_nodes.is_empty() or sem_lugar > 0:
+		print("[screen] %s: %d item(ns) no chão%s" % [room_id, itens_nodes.size(),
+			"" if sem_lugar == 0 else " (+%d sem posição no dado)" % sem_lugar])
+
+
+func _malha_do_item(a: Aot) -> Node3D:
+	## A malha do jogo para o slot `om` da sala. Sem malha no dado (`om >= 32`) ou sem o `.glb`
+	## exportado, devolve o marcador dourado — declarado, não fingido de item.
+	if a.tem_modelo():
+		# a sala é a do MUNDO, não a do `room_id` do nó: numa troca de sala o visual só se
+		# atualiza depois, e buscar o modelo na sala antiga traz a malha errada.
+		var sala := mundo.room.room_id if mundo != null and mundo.room != null else room_id
+		var rel := "OMODEL/%s/om%d.glb" % [sala, a.item_om]
+		if AssetIO.exists(rel):
+			var m := AssetIO.model(rel)
+			if m != null:
+				_sem_luz(m)
+				return m
+	var no := MeshInstance3D.new()
+	var prisma := PrismMesh.new()
+	prisma.size = Vector3(0.30, 0.42, 0.30)
+	no.mesh = prisma
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(1.0, 0.86, 0.25)
+	mat.emission_enabled = true
+	mat.emission = Color(1.0, 0.72, 0.12)
+	mat.emission_energy_multiplier = 1.8
+	no.material_override = mat
+	no.position.y = 0.26
+	return no
+
+
+func _sem_luz(no: Node) -> void:
+	## Desenha a malha do item SEM iluminação da cena.
+	##
+	## Por que: o objeto de sala é iluminado no PS1 pelo bloco **LIT** (`offset_table[9]`), que o
+	## port ainda não implementa. Com a "luz simples" genérica daqui (um sol fixo + ambiente), a
+	## Chave do armazém da R100 — um quad plano na parede, com a normal virada para a câmera e
+	## portanto de costas para o sol — saía **preta**. Ela só parecia certa antes porque tinha um
+	## OmniLight colado nela, que era o placeholder do brilho: ao trocar o placeholder pelo ESP
+	## real, a malha ficou preta e o problema apareceu.
+	##
+	## Sem luz, a textura aparece como foi autorada — que é o mesmo tratamento do background
+	## pré-renderizado. É DECLARADAMENTE provisório: o certo é o LIT da sala (item separado).
+	for c: Node in no.find_children("*", "MeshInstance3D", true, false):
+		var mi: MeshInstance3D = c
+		if mi.mesh == null:
+			continue
+		for s in mi.mesh.get_surface_count():
+			var mat := mi.get_active_material(s)
+			if mat is StandardMaterial3D:
+				var m2: StandardMaterial3D = (mat as StandardMaterial3D).duplicate()
+				m2.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+				mi.set_surface_override_material(s, m2)
+
+
+func _centro_do_aot(a: Aot) -> Vector2i:
+	if a.kind == Aot.Kind.QUAD and a.quad.size() == 4:
+		var sx := 0
+		var sz := 0
+		for p: Vector2i in a.quad:
+			sx += p.x
+			sz += p.y
+		return Vector2i(sx / 4, sz / 4)
+	return Vector2i(a.box.position.x + a.box.size.x / 2, a.box.position.y + a.box.size.y / 2)
+
+
+## (Não existe `_girar_itens`: o item no chão do RE3 é ESTÁTICO. A rotação vem do `0x7f` e é
+## fixa; quem chama atenção é o efeito ESP de brilho, não um giro. Girar era licença do
+## placeholder — saiu junto com ele.)

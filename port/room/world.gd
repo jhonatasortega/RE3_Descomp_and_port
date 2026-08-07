@@ -336,17 +336,71 @@ func carregar_save(caminho: String) -> bool:
 	return true
 
 
+## Distância do PONTO DE SONDA à frente do ator, no teste de AOT de ação (`0x800505ac`):
+## o motor não testa a posição do personagem, testa `pos + frente * 620`. É por isso que
+## se pega o item de frente e não em cima dele — e é 620, não o raio 450 do corpo.
+const SONDA_ACAO := 620
+
+
 func pegar_item_sob_o_player() -> Aot:
-	## Item no chão sob o personagem (P2-07): entra no inventário e o AOT é desativado.
+	## Item no chão (P2-07): entra no inventário e o AOT é desativado.
+	##
+	## ALCANCE = o PONTO DE SONDA do motor (620 unidades à frente), testado dentro do quad
+	## (`0x68`) ou do rect (`0x67`). O `SAT 0x31` dos itens tem o bit 4, e o passe que carrega
+	## esse bit (`aot_check(player, 1, 16)`) só roda quando o bit 23 de `0x800d1f2c` está aceso
+	## — o pedido de AÇÃO. Ou seja: item exige botão, olhando para ele. (Antes eu inflava a
+	## caixa pelo raio do corpo, o que pegava item de costas e de lado.)
 	if vm == null:
 		return null
+	var sonda := player.pos + Vector3i(
+		PS1Math.rsin(player.facing) * SONDA_ACAO >> PS1Math.SHIFT, 0,
+		-PS1Math.rcos(player.facing) * SONDA_ACAO >> PS1Math.SHIFT)
 	for a: Aot in vm.itens():
-		if a.contem(player.pos.x, player.pos.z):
+		if a.contem(sonda.x, sonda.z) or a.contem(player.pos.x, player.pos.z):
 			if state.add_item(a.item_id, maxi(1, a.item_qtd)) >= 0:
 				a.ativo = false
+				_marcar_pego(a)
 				return a
-			return null
+			return null                      ## inventário cheio: o item FICA no chão
 	return null
+
+
+func _marcar_pego(a: Aot) -> void:
+	## O BIT vem do dado: `payload+4` do `0x67`/`0x68` — o mesmo que os handlers
+	## `0x800574f4`/`0x800576c4` passam a `SetBit 0x800788dc` ao pegar e a `TestBit 0x80078930`
+	## ao reinstalar o AOT. O banco é o 7, o MESMO do `CHECK 0x4c` (ver GameState.BANCO_ITENS).
+	## (Antes eu usava um bit inventado a partir de sala+aot. Os bits reais medidos nos 14
+	## itens do jogo vão de 11 a 125, e a MESMA erva na R104 e na R11F compartilha o bit —
+	## as duas salas são o mesmo cenário em cenários diferentes, e o jogo lembra nas duas.)
+	if a.item_flag > 0:
+		state.flag_set(GameState.BANCO_ITENS, a.item_flag, true)
+
+
+func itens_no_chao() -> Array[Aot]:
+	## Itens que ainda estão no chão desta sala: os AOT de item ativos que não foram pegos.
+	## É o que a apresentação usa para colocar os objetos na cena.
+	var saida: Array[Aot] = []
+	if vm == null:
+		return saida
+	for a: Aot in vm.itens():
+		if not a.ativo:
+			continue
+		if a.item_flag > 0 and state.flag_get(GameState.BANCO_ITENS, a.item_flag):
+			a.ativo = false
+			continue
+		saida.append(a)
+	return saida
+
+
+func objeto_do_item(a: Aot) -> ObjetoSala:
+	## O 3D do item: o slot `om` do payload aponta para o objeto instalado pelo `0x7f`, que é
+	## quem tem POSIÇÃO e ROTAÇÃO de verdade (a área de coleta é só a área). `null` quando o
+	## item não tem modelo (`om >= 32`) ou quando o `0x7f` do slot não rodou nesta execução.
+	if vm == null or not a.tem_modelo():
+		return null
+	if not vm.objetos.has(a.item_om):
+		return null
+	return vm.objetos[a.item_om] as ObjetoSala
 
 
 func resumo() -> String:

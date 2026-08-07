@@ -189,7 +189,8 @@ Apontado por `offset_table[16]`. Começa com uma **tabela de ponteiros de funç�
 **Itens, inimigos, portas e eventos** no RE3 **não** têm tabela estática: são posicionados
 por **opcodes dentro do SCD**. Já decodificado e exportado no JSON (`rdt.script`):
 **481 portas** (todas com posição de chegada), **738 gatilhos** (0x63/0x64), **433
-entidades** (0x61/0x62) e **14 itens** auto-pega (0x68), todos com posição. O **formato**
+entidades** (0x61/0x62) e **330 itens** de chão (`0x67` + `0x68` — ver **§3.9**; a leitura
+antiga de "14 itens" vinha de `0x67` estar rotulado como porta), todos com posição. O **formato**
 do bytecode está em [SCD.md](SCD.md); a **extração de gameplay** (com estes totais) em
 [scd_gameplay.md](scd_gameplay.md).
 
@@ -792,3 +793,92 @@ saguão (R114 → R118) e afins; as 447 `sce == 1` seguem exigindo ação.
 direcional à frente (200/400/600, as constantes de `0x80045fc0..0x80046040`). Medido: as caixas
 de porta ficam a 454–551 un do ponto onde a colisão para o personagem, ou seja, logo além do
 contato — só o contato não bastava, e só a sonda abria de longe.
+
+### §3.9 — ITEM NO CHÃO: são 330, não 14 — e o 3D vem do `0x7f` (2026-08-06)
+
+Correção de rota grande. A tabela de opcodes chamava **`0x67`** de `door_aot_set` e o port não
+o instalava; por isso o jogo tinha "14 itens". **`0x67` é o AOT de item de 2 pontos** (22 B,
+handler `0x800574f4`) e `0x68` é o de 4 pontos (30 B, `0x800576c4`): mesmo payload, base
+diferente. **330 itens em 103 salas** (316 + 14).
+
+#### Layout (família `aot_set`)
+
+```
++1 aot_id · +2 sce (=2, ITEM) · +3 SAT (0x31 em 328/330) · +4 nFloor (0x80=qualquer) · +5 super
+0x67: +6 x · +8 z · +10 w · +12 d   (s16; point-in-rect NÃO-SINALIZADO)   payload em +14
+0x68: +6..+20 = 4 cantos (x,z)      (point-in-quad; o handler faz SAT |= 0x80)  payload em +22
+payload:  +0 u8 item_id · +1 u8 (=0 em 330/330) · +2 u16 amount · +4 u16 FLAG "já pego"
+          +6 u8 om (slot do objeto/modelo; >=32 = sem 3D) · +7 u8 iflags (bit0 anima, bit7 BRILHO)
+```
+
+O port lia `+3` como andar — era o SAT. E `amount` é **u16**, não u8.
+
+#### A flag "já pego" é do banco 7 — o MESMO do `CHECK 0x4c`
+
+O ponteiro que os handlers usam é `0x800d2008`, que é a **entrada 7** da tabela de bancos
+`0x8009e3f8` (`0x800d2028` = entrada 8 é o Cenário B, escolhido quando `*(0x800d1f76) >= 2`).
+Ou seja, pegar item acende um bit que o script da sala lê — é progressão real. Na entrada da
+sala o próprio handler faz `bit_get`: se ligado, zera o `sce` do descriptor (AOT morto) e apaga
+o objeto (`pool[om].be_flg = 0x80000000`). Medido: só 4 dos 330 têm um `CHECK` do script antes;
+o handler se autoprotege.
+
+#### Posição/rotação: opcode `0x7f` (`om_set`, 40 B, `0x80056510`)
+
+O AOT é só a ÁREA. Quem existe no mundo 3D é o **objeto de sala**, instalado pelo `0x7f` no
+mesmo slot `om` (pool de 32 em `gs+0x4328`, stride 404):
+
+```
++1 slot · +2 tipo · +3 fx · +8 floor · +9 mode · +11 visbit (255 = sem checagem)
++12 u16 be_flg  (entry+0 = be_flg | 1 ; **bit0 = VISÍVEL**) · +14 s16 attr (bit5 apaga o bit0)
++16 s16 X,Y,Z   (mundo; Y negativo = para CIMA) · +22 s16 RX,RY,RZ (4096 = 360°)
+```
+
+`entry+32` = `RotMatrix(rot)`. **Não há escala e não há giro por frame**: o item de chão é
+ESTÁTICO (o port girava o marcador — era licença do placeholder). Medido no port: mediana de
+**326 unidades** entre a posição do objeto e o centro da área de coleta — são coisas
+diferentes, usar o centróide da área punha o item ao lado.
+
+**`pos = (-32000,-32000,-32000)`** aparece literal em 6 objetos de item (R203/R204/R308/R40A/
+R414…): é "estacionado fora do mundo", o objeto que um evento coloca depois. Não se desenha.
+
+**Áreas degeneradas**: há AOT de item com `rect=(0,0,0,0)` (R208 aot 8, R300 aot 7, R40F aot 3)
+ou `(0,0,1,1)` (R414 aot 5). Com o teste não-sinalizado do motor isso só dispara com o pé
+exatamente em (0,0) — o item **não** é coletável andando; vem por evento.
+
+#### A malha: `offset_table[10]` = diretório `{TIM, MD1}`
+
+`om` indexa também o diretório de modelos do RDT: `nOmodel` (header `+0x02`, máx. 32) registros
+de 8 bytes `{u32 offset_TIM, u32 offset_MD1}`, relativos ao início do RDT. Provas:
+`0x800521e8/0x800521ec` (`lbu $s2,2($v0)` colado com `lw $s4,48($v0)` = `rdt+8+4*10`), stride 8
+em `0x8005226c`, e `0x80058250`/`0x800584cc` pegando o campo `+4` para o setup de malha
+`0x80035790`. Estruturalmente `off[10] == 0x60 + nCut*32` em 143/143 salas com `nOmodel > 0`.
+
+O modelo é o **MD1/EMD3 dos inimigos** (descritor 24 B, tri 12 B, quad 16 B, vértice 8 B —
+provado pelo relocador `0x8002ac40`, que relocaliza `+0x00,+0x04,+0x0c,+0x10` com stride 24),
+**não** o `.DO1` das portas. Duas variantes: 682/712 têm header de esqueleto antes do MD1
+(`u32@+0` = deslocamento), 30/712 são MD1 direto — discriminação estrutural, não por flag.
+A textura é um TIM 8bpp+CLUT dentro do RDT (linha de CLUT = `(u16@prim+2 >> 6) - 480`, coluna
+de tpage = `byte@prim+6 & 0x0F`).
+
+`tools/omodel2gltf.py --all` exporta **712 modelos em 169 salas, 0 falhas** (25 slots vazios com
+`ptr == 0`). Conferido em jogo: R104 `om1` é a **erva verde no vaso** (item `0x21`) e R108 `om4`
+a **erva vermelha** (`0x23`), AABB 511×663×503 un com a base em y≈0 — o `pos` do `0x7f` é a
+origem no piso.
+
+**Em aberto (declarado):** a malha é exportada com `SCALE = 0.001` (1 un PS1 = 1 mm) enquanto o
+port posiciona com `WORLD_SCALE = 808`; isso deixa o objeto **0,808×** do tamanho que as
+coordenadas de mundo pedem. Para o personagem esse fator é intencional (o PLD é desenhado com
+escala própria e o 808 saiu de casar a Jill no cenário), mas para objeto de sala ainda não foi
+medido — dá 19% e não se inventa fator sem medir. O jeito de fechar: comparar a AABB do modelo
+com o collider do mesmo móvel no bloco de colisão (§3.6), que está no mesmo espaço de mundo.
+
+#### Coleta: botão + sonda 620 à frente
+
+`SAT 0x31` tem o bit 4, e o passe que carrega esse bit (`aot_check(player, 1, 16)`) só roda com
+o bit 23 de `0x800d1f2c` aceso — o **pedido de ação**. O ponto testado não é o do personagem:
+é `pos + frente * 620`. Por isso se pega o item OLHANDO para ele (o port inflava a caixa pelo
+raio 450 do corpo, o que pegava de costas). Medido no port: **277/277 itens coletáveis** pela
+sonda nas 95 salas que o script de init alcança.
+
+**Brilho:** `iflags & 0x80` (24 itens) cria o ESP `0x0705` em `objeto + (0,-90,0)` — 90 unidades
+ACIMA. Sem sistema de ESP no port, entra como luz pontual.

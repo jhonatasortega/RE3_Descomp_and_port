@@ -1,5 +1,21 @@
 class_name Telas
 extends CanvasLayer
+## ⛔ **NÃO USE ESTE ARQUIVO. ELE FOI INVENTADO E VAI SER SUBSTITUÍDO.** ⛔
+##
+## O layout daqui (grade do inventário, posições, páginas do mapa, árvore do menu) **não saiu do
+## binário**: foi montado "parecendo o RE3", e o usuário rejeitou com razão — isto é um recomp,
+## não um pastiche. O arquivo está ÓRFÃO de propósito (nada o instancia) e fica aqui só até as
+## telas de verdade entrarem, para não se perder o encanamento que já funcionava (pausar o
+## `Clock`, desenhar acima do quadro 1280×960, ler ícone de `ETC/ITEMG.PIX`).
+##
+## O recomp real está em andamento: as telas do RE3 são **overlays MIPS** (`CD_DATA/BIN/PC_SYS.BIN`,
+## `TITLE.BIN`, `MEM_CARD.BIN`, `OPTION.BIN`), que o `tools/exe_parse.py` nem carregava — cada
+## coordenada, cada tempo em frames e cada asset vão sair de lá. Notas em
+## `docs/decomp/notes/menu_*.md`.
+##
+## Quando as telas de verdade entrarem: apagar este arquivo.
+##
+## ── (documentação original, mantida para referência do encanamento) ──
 ## Telas de UI do port: INVENTÁRIO (I), MAPA (M), PAUSA (ESC) e MENU PRINCIPAL (P6-01/02/03).
 ##
 ## Por que uma camada só: as quatro telas compartilham a mesma regra — **pausam o gameplay**

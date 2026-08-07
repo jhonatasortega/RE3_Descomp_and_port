@@ -99,6 +99,29 @@ func run(t: Object) -> bool:
 		"maioria das câmeras olha de cima (medido: 81,4 por cento)",
 		"%.1f por cento (%d de %d)" % [100.0 * float(acima) / float(n_cam), acima, n_cam])
 
+	# ── Rotação de 3 eixos do `0x7f` (convenção MEDIDA, ver Coords.basis_from_ps1_rot) ──
+	# Trava o resultado da medição: `Rx·Ry·Rz` com `(+x, −y, −z)`. Se alguém "simplificar" para
+	# um `rotation = Vector3(...)` do Godot (ordem YXZ) ou trocar sinal, estes casos acusam.
+	var b0 := Coords.basis_from_ps1_rot(Vector3i.ZERO)
+	t.check(b0.is_equal_approx(Basis.IDENTITY), "rotação nula é identidade")
+	# 1024 unidades = 90°. Em Y, o sinal é INVERTIDO na conversão para o Godot:
+	# um giro PS1 de +90° em Y leva +X para... -Z no PS1, que é +Z no Godot -> Basis(UP, -90°).
+	var by := Coords.basis_from_ps1_rot(Vector3i(0, 1024, 0))
+	t.check(by.is_equal_approx(Basis(Vector3.UP, deg_to_rad(-90.0))),
+		"giro de 90 graus em Y inverte o sinal (medido)", "%s" % by)
+	var bx := Coords.basis_from_ps1_rot(Vector3i(1024, 0, 0))
+	t.check(bx.is_equal_approx(Basis(Vector3.RIGHT, deg_to_rad(90.0))),
+		"giro em X mantém o sinal (é o eixo da conversão de mundo)", "%s" % bx)
+	# ORDEM: com dois eixos, `Rx·Ry·Rz` != `Rz·Ry·Rx`. O caso da Chave do armazém da R100
+	# (`rot(2048, 5120, 1024)`) é o que a medição usou para decidir.
+	var chave := Coords.basis_from_ps1_rot(Vector3i(2048, 5120, 1024))
+	var xyz := Basis(Vector3.RIGHT, deg_to_rad(180.0)) * Basis(Vector3.UP, deg_to_rad(-450.0)) \
+		* Basis(Vector3.BACK, deg_to_rad(-90.0))
+	t.check(chave.is_equal_approx(xyz), "ordem de composição é Rx·Ry·Rz (medida)", "%s" % chave)
+	var zyx := Basis(Vector3.BACK, deg_to_rad(-90.0)) * Basis(Vector3.UP, deg_to_rad(-450.0)) \
+		* Basis(Vector3.RIGHT, deg_to_rad(180.0))
+	t.check(not chave.is_equal_approx(zyx), "a ordem inversa (Rz·Ry·Rx) daria outra base")
+
 	# sentinela do runner: se um erro abortar a função antes daqui, a suíte acusa.
 	return true
 

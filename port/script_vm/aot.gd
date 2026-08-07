@@ -25,8 +25,20 @@ extends RefCounted
 ## `next_room` é **índice interno** na tabela de fileids (`0x8009dfd0[stage]`), e o de-para
 ## provado é `índice = dígitos hex do nome` (`Rxyz` → `int(yz, 16)`).
 ##
-## `0x63` (20 B) = gatilho AABB · `0x64` (28 B) = gatilho em quadrilátero ·
-## `0x68` (30 B) = item no chão (`item_id@+22`, `amount@+24`) · `0x65` = aot_reset.
+## `0x63` (20 B) = gatilho AABB · `0x64` (28 B) = gatilho em quadrilátero · `0x65` = aot_reset.
+##
+## ── ITEM NO CHÃO: `0x67` **e** `0x68` (correção de rota) ──
+## A tabela de opcodes chamava `0x67` de "door_aot_set". **Não é porta**: é o AOT de ITEM na
+## versão de 2 pontos (22 B, handler `0x800574f4`), e o `0x68` é a de 4 pontos (30 B, handler
+## `0x800576c4`) — mesmo payload, base diferente (+14 vs +22). São **330 itens em 103 salas**
+## (316 do `0x67` + 14 do `0x68`); antes o port só via os 14.
+##
+## O 3D do item NÃO vem do `item_id`: o campo `om` do payload é um SLOT (0..31) que aponta ao
+## mesmo tempo para o objeto de cenário do `0x7f` (posição/rotação, ver `objeto.gd`) e para o
+## diretório de modelos do RDT (`offset_table[10]`, `nOmodel` registros de 8 B `{TIM, MD1}`).
+##
+## ── Layout comum da família aot_set ──
+##     +1 aot_id · +2 sce · +3 **SAT** · +4 **nFloor** (0x80 = qualquer) · +5 super
 
 enum Kind { BOX, QUAD }
 
@@ -41,7 +53,9 @@ const SCE_MOVE := 8
 var id := 0                       ## id do AOT (byte +1) — o motor grava em `player+0xc`
 var sce := 0
 var kind: Kind = Kind.BOX
-var floor_id := 0
+var floor_id := 0                 ## `+4` nFloor: andar exigido (0x80 = qualquer)
+var sat := 0                      ## `+3` SAT: máscara de quem dispara/como (item = 0x31)
+var super_id := 0                 ## `+5` super (0 em todos os itens)
 var box := Rect2i()               ## quando BOX: x, z, w, d em unidades PS1
 var quad: Array[Vector2i] = []    ## quando QUAD: 4 pontos no plano XZ
 var opcode := 0
@@ -56,9 +70,12 @@ var to_cut := -1
 ## Provado em `0x800249d8`: `lbu $v0, 0xb($a1)` -> `sb $v0, 0x2495($s0)`. A doc do
 ## door_handler chamava esse byte de "flag/needs_key-ish" — é o grupo de câmera.
 var to_grupo := 0
-## Item no chão (`0x68`).
+## Item no chão (`0x67`/`0x68`) — payload em +14 (2 pontos) ou +22 (4 pontos):
 var item_id := 0
-var item_qtd := 0
+var item_qtd := 0                 ## u16 `payload+2` (era lido como u8)
+var item_flag := 0                ## u16 `payload+4`: BIT de "já pego" — do DADO, não inventado
+var item_om := 0                  ## u8 `payload+6`: slot do objeto/modelo; >= 32 = sem 3D
+var item_flags := 0               ## u8 `payload+7`: bit 0 = anima ao pegar · bit 7 = brilho
 
 
 func is_porta() -> bool:
@@ -66,8 +83,30 @@ func is_porta() -> bool:
 
 
 func is_item() -> bool:
-	## Item no chão: opcode `0x68` (`sce_item_aot_set`), com `item_id@+22` e `amount@+24`.
-	return opcode == 0x68
+	## Item no chão: `0x67` (2 pontos) ou `0x68` (4 pontos) — os dois são `sce_item_aot_set`.
+	return opcode == 0x67 or opcode == 0x68
+
+
+func tem_modelo() -> bool:
+	## `om >= 32` (128 e 255 nos dados) = o item não tem objeto 3D: só a área de coleta.
+	return item_om < 32
+
+
+func area_valida() -> bool:
+	## Há AOT de item com área DEGENERADA no dado: `rect=(0,0,0,0)` (R208 aot 8, R300 aot 7,
+	## R40F aot 3 …) ou `(0,0,1,1)` (R414 aot 5). Com o teste não-sinalizado do motor
+	## (`(u32)(px - X) <= W`) isso só dispara com o pé exatamente em (0,0) — ou seja, o item
+	## NÃO é coletável andando; ele é entregue por evento/script. Serve para não fingir uma
+	## área de coleta nem desenhar o item na origem do mundo.
+	if kind == Kind.QUAD:
+		return quad.size() == 4 and (quad[0] != quad[1] or quad[1] != quad[2])
+	return box.size.x > 1 and box.size.y > 1
+
+
+func tem_brilho() -> bool:
+	## Bit 7 do `iflags`: o motor cria um efeito ESP `0x0705` 90 unidades ACIMA do modelo
+	## (`param = 0x28000000`, matriz do próprio objeto). São 28 itens no jogo.
+	return (item_flags & 0x80) != 0
 
 
 func contem(x: int, z: int) -> bool:

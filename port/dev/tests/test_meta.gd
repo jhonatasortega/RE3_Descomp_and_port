@@ -41,6 +41,9 @@ func run(t: Object) -> bool:
 	var total_itens := 0
 	var salas_com := 0
 	var ids := {}
+	var n67 := 0
+	var n68 := 0
+	var sce_errado := 0
 	for id in salas:
 		var v := ScriptVM.new()
 		if not v.carregar_sala(id):
@@ -55,11 +58,23 @@ func run(t: Object) -> bool:
 		for a: Aot in it:
 			total_itens += 1
 			ids[a.item_id] = true
-	print("    [itens] %d itens no chão em %d salas · %d ids distintos" % [
-		total_itens, salas_com, ids.size()])
-	# A decomp mede exatamente 14 itens colocados por 0x68 nas 169 salas — o limiar que eu
-	# tinha posto (>20) era um chute meu, não o dado.
-	t.eq(total_itens, 14, "14 itens no chão (o número que a decomp mede)")
+			if a.opcode == 0x67:
+				n67 += 1
+			else:
+				n68 += 1
+			if a.sce != Aot.SCE_ITEM:
+				sce_errado += 1
+	print("    [itens] %d itens no chão em %d salas · %d ids distintos (0x67=%d 0x68=%d)" % [
+		total_itens, salas_com, ids.size(), n67, n68])
+	# **Os dois opcodes são item.** O `0x67` (2 pontos, 22 B, handler `0x800574f4`) estava
+	# rotulado "door_aot_set" e não era instalado: por isso o port via só os 14 do `0x68`.
+	# No dado há 330 itens em 103 salas; aqui saem 291 porque a tabela de AOT tem 32 slots e
+	# um `aot_id` reinstalado em outra função SOBREPÕE o anterior (é o que o motor faz) — e a
+	# VM ainda não percorre todos os caminhos de evento.
+	t.check(total_itens > 250, "itens no chão do 0x67 + 0x68", "%d" % total_itens)
+	t.check(n67 > 200 and n68 == 14, "os dois opcodes de item aparecem",
+		"0x67=%d 0x68=%d" % [n67, n68])
+	t.eq(sce_errado, 0, "todo AOT de item tem sce == 2")
 	t.check(ids.size() >= 5, "vários ids de item distintos", "%d" % ids.size())
 
 	# pegar: entra no inventário e o AOT desativa
@@ -72,8 +87,17 @@ func run(t: Object) -> bool:
 		if it2.is_empty():
 			continue
 		var a2: Aot = it2[0]
-		wi.player.pos = Vector3i(a2.box.position.x + a2.box.size.x / 2, -258,
-			a2.box.position.y + a2.box.size.y / 2)
+		# O `0x68` é um QUAD de 4 pontos (handler `0x800576c4`) — a caixa está vazia. O centro
+		# é o centróide do quad, e o Y é o piso do nível (`floor_height`), não o -258 herdado.
+		var sx := 0
+		var sz := 0
+		for pq: Vector2i in a2.quad:
+			sx += pq.x
+			sz += pq.y
+		var cx: int = sx / 4 if a2.quad.size() == 4 else a2.box.position.x + a2.box.size.x / 2
+		var cz: int = sz / 4 if a2.quad.size() == 4 else a2.box.position.y + a2.box.size.y / 2
+		var cy: int = wi.room.colisao.floor_height(cx, cz, 0) if wi.room.colisao != null else 0
+		wi.player.pos = Vector3i(cx, cy, cz)
 		var antes := wi.state.item_count()
 		var pad_e := Pad.new()
 		pad_e.set_mask(Pad.ACAO)

@@ -30,6 +30,18 @@ const BITS_PER_BANK := 256                 ## consequência do `& 0x1c` (8 words
 const WORDS_PER_BANK := BITS_PER_BANK / 32
 const BANK_PROGRESS := 1                    ## `0x800d1f2c` — flags de progresso de jogo
 
+## Banco de flags de "item já pego". NÃO é escolha do port: o ponteiro que os handlers
+## `0x800574f4`/`0x800576c4` usam é `0x800d2008`, que é exatamente a **entrada 7** da tabela
+## de bancos `0x8009e3f8` — a mesma que o `CHECK 0x4c` do script consulta. Ou seja: pegar um
+## item acende um bit que o script da sala pode ler, e isso é progressão real (portas que só
+## abrem depois de pegar a chave). Usar um banco inventado (era 5) quebraria esse elo.
+## O BIT vem do dado (u16 `payload+4` do `0x67`/`0x68`).
+const BANCO_ITENS := 7
+## Segundo banco de item (`0x800d2028` = entrada 8): o handler escolhe este quando
+## `*(0x800d1f76) >= 2` e o bit 0x80 das flags globais está apagado — é o Cenário B. O port
+## fica no A até ter seleção de cenário (P6-07); registrado para não parecer esquecimento.
+const BANCO_ITENS_B := 8
+
 const MAIN_SLOTS := 10
 const BOX_SLOTS := 64
 const N_VARS := 256                         ## variáveis de script (o switch usa var u8)
@@ -53,6 +65,24 @@ var save_count := 0
 
 func _init() -> void:
 	reset()
+
+
+func equipped_item_id() -> int:
+	## `item_id` da arma equipada. No EXE há DOIS campos: `inv+0x128` guarda o SLOT equipado
+	## (0xff = nenhum) e `inv+0x129` guarda o `item_id` dele — o segundo é cache do primeiro
+	## (`docs/decomp/notes/menu_inventario.md` §6). O port guarda só o slot (`equipped`) e deriva
+	## o id, que é equivalente e evita dois campos podendo divergir.
+	if equipped < 0 or equipped >= main_slots.size():
+		return 0
+	return int(main_slots[equipped].get("id", 0))
+
+
+func equipped_qtd() -> int:
+	## Munição/quantidade da arma equipada — é o número que a tela de status mostra no painel
+	## EQUIP, em (174,55) (`0x800a0080[10]`, desenhado só se `inv+0x128 != 0xff`).
+	if equipped < 0 or equipped >= main_slots.size():
+		return 0
+	return int(main_slots[equipped].get("qtd", 0))
 
 
 func reset() -> void:

@@ -72,3 +72,34 @@ static func yaw_from_ps1_angle(a: int) -> float:
 
 static func ps1_angle_from_yaw(yaw_rad: float) -> int:
 	return PS1Math.from_deg(rad_to_deg(yaw_rad) - YAW_OFFSET_DEG)
+
+
+static func basis_from_ps1_rot(rot: Vector3i) -> Basis:
+	## Rotação de 3 eixos do dado do jogo (`RotMatrix` do opcode `0x7f`: `rot` s16, 4096 = 360°)
+	## para a `Basis` do Godot. **Medido, não escolhido** — ver `port/dev/diag_rot_om.gd`.
+	##
+	## Critério da medição: muitos itens de chão são QUADS PLANOS (a Chave do armazém da R100 tem
+	## AABB 123×**0**×61). Num plano a normal precisa apontar para a câmera que o enquadra, senão
+	## o jogador veria o avesso — ou nada, se o plano ficar de perfil. Rodando os 30 itens planos
+	## do jogo contra as 12 convenções possíveis (2 ordens de composição × sinais):
+	##
+	##     Rx·Ry·Rz com (+x, −y, −z)  →  26/30 (87%)   ← esta
+	##     Rx·Ry·Rz com (−x, −y, −z)  →  24/30
+	##     as outras 10               →  17..22/30 (57–73%)
+	##
+	## E a medição CONCORDA com a teoria: a conversão de mundo do port é `(x, −y, −z)`, que é uma
+	## rotação de 180° em X; conjugar uma rotação por ela mantém o ângulo de X e inverte os de Y e
+	## Z. Duas linhas independentes no mesmo lugar.
+	##
+	## Os 4/30 que sobram foram olhados um por um, e três não são contra-exemplo:
+	##   • R210 aot4 e R219 aot4 (`rot(0,3390,0)`): `dot = -0.03`, ou seja o plano está DE PERFIL
+	##     para a câmera — empate técnico, o sinal do teste é ruído;
+	##   • R40F aot3 (`rot(0,0,0)`): sem rotação, **nenhuma** convenção muda o resultado (a normal
+	##     do próprio modelo aponta para longe da câmera que o enquadra);
+	##   • R501 aot9 (`rot(0,-6528,0)`): discrepância real, 1 caso, declarada.
+	## Entre os casos decidíveis e não degenerados: **26/27**. O `.glb` é `doubleSided`, então no
+	## caso ruim se vê o verso do plano, não um buraco.
+	var bx := Basis(Vector3.RIGHT, deg_to_rad(PS1Math.to_deg(rot.x)))
+	var by := Basis(Vector3.UP, deg_to_rad(PS1Math.to_deg(-rot.y)))
+	var bz := Basis(Vector3.BACK, deg_to_rad(PS1Math.to_deg(-rot.z)))
+	return bx * by * bz

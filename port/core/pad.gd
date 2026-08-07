@@ -32,6 +32,17 @@ const AIM_B := 0x400
 ## mesmo botão de confirmar. Declarado como provisório até P7-03 fixar o mapeamento.
 const ACAO := 0x20000
 
+## MENU (abre a tela de status/inventário). No PS1 é o botão de menu, lido pelo `log_edge & 0x4000`
+## da própria task do menu (`0x8006dfdc`) — ou seja, é um bit do pad LÓGICO, não o START (que é o
+## `raw_edge & 0x0800` da pausa). O bit aqui é do layout do port; o teclado usa **I** e **ESC**.
+const MENU := 0x4000
+
+## PAUSA (o START do PS1). Provado no recomp: a pausa é testada pela própria task do menu como
+## `raw_edge & 0x0800` sobre `0x800d4434` — bit e variável DIFERENTES do menu de status, que usa
+## `log_edge & 0x4000`. Por isso são dois bits aqui também. **ESC = PAUSA**: no menu de status ele
+## só CANCELA (fecha); fora dele vai chamar o menu de pausa, que ainda não foi extraído.
+const PAUSA := 0x0800
+
 ## --- layout 2: cópia "pad segurado" (player+0x120) ---
 const HELD_UP := 0x10
 const HELD_RIGHT := 0x20
@@ -60,6 +71,9 @@ const KEYMAP := {
 	KEY_D: HELD_RIGHT, KEY_RIGHT: HELD_RIGHT,
 	KEY_SPACE: AIM,
 	KEY_E: ACAO, KEY_ENTER: ACAO,
+	KEY_I: MENU, KEY_ESCAPE: PAUSA,
+	## (não remapear KEY_UP/KEY_DOWN aqui: eles já são FWD/BACK acima, e no dicionário a segunda
+	## entrada venceria e quebraria o andar com as setas. No menu, FWD/BACK movem o cursor.)
 }
 
 

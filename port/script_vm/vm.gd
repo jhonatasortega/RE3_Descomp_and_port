@@ -78,6 +78,9 @@ var state: GameState
 var block_stack: PackedInt32Array = PackedInt32Array()   ## obj+0x140: alvo do else/endif
 ## AOTs que o script instalou nesta execução (P2-04). Chave = id do AOT.
 var aots: Dictionary = {}
+## Objetos de cenário instalados pelo `0x7f` (`om_set`), por SLOT (0..31) — é o pool
+## `gs+0x4328` do motor. É daqui que sai a POSIÇÃO e a ROTAÇÃO do 3D do item (ver objeto.gd).
+var objetos: Dictionary = {}
 ## Personagens que o script colocou nesta execução (sce_em_set 0x7d) — P2-06.
 var spawns: Array[Spawn] = []
 ## Disparos de som do script (P2-08): {op, id, loop, extra}. A fila real do motor é
@@ -297,8 +300,28 @@ func passo() -> void:
 				(aots[rid] as Aot).ativo = false
 			pc += size_of(op)
 
-		0x68:                             # sce_item_aot_set: item no chão
+		0x67, 0x68:                       # sce_item_aot_set: item no chão (2 pontos / 4 pontos)
+			# `0x67` NÃO é porta (a tabela de opcodes o chamava "door_aot_set"): é o MESMO
+			# handler de item na versão AABB — `0x800574f4` (22 B) contra `0x800576c4` (30 B),
+			# byte a byte o mesmo payload em offset diferente. São 316 dos 330 itens do jogo.
 			_registrar_aot(op)
+			pc += size_of(op)
+
+		0x7F:                             # om_set: objeto de cenário (o 3D do item vem daqui)
+			var o := ObjetoSala.new()
+			o.slot = u8(pc + 1)
+			o.tipo = u8(pc + 2)
+			o.fx = u8(pc + 3)
+			o.floor_id = u8(pc + 8)
+			o.modo = u8(pc + 9)
+			o.visbit = u8(pc + 11)
+			o.be_flg = u16(pc + 12)
+			o.attr = s16(pc + 14)
+			o.pos = Vector3i(s16(pc + 16), s16(pc + 18), s16(pc + 20))
+			o.rot = Vector3i(s16(pc + 22), s16(pc + 24), s16(pc + 26))
+			# `entry+0 = be_flg | 1`: o bit 0 (VISÍVEL) é sempre ligado no setup.
+			o.be_flg |= 1
+			objetos[o.slot] = o
 			pc += size_of(op)
 
 		0x6E:                             # sce_col_chg: liga/desliga UM collider (P3-10)
@@ -366,7 +389,12 @@ func _registrar_aot(op: int) -> void:
 	a.opcode = op
 	a.id = u8(pc + 1)
 	a.sce = u8(pc + 2)
-	a.floor_id = u8(pc + 3)
+	# Layout comum da família aot_set: `+3 SAT` (máscara de quem/como dispara) e `+4 nFloor`
+	# (0x80 = qualquer andar). Antes o port lia `+3` como andar — era o SAT (0x31 em 328 dos
+	# 330 itens), e o andar ficava sempre igual.
+	a.sat = u8(pc + 3)
+	a.floor_id = u8(pc + 4)
+	a.super_id = u8(pc + 5)
 
 	if op == 0x64:                                  # gatilho em 4 pontos
 		a.kind = Aot.Kind.QUAD
@@ -377,15 +405,14 @@ func _registrar_aot(op: int) -> void:
 		for k in 4:
 			a.quad.append(Vector2i(s16(pc + 6 + 4 * k), s16(pc + 8 + 4 * k)))
 	elif op == 0x68:
-		# ITEM no chão: o `0x68` define a área por DOIS CANTOS, não por (x,z,w,d).
-		# Medido no dado (R104 f5): +6/+8 = (-8424,-17139) e +10/+12 = (-7710,-16350) —
-		# ambos negativos e crescentes, logo são coordenadas, não tamanho.
-		a.kind = Aot.Kind.BOX
-		var x0 := s16(pc + 6)
-		var z0 := s16(pc + 8)
-		var x1 := s16(pc + 10)
-		var z1 := s16(pc + 12)
-		a.box = Rect2i(mini(x0, x1), mini(z0, z1), absi(x1 - x0), absi(z1 - z0))
+		# ITEM no chão: a área é um **QUAD de 4 pontos** (+6..+21), como o `0x64` — não duas
+		# esquinas. Provado no handler `0x800576c4` (PC += 30) e conferido byte a byte nos 14
+		# itens do jogo: na R104 aot 4 os 8 s16 são exatamente o quad
+		# (-8424,-17139) (-7710,-16350) (-6844,-16939) (-7565,-17883) que o exportador emite.
+		# A leitura anterior (dois cantos) fazia a área de coleta ser só o primeiro trecho.
+		a.kind = Aot.Kind.QUAD
+		for k in 4:
+			a.quad.append(Vector2i(s16(pc + 6 + 4 * k), s16(pc + 8 + 4 * k)))
 	else:                                           # 0x61 / 0x63: AABB por (x,z,w,d)
 		a.kind = Aot.Kind.BOX
 		a.box = Rect2i(s16(pc + 6), s16(pc + 8), s16(pc + 10), s16(pc + 12))
@@ -404,9 +431,33 @@ func _registrar_aot(op: int) -> void:
 		a.to_room = u8(pc + 0x1F)
 		a.to_cut = u8(pc + 0x20)
 		a.to_grupo = u8(pc + 0x21)      # idem para o 0x62
-	elif op == 0x68:
-		a.item_id = u8(pc + 22)
-		a.item_qtd = u8(pc + 24)
+	elif op == 0x67 or op == 0x68:
+		# PAYLOAD DE ITEM — idêntico nos dois opcodes, só muda a base: depois da geometria.
+		#   `0x67` (22 B): rect em +6..+13 → payload em **+14**  (handler `0x800574f4`)
+		#   `0x68` (30 B): quad em +6..+21 → payload em **+22**  (handler `0x800576c4`)
+		#     +0 u8  item_id      · +1 u8 = 0 em 330/330
+		#     +2 u16 amount       (dificuldade FÁCIL dobra se 21 <= item_id <= 31)
+		#     +4 u16 flag_id      BIT de "já pego" — passado a `TestBit`/`SetBit`
+		#     +6 u8  om           SLOT do objeto de cenário (`0x7f`) e do modelo no RDT;
+		#                         >= 32 (128/255 nos dados) = item SEM modelo 3D
+		#     +7 u8  iflags       bit 0 = coleta com animação · **bit 7 = tem brilho (ESP)**
+		var p := 14 if op == 0x67 else 22
+		a.item_id = u8(pc + p)
+		a.item_qtd = u16(pc + p + 2)
+		a.item_flag = u16(pc + p + 4)
+		a.item_om = u8(pc + p + 6)
+		a.item_flags = u8(pc + p + 7)
+		# DIFICULDADE FÁCIL dobra munição: `sltiu (item_id-21) < 11` + flag global 0x100 →
+		# `amount <<= 1` (`0x800577c8..d4`). Não aplicado aqui porque o port ainda não tem o
+		# seletor de dificuldade (P3-06); fica registrado para quando tiver.
+		if op == 0x68:
+			a.sat |= 0x80                      ## o handler do 4-pontos acende esse bit
+		if state != null and a.item_flag > 0 and state.flag_get(GameState.BANCO_ITENS, a.item_flag):
+			# Item já pego: o handler zera o `sce` do descriptor (AOT morto) e apaga o objeto
+			# de cenário (`pool[om].be_flg = 0x80000000`) — o item desaparece do chão.
+			a.ativo = false
+			if objetos.has(a.item_om):
+				(objetos[a.item_om] as ObjetoSala).be_flg = 0
 
 	aots[a.id] = a
 

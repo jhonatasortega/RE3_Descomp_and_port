@@ -8,9 +8,9 @@
 
 ## Geral (ponderado por peso, 86 itens)
 
-- **Implementado:** `████████░░░░░░░░░░░░` **38%**
-- **Validado:**    `███████░░░░░░░░░░░░░` **33%**
-- Itens: **10 validados** · **30 em andamento** · **46 a fazer**
+- **Implementado:** `████████░░░░░░░░░░░░` **39%**
+- **Validado:**    `███████░░░░░░░░░░░░░` **34%**
+- Itens: **10 validados** · **32 em andamento** · **44 a fazer**
 
 ## Por fase
 
@@ -18,11 +18,11 @@
 |---|---|---|---|--:|---|---|
 | **F0** | Fundação do projeto port/ | Esqueleto + bases determinísticas (30 Hz, ângulo 4096, coords, flags) | Importa com 0 erro + suíte de testes roda + 0 asset faltante | 11 | ████████ 98% | ███████░ 92% |
 | **F1** | Sala fiel (fatia vertical R100 + R10E) | Uma sala completa: HD por câmera, RID, RVD, colisão, oclusão, Jill armada | 6 pontos de referência lado-a-lado com o emulador (P1-14) | 16 | █████░░░ 68% | ████░░░░ 54% |
-| **F2** | VM do SCD (o cérebro do jogo) | Intérprete dos 144 opcodes do script de sala (threads, flags, AOT) | Dry-run das 4238 funções: 0 opcode faltante, 100% fecham (P2-10) | 10 | ██████░░ 69% | █████░░░ 59% |
+| **F2** | VM do SCD (o cérebro do jogo) | Intérprete dos 144 opcodes do script de sala (threads, flags, AOT) | Dry-run das 4238 funções: 0 opcode faltante, 100% fecham (P2-10) | 10 | ██████░░ 70% | █████░░░ 61% |
 | **F3** | Mundo inteiro (169 salas, 453 portas, save) | 169 salas ligadas: portas, spawn de chegada, streaming, save | 453/453 portas auditadas + rota crítica por replay (P3-06 / P3-07) | 10 | ███░░░░░ 40% | ███░░░░░ 37% |
 | **F4** | Combate e entidades | Entidade de personagem, animação de inimigo, mira, tiro, dano | Tiros para matar == original em 6 pares arma×inimigo (P4-09) | 9 | ░░░░░░░░ 0% | ░░░░░░░░ 0% |
 | **F5** | IA por classe (12 overlays) | Máquinas de estado por classe (zumbi → cão → hunter → Nemesis) | Vídeo lado-a-lado por classe, no mesmo estímulo (P5-09) | 9 | ░░░░░░░░ 0% | ░░░░░░░░ 0% |
-| **F6** | Meta-jogo | Menus, inventário, mapa, files, FMV HD, finais, Mercenários | Completável do título ao epílogo nos 2 finais + Mercenários | 12 | ░░░░░░░░ 2% | ░░░░░░░░ 1% |
+| **F6** | Meta-jogo | Menus, inventário, mapa, files, FMV HD, finais, Mercenários | Completável do título ao epílogo nos 2 finais + Mercenários | 12 | █░░░░░░░ 10% | █░░░░░░░ 7% |
 | **F7** | Fidelidade final e release | Tempos/fades, mixagem, input, regressão, performance, export legal | Suíte de regressão verde + build sem asset da Capcom/SHDP | 9 | ░░░░░░░░ 0% | ░░░░░░░░ 0% |
 
 ## Checklist por fase
@@ -167,7 +167,7 @@
   - **Reaproveita:** P1-07
   - **Nota:** As máscaras são atlas com coordenada de TELA — se o crop não for propagado, a oclusão desalinha 120 px no modo 16:9.
 
-### F2 — VM do SCD (o cérebro do jogo)  ·  impl 69% / valid 59%
+### F2 — VM do SCD (o cérebro do jogo)  ·  impl 70% / valid 61%
 
 **Objetivo:** Intérprete completo do bytecode de sala em GDScript: 144 opcodes, controle de fluxo, threads, bancos de flags, AOT, spawns, itens, som e cinemáticas scriptadas.
 
@@ -203,11 +203,11 @@
   - **Fonte:** docs/decomp/notes/sce_em_set.md
   - **Reaproveita:** tools/scd_enemies.py, godot/data/sce_enemies.json, godot/assets/ENEMY/
   - **Nota:** class<->mesh é m:n; a espécie fina resolve em runtime. Usar emd_annotations com a confiança registrada. | FEITO: opcode 0x7d (sce_em_set, 24B) implementado na VM com o layout do handler 0x80056a2c (slot s8@+2, classe@+3, arma@+4, status@+6, model_id@+0xb, pos s16@+0xc/+0xe/+0x10, dir@+0x12, mira@+0x14/+0x16) e port/script_vm/spawn.gd resolve especie+modelo via class_to_species, SEMPRE com a confianca declarada (classe 0x10 -> 'Zumbi (macho)', conf ALTA, ENEMY/em10.glb; classe sem anotacao -> conf NENHUMA e nenhum modelo inventado). MEDIDO nas 169 salas: 1678 personagens em 135 salas, 52 classes distintas, todos com .glb no lugar, 71 com conf ALTA, 93 em posicao (0,0,0) (slots especiais, ignorados no render). NOTA sobre a contagem: o extrator Python conta 1136 inimigos + 80 NPCs; a VM acha MAIS porque executa todas as funcoes da sala independentemente, entao acumula spawns de ramos que o jogo real so roda em certas condicoes - mesma natureza da diferenca das portas, e nao um erro de leitura. PROVADO por render: R110 com 2 zumbis, R200 com 34 personagens. RESSALVA: eles flutuam um pouco acima do chao - o pos.y do spawn esta na convencao de Y do motor (mesma questao das chegadas de porta, item P3-10), nao na altura do pe. Sem IA ainda (F5)
-- [~] **P2-07** (peso 3, impl 80%, valid 70%) — Itens no chão (0x68) + pegar/examinar (193 IDs)
+- [~] **P2-07** (peso 3, impl 92%, valid 88%) — Itens no chão (0x67 + 0x68 = 330 itens) + malha real do RDT + pegar/examinar (193 IDs)
   - **Validação:** Todos os itens colocados por script aparecem e entram no inventário com id/qtd corretos; textos de nome/exame vêm da tabela real EN+PT.
-  - **Fonte:** docs/decomp/notes/exe_items.md, docs/decomp/notes/messages.md
-  - **Reaproveita:** godot/data/re3_items.json, sce_items.json
-  - **Nota:** PEGAR 0x80069c3c; array de inventário 0x800d2134 (slot {id,qtd,flags}). | FEITO: itens no chao pelo opcode 0x68 (30B). ACHADO: a area do item e definida por DOIS CANTOS, nao por (x,z,w,d) como os gatilhos 0x63 - medido no dado (R104 f5: +6/+8 = -8424,-17139 e +10/+12 = -7710,-16350; ambos negativos e crescentes, logo coordenadas). item_id@+22 e qtd@+24 confirmados (id 33, qtd 1). World.pegar_item_sob_o_player() coloca no inventario e desativa o AOT. MEDIDO: 14 itens em 7 salas com 8 ids distintos - exatamente os 14 que a decomp mede (meu limiar inicial de >20 era chute meu; o dado corrigiu). Teste cobre pegar uma vez e nao pegar duas
+  - **Fonte:** docs/formatos/ARD.md §3.9 (handlers 0x800574f4/0x800576c4/0x80056510), docs/decomp/notes/exe_items.md
+  - **Reaproveita:** port/data/re3_items.json, port/assets/OMODEL/, tools/omodel2gltf.py
+  - **Nota:** FECHADO o dado: 0x67 NAO e porta, e o AOT de item de 2 pontos (316 itens) — o port via so os 14 do 0x68. Payload em +14/+22: item_id, amount u16, FLAG 'ja pego' (banco 7, o mesmo do CHECK 0x4c), slot `om` e iflags (bit7=brilho). Posicao/rotacao vem do opcode 0x7f (om_set) no mesmo slot (mediana de 326 un de distancia do centro da area). MALHA REAL: offset_table[10] = diretorio {TIM, MD1} — tools/omodel2gltf.py exporta 712 modelos em 169 salas, 0 falhas (R104 om1 = erva verde no vaso, R108 om4 = erva vermelha). Coleta = botao de acao + sonda 620 un a frente (277/277 nas salas que o init alcanca); 0 conflitos de aot_id com as 403 portas. FALTA: itens instalados por funcao de evento (39 dos 330), efeito ESP do brilho, examinar/mensagem.
 - [~] **P2-08** (peso 3, impl 70%, valid 60%) — Opcodes de som da VM (0x55..0x59) + filas de som
   - **Validação:** Os 1528 disparos de som das 169 salas resolvem um VAG do banco; nenhum disparo silencioso não explicado.
   - **Fonte:** docs/decomp/notes/sfx.md
@@ -354,7 +354,7 @@
 - [ ] **P5-09** (peso 4, impl 0%, valid 0%) — GATE F5 — todas as classes validadas em vídeo lado-a-lado
   - **Validação:** Uma pasta de comparações (original vs port) por classe, aprovada por você.
 
-### F6 — Meta-jogo  ·  impl 2% / valid 1%
+### F6 — Meta-jogo  ·  impl 10% / valid 7%
 
 **Objetivo:** Tudo fora do gameplay puro: 13 telas de menu, inventário fiel, mapa, files, FMV HD, vozes dual-idioma, dificuldades, epílogos/finais e Mercenários.
 
@@ -365,19 +365,20 @@
   - **Fonte:** docs/decomp/notes/menus.md
   - **Reaproveita:** tools/menu_extract.py, godot/assets/MENU/ (222 arquivos)
   - **Nota:** O rect por sprite é COMPOSTO EM RUNTIME (pipeline 0x800746c0) — reimplementar o compositor, não chumbar coordenadas.
-- [ ] **P6-02** (peso 3, impl 0%, valid 0%) — Inventário/status fiel (grade 2x4, EQUIP/USE/COMBINE/CHECK, ECG, ícones HD)
+- [~] **P6-02** (peso 3, impl 70%, valid 55%) — Inventário/status fiel (grade 2x5, EQUIP/USE/COMBINE/CHECK, ECG, ícones HD)
   - **Validação:** Layout, cores e verbos idênticos ao original; 193 itens com ícone e texto certos (ou marcados com confiança explícita).
-  - **Fonte:** docs/godot_ui.md, docs/formatos/hd_ui.md
-  - **Reaproveita:** godot/scenes/ui/inventory.tscn, godot/assets/UI/ (120 arquivos)
-  - **Nota:** Melhor peça do protótipo antigo — migra quase direto. RE3 NÃO tem HUD em gameplay: não portar o hud.tscn.
+  - **Fonte:** docs/decomp/notes/menu_inventario.md (+ auditoria §15), docs/port/telas_e_hd.md
+  - **Reaproveita:** tools/status_layout.py, tools/status_assets.py, port/dev/hd_casar.gd, port/dev/hd_idiomas.gd
+  - **Nota:** A tela NAO e overlay: e uma TASK do EXE (entrada 0x8006dfdc, ctx 0x800e01c0) — o PC_SYS.BIN e o terminal de senhas do hospital. Espaco de tela 320x240 (provado: maior dx+w=312), desenhado no port com escala 4 para 1280x960. FEITO com a medida de onde saiu: moldura, retrato, palavra da condicao ao vivo pelo HP (>=101 FINE / >=41 / >=21 / DANGER; VIRUS e Poison por flags), botoes EXIT/FILE/MAP com placa normal (v=200/208) e destacada (v=184/192) — variante provada em 0x8006bf40 (soma 0x18 quando ctx+0x1e bate), grade 2x5 celula 40x30 em (224,66) passo +40/+30, icones por item_id do ITEMA.SLD (LZ de 0x80010000; 134/134 descomprimem em 1200 B), digito da quantidade com a cor pelo estado do slot (paleta 2+((flags>>2)&3), 0x8006c08c), placa grande do ITEMG, painel EQUIP (icone em (172,37) + quantidade em (174,55)), cursor do STMOJIU paleta 3 com piscada de 64 quadros, submenu EQUIP/USE/COMBINE/CHECK, abertura/fechamento em 6 quadros e PAUSA real (task_suspend(0) em 0x8006d97c = nao chamar mundo.tick; provado por posicao identica). HD: 106/120 icones e 106/107 placas casados por conteudo com ATRIBUICAO GLOBAL (item-por-item dava 49/96); moldura achada como BLOCO de VRAM 512x1024 na posicao (128,0) do STMAIN0U, na variante de idioma LATINA (misc/62EE7AF8 = STATUS/EQUIPADO). Validado contra mod_BH3_Portuguese/xml/status_mapping.xml, que traz a lista de desenho inteira e confere 1:1. FALTA: onda do ECG (4 evidencias de que nao esta nesta task: zero SetLineF2 no EXE, sem tabela de onda, listras batidas no bitmap, bloco HD tambem sem onda), som (acao->id provado em 0x800746c0 mas id->amostra nao), acoes USE/COMBINE/CHECK, base[2] (ctx+0xec) dos registros B28/B29, e a cor do primitivo das placas (uso o azul (8,0,80) do proprio jogo, declarado).
 - [ ] **P6-03** (peso 3, impl 0%, valid 0%) — Tela de mapa (MAP_U + 92 mapas HD) com posição/salas visitadas
   - **Validação:** Mapa abre na página certa por área, marca sala atual e visitadas como o original.
   - **Fonte:** docs/formatos/map.md
   - **Reaproveita:** tools/map_decode.py, godot/assets/MAP/, godot/data/map_graph.json
-- [ ] **P6-04** (peso 2, impl 0%, valid 0%) — Files/memos (280 HD) + tabela de mensagens EN/PT
+- [~] **P6-04** (peso 2, impl 25%, valid 20%) — Files/memos (280 HD) + tabela de mensagens EN/PT
   - **Validação:** Todo file lido no jogo abre com o texto certo nos 2 idiomas.
   - **Fonte:** docs/decomp/notes/messages.md
   - **Reaproveita:** godot/data/re3_messages.json
+  - **Nota:**  | EXTRAIDO: as paginas de documento sao IMAGENS, nao texto (FILEGU.PIX) — 31 documentos, 183 paginas de 128x256 8bpp em port/assets/FILE/ (184 PNG) com o indice em port/data/re3_file_screen.json. Falta a tela (lista + leitor).
 - [ ] **P6-05** (peso 3, impl 0%, valid 0%) — FMV: reencode dos zmovie/*.mp4 (HD do mod) -> Ogg Theora + player integrado
   - **Validação:** 14 vídeos tocam com áudio em sync, resolução >= 960p, disparados no ponto certo do script, com skip; sem stutter.
   - **Fonte:** docs/formatos/audio_video.md

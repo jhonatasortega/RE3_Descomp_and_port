@@ -73,3 +73,5 @@ port/dev/*.png
 
 # Config local do Claude Code
 .claude/settings.local.json
+port/_shot*.png.import
+port/_hd_cand/
