@@ -179,11 +179,43 @@ em (172,37) + quantidade em (174,55)), cursor com a piscada de 64 quadros, subme
   `SOUND/A_xx`. Sem esse elo, escolher som seria de ouvido.
 * **Telas de FILE e MAP.** Os dados já estão extraídos (183 páginas + 31 capas em
   `port/assets/FILE/`, `re3_map_screen.json` com o divisor 450 e o bitmap de visitados).
-* **USE / COMBINE / CHECK.** As 125 receitas estão em `port/data/re3_combinacoes.json`; o CHECK
-  depende de desenho de texto (frente da fonte).
+* ~~USE / COMBINE / CHECK~~ — **feito** (ver §10).
 * **Base `base[2]` (`ctx+0xec`)** dos registros B28/B29 — a auditoria marcou como não medida, e
   por isso esses dois registros não são usados.
 * **Cor do primitivo das placas.** As tiras no atlas são bandas chapadas (cinza no destacado,
   quase preta no normal); o azul que a captura mostra vem da cor do primitivo, que não foi
   decodificada. O port usa o azul do próprio jogo (`(8,0,80)`, a cor dominante do ícone de célula
   vazia) com a tira dando a diferença claro/escuro.
+
+
+---
+
+## 10. USE, COMBINE e TEXTO (feitos)
+
+`port/core/itens.gd` carrega `data/re3_combinacoes.json` (gerado por `tools/exe_combine.py`) e
+expõe as regras **como o EXE as tem**:
+
+* **Descritor** (`0x800a0514`, 4 B/item): `cat` decide EQUIP vs USE (`0x8006be2c`). Antes eu
+  usava "id 1..20", que era a consequência observada; agora é a causa. `max` é o empilhamento —
+  é ele que dá a capacidade do pente na recarga (Hand Gun = 15).
+* **Cura** (tabela `0x80010e4c`, 11 entradas por `id - 0x20`), aplicação em `0x80067934`:
+  soma o HP, faz clamp em `maxHP` (`gs+0x255a`), limpa o bit `0x0200` (veneno) quando a entrada
+  manda, e o item some — exceto a **F. Aid Box** (`0x2a`), que gasta 1. "Cheio" é `(u8)maxHP`
+  porque o EXE lê com `lbu`. A **Erva vermelha sozinha não faz efeito** (o handler só mostra a
+  mensagem 7) — é o tipo de detalhe que uma tabela inventada perderia.
+* **Combinação**: `combine_find` (`0x8006a898`) é busca **linear e simétrica** nas 125 receitas.
+  Ligados: `simples` (ervas) e `recarregar_arma` (enche até o `max` do descritor e desconta da
+  munição). Declarados, não ligados: pólvora→munição (tem bônus por quantidade), upgrade de arma,
+  troca de granada e munição infinita.
+* **Player** ganhou `hp_max` (`gs+0x255a`) e `status` (`gs+0x255e`: `0x100` vírus, `0x200`
+  veneno), que é o que a condição da tela lê ao vivo.
+
+`port/present/texto.gd` desenha com a fonte do jogo: `ETC/TEXU.TIM` (4bpp, 1024×256, 60 CLUTs),
+célula **14×14** em grade de 18 colunas, `cod = ASCII - 0x24`, e a **tabela de larguras
+proporcionais** de `0x80098dd0` (`trim_left` + `advance` por glifo — `A` avança 14, `i` avança 10
+com trim 4). Altura de linha 16, quebra por largura em pixels. Com isso a caixa de mensagem mostra
+o **nome do item** e o **CHECK** mostra o texto de exame em português (`re3_items.json`).
+
+Regressão: `port/dev/tests/test_itens.gd`, 39 asserts com o endereço de origem em cada um
+(inclui "três `i` são mais estreitos que três `A`", que falha se alguém tratar a fonte como
+monoespaçada).

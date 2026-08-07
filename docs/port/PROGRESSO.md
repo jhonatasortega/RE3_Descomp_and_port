@@ -8,9 +8,9 @@
 
 ## Geral (ponderado por peso, 86 itens)
 
-- **Implementado:** `████████░░░░░░░░░░░░` **39%**
+- **Implementado:** `████████░░░░░░░░░░░░` **40%**
 - **Validado:**    `███████░░░░░░░░░░░░░` **34%**
-- Itens: **10 validados** · **32 em andamento** · **44 a fazer**
+- Itens: **10 validados** · **33 em andamento** · **43 a fazer**
 
 ## Por fase
 
@@ -20,9 +20,9 @@
 | **F1** | Sala fiel (fatia vertical R100 + R10E) | Uma sala completa: HD por câmera, RID, RVD, colisão, oclusão, Jill armada | 6 pontos de referência lado-a-lado com o emulador (P1-14) | 16 | █████░░░ 68% | ████░░░░ 54% |
 | **F2** | VM do SCD (o cérebro do jogo) | Intérprete dos 144 opcodes do script de sala (threads, flags, AOT) | Dry-run das 4238 funções: 0 opcode faltante, 100% fecham (P2-10) | 10 | ██████░░ 70% | █████░░░ 61% |
 | **F3** | Mundo inteiro (169 salas, 453 portas, save) | 169 salas ligadas: portas, spawn de chegada, streaming, save | 453/453 portas auditadas + rota crítica por replay (P3-06 / P3-07) | 10 | ███░░░░░ 40% | ███░░░░░ 37% |
-| **F4** | Combate e entidades | Entidade de personagem, animação de inimigo, mira, tiro, dano | Tiros para matar == original em 6 pares arma×inimigo (P4-09) | 9 | ░░░░░░░░ 0% | ░░░░░░░░ 0% |
+| **F4** | Combate e entidades | Entidade de personagem, animação de inimigo, mira, tiro, dano | Tiros para matar == original em 6 pares arma×inimigo (P4-09) | 9 | ░░░░░░░░ 4% | ░░░░░░░░ 3% |
 | **F5** | IA por classe (12 overlays) | Máquinas de estado por classe (zumbi → cão → hunter → Nemesis) | Vídeo lado-a-lado por classe, no mesmo estímulo (P5-09) | 9 | ░░░░░░░░ 0% | ░░░░░░░░ 0% |
-| **F6** | Meta-jogo | Menus, inventário, mapa, files, FMV HD, finais, Mercenários | Completável do título ao epílogo nos 2 finais + Mercenários | 12 | █░░░░░░░ 10% | █░░░░░░░ 7% |
+| **F6** | Meta-jogo | Menus, inventário, mapa, files, FMV HD, finais, Mercenários | Completável do título ao epílogo nos 2 finais + Mercenários | 12 | █░░░░░░░ 11% | █░░░░░░░ 9% |
 | **F7** | Fidelidade final e release | Tempos/fades, mixagem, input, regressão, performance, export legal | Suíte de regressão verde + build sem asset da Capcom/SHDP | 9 | ░░░░░░░░ 0% | ░░░░░░░░ 0% |
 
 ## Checklist por fase
@@ -274,7 +274,7 @@
   - **Reaproveita:** P2-01
   - **Nota:** Se a VM estiver certa, isso 'sai de graça' — é o teste de verdade da F2.
 
-### F4 — Combate e entidades  ·  impl 0% / valid 0%
+### F4 — Combate e entidades  ·  impl 4% / valid 3%
 
 **Objetivo:** Entidade genérica de personagem, animação/skinning de inimigo, mira e aim tiers, hitscan e projéteis, tabela de dano e reações.
 
@@ -307,10 +307,11 @@
 - [ ] **P4-07** (peso 3, impl 0%, valid 0%) — Reações: recuo por arma, hit-stun, queda, morte e gore
   - **Validação:** Comparação em vídeo: mesmo nº de frames de recuo e mesma animação de morte por arma/inimigo em 6 casos.
   - **Fonte:** docs/decomp/notes/exe_combat.md (recuo 0x80048308), exe_ai.md (DEATH/DAMAGE)
-- [ ] **P4-08** (peso 3, impl 0%, valid 0%) — Dano recebido, veneno, cura (ervas/spray) e estados FINE..DANGER
+- [~] **P4-08** (peso 3, impl 45%, valid 40%) — Dano recebido, veneno, cura (ervas/spray) e estados FINE..DANGER
   - **Validação:** Curas restauram os valores certos; veneno drena no ritmo certo; combinação de ervas segue a receita real (vive no menu).
   - **Fonte:** docs/decomp/notes/exe_items.md, exe_combat.md
   - **Reaproveita:** godot/scripts/ui/inventory.gd
+  - **Nota:** Cura FEITA com os valores reais (port/core/itens.gd, tabela 0x80010e4c) e os limiares FINE/CAUTION/CAUTION2/DANGER de 0x8006e598 (101/41/21) ligados a condicao da tela de status. Player ganhou hp_max (gs+0x255a) e status (gs+0x255e, bit 0x100 virus / 0x200 veneno). FALTA: dano recebido, dreno do veneno por tempo e a animacao de cura (39 quadros, ctx[0x32] de -0x20 a 0x51 a +3 por frame).
 - [ ] **P4-09** (peso 4, impl 0%, valid 0%) — GATE F4 — contagem de tiros por arma x inimigo == original
   - **Validação:** Medir no emulador e no port: handgun/shotgun/magnum x zumbi/cão/hunter (6 pares). Números iguais, incluindo a variação por região do corpo.
 
@@ -354,7 +355,7 @@
 - [ ] **P5-09** (peso 4, impl 0%, valid 0%) — GATE F5 — todas as classes validadas em vídeo lado-a-lado
   - **Validação:** Uma pasta de comparações (original vs port) por classe, aprovada por você.
 
-### F6 — Meta-jogo  ·  impl 10% / valid 7%
+### F6 — Meta-jogo  ·  impl 11% / valid 9%
 
 **Objetivo:** Tudo fora do gameplay puro: 13 telas de menu, inventário fiel, mapa, files, FMV HD, vozes dual-idioma, dificuldades, epílogos/finais e Mercenários.
 
@@ -365,11 +366,11 @@
   - **Fonte:** docs/decomp/notes/menus.md
   - **Reaproveita:** tools/menu_extract.py, godot/assets/MENU/ (222 arquivos)
   - **Nota:** O rect por sprite é COMPOSTO EM RUNTIME (pipeline 0x800746c0) — reimplementar o compositor, não chumbar coordenadas.
-- [~] **P6-02** (peso 3, impl 70%, valid 55%) — Inventário/status fiel (grade 2x5, EQUIP/USE/COMBINE/CHECK, ECG, ícones HD)
+- [~] **P6-02** (peso 3, impl 82%, valid 70%) — Inventário/status fiel (grade 2x5, EQUIP/USE/COMBINE/CHECK, ECG, ícones HD)
   - **Validação:** Layout, cores e verbos idênticos ao original; 193 itens com ícone e texto certos (ou marcados com confiança explícita).
   - **Fonte:** docs/decomp/notes/menu_inventario.md (+ auditoria §15), docs/port/telas_e_hd.md
   - **Reaproveita:** tools/status_layout.py, tools/status_assets.py, port/dev/hd_casar.gd, port/dev/hd_idiomas.gd
-  - **Nota:** A tela NAO e overlay: e uma TASK do EXE (entrada 0x8006dfdc, ctx 0x800e01c0) — o PC_SYS.BIN e o terminal de senhas do hospital. Espaco de tela 320x240 (provado: maior dx+w=312), desenhado no port com escala 4 para 1280x960. FEITO com a medida de onde saiu: moldura, retrato, palavra da condicao ao vivo pelo HP (>=101 FINE / >=41 / >=21 / DANGER; VIRUS e Poison por flags), botoes EXIT/FILE/MAP com placa normal (v=200/208) e destacada (v=184/192) — variante provada em 0x8006bf40 (soma 0x18 quando ctx+0x1e bate), grade 2x5 celula 40x30 em (224,66) passo +40/+30, icones por item_id do ITEMA.SLD (LZ de 0x80010000; 134/134 descomprimem em 1200 B), digito da quantidade com a cor pelo estado do slot (paleta 2+((flags>>2)&3), 0x8006c08c), placa grande do ITEMG, painel EQUIP (icone em (172,37) + quantidade em (174,55)), cursor do STMOJIU paleta 3 com piscada de 64 quadros, submenu EQUIP/USE/COMBINE/CHECK, abertura/fechamento em 6 quadros e PAUSA real (task_suspend(0) em 0x8006d97c = nao chamar mundo.tick; provado por posicao identica). HD: 106/120 icones e 106/107 placas casados por conteudo com ATRIBUICAO GLOBAL (item-por-item dava 49/96); moldura achada como BLOCO de VRAM 512x1024 na posicao (128,0) do STMAIN0U, na variante de idioma LATINA (misc/62EE7AF8 = STATUS/EQUIPADO). Validado contra mod_BH3_Portuguese/xml/status_mapping.xml, que traz a lista de desenho inteira e confere 1:1. FALTA: onda do ECG (4 evidencias de que nao esta nesta task: zero SetLineF2 no EXE, sem tabela de onda, listras batidas no bitmap, bloco HD tambem sem onda), som (acao->id provado em 0x800746c0 mas id->amostra nao), acoes USE/COMBINE/CHECK, base[2] (ctx+0xec) dos registros B28/B29, e a cor do primitivo das placas (uso o azul (8,0,80) do proprio jogo, declarado).
+  - **Nota:** A tela NAO e overlay: e uma TASK do EXE (entrada 0x8006dfdc, ctx 0x800e01c0) — o PC_SYS.BIN e o terminal de senhas do hospital. Espaco de tela 320x240 (provado: maior dx+w=312), desenhado no port com escala 4 para 1280x960. FEITO com a medida de onde saiu: moldura, retrato, palavra da condicao ao vivo pelo HP (>=101 FINE / >=41 / >=21 / DANGER; VIRUS e Poison por flags), botoes EXIT/FILE/MAP com placa normal (v=200/208) e destacada (v=184/192) — variante provada em 0x8006bf40 (soma 0x18 quando ctx+0x1e bate), grade 2x5 celula 40x30 em (224,66) passo +40/+30, icones por item_id do ITEMA.SLD (LZ de 0x80010000; 134/134 descomprimem em 1200 B), digito da quantidade com a cor pelo estado do slot (paleta 2+((flags>>2)&3), 0x8006c08c), placa grande do ITEMG, painel EQUIP (icone em (172,37) + quantidade em (174,55)), cursor do STMOJIU paleta 3 com piscada de 64 quadros, submenu EQUIP/USE/COMBINE/CHECK, abertura/fechamento em 6 quadros e PAUSA real (task_suspend(0) em 0x8006d97c = nao chamar mundo.tick; provado por posicao identica). HD: 106/120 icones e 106/107 placas casados por conteudo com ATRIBUICAO GLOBAL (item-por-item dava 49/96); moldura achada como BLOCO de VRAM 512x1024 na posicao (128,0) do STMAIN0U, na variante de idioma LATINA (misc/62EE7AF8 = STATUS/EQUIPADO). Validado contra mod_BH3_Portuguese/xml/status_mapping.xml, que traz a lista de desenho inteira e confere 1:1. LIGADO nesta rodada, com os valores do EXE: USE de cura (tabela 0x80010e4c: F.Aid Spray e F.Aid Box curam (u8)maxHP, erva verde maxHP/4, mista V+V maxHP/2, erva azul so o veneno, erva vermelha sozinha nao faz efeito; aplicacao 0x80067934 com clamp em maxHP e limpeza do bit 0x200), COMBINE com as 125 receitas (busca linear e SIMETRICA de 0x8006a898; ervas e recarga de arma ligadas, polvora/upgrade/granada/infinita declarados), EQUIP/USE decidido pelo DESCRITOR real (0x800a0514 byte 0 = categoria, nao mais a faixa de ids), e TEXTO com a fonte do jogo (ETC/TEXU.TIM, celula 14x14, cod = ASCII-0x24, tabela de larguras PROPORCIONAIS de 0x80098dd0) -> nome do item e CHECK com o texto de exame em PT. 39 asserts novos em test_itens.gd. FALTA: onda do ECG (4 evidencias de que nao esta nesta task: zero SetLineF2 no EXE, sem tabela de onda, listras batidas no bitmap, bloco HD tambem sem onda), som (acao->id provado em 0x800746c0 mas id->amostra nao), acoes USE/COMBINE/CHECK, base[2] (ctx+0xec) dos registros B28/B29, e a cor do primitivo das placas (uso o azul (8,0,80) do proprio jogo, declarado).
 - [ ] **P6-03** (peso 3, impl 0%, valid 0%) — Tela de mapa (MAP_U + 92 mapas HD) com posição/salas visitadas
   - **Validação:** Mapa abre na página certa por área, marca sala atual e visitadas como o original.
   - **Fonte:** docs/formatos/map.md

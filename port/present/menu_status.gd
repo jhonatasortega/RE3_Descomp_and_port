@@ -178,6 +178,12 @@ var sub_itens: Array[String] = []
 var sub_sel := 0
 ## Última ação do menu, para o HUD/log dizer o que aconteceu (e para o teste conferir).
 var ultima_acao := ""
+## Slot que espera o segundo item da COMBINAÇÃO (-1 = não está combinando). No jogo é o
+## 2º marcador (B147, `u=160`), desenhado enquanto `ctx+0x18 & 0x02000000`.
+var combinar_de := -1
+## Texto na caixa de mensagem (vazio = mostra só o nome do item selecionado).
+var mensagem := ""
+static var _itens_json: Dictionary = {}
 var _pronto := false
 
 
@@ -284,6 +290,7 @@ func mover_cursor(dx: int, dy: int) -> void:
 			pass                                 ## EXIT ocupa a linha toda
 		queue_redraw()
 		return
+	mensagem = ""
 	var col := cursor % GRADE_COLUNAS
 	var lin := cursor / GRADE_COLUNAS
 	if dy < 0 and lin == 0:
@@ -299,17 +306,11 @@ func mover_cursor(dx: int, dy: int) -> void:
 
 
 func condicao() -> int:
-	## `0x8006e598`: VIRUS `flags & 0x100` · Poison `& 0x200` · senão por HP.
-	if _state == null:
+	## `Itens.condicao` = a função `0x8006e598` do EXE, com o HP e as flags AO VIVO do player.
+	var pl := _player()
+	if pl == null:
 		return 0
-	var hp := _hp()
-	if hp >= 101:
-		return 0
-	if hp >= 41:
-		return 1
-	if hp >= 21:
-		return 2
-	return 3
+	return Itens.condicao(pl.hp, pl.status)
 
 
 func _hp() -> int:
@@ -354,6 +355,7 @@ func _draw() -> void:
 	_desenhar_placa(t)
 	_desenhar_itens(t)
 	_desenhar_cursor(t)
+	_desenhar_mensagem(t)
 	_desenhar_submenu(t)
 
 
@@ -381,6 +383,37 @@ func _blit(tex: Texture2D, r: Array, t: float, cor := Color.WHITE, du := 0, fato
 		destino.position.y = meio + (destino.position.y - meio) * t
 		destino.size.y *= t
 	draw_texture_rect_region(tex, destino, origem, cor)
+
+
+func _desenhar_mensagem(t: float) -> void:
+	## Caixa de mensagem (B144, 200×48 em (12,172)): NOME do item selecionado e, depois do CHECK,
+	## o texto de EXAME. Fonte do jogo (`Texto`, atlas `ETC/TEXU.TIM`, célula 14×14 proporcional).
+	## O texto vem de `data/re3_items.json` (extraído do EXE + mod PT), campo `name_pt`/`exam_pt`.
+	if t < 1.0 or _state == null:
+		return
+	var id := int(_state.main_slots[cursor].get("id", 0)) if cursor < _state.main_slots.size() else 0
+	if id == 0:
+		return
+	var caixa := Rect2i(20, 178, 184, 38)
+	if mensagem != "":
+		Texto.desenhar_bloco(self, mensagem, caixa)
+		return
+	Texto.desenhar(self, _nome_do_item(id), Vector2i(caixa.position.x, caixa.position.y))
+
+
+func _nome_do_item(id: int) -> String:
+	var e := _dado_do_item(id)
+	return String(e.get("name_pt", e.get("name_en", "item 0x%02x" % id)))
+
+
+func _dado_do_item(id: int) -> Dictionary:
+	if _itens_json.is_empty():
+		var raw: Variant = JSON.parse_string(
+			FileAccess.get_file_as_string("res://data/re3_items.json"))
+		if raw is Dictionary:
+			_itens_json = (raw as Dictionary).get("by_id", {})
+	var e: Variant = _itens_json.get("0x%02x" % id)
+	return e if e is Dictionary else {}
 
 
 func _desenhar_submenu(t: float) -> void:
@@ -417,6 +450,12 @@ func confirmar() -> String:
 	## Enter/ação. Devolve o que aconteceu (também fica em `ultima_acao`).
 	if not aberto or _anim > 0:
 		return ""
+	if combinar_de >= 0:
+		var feito := _combinar(combinar_de, cursor)
+		combinar_de = -1
+		queue_redraw()
+		ultima_acao = feito
+		return feito
 	if not sub_itens.is_empty():
 		var escolha := sub_itens[sub_sel]
 		sub_itens.clear()
@@ -427,11 +466,16 @@ func confirmar() -> String:
 					_state.equipped = cursor      ## `inv+0x128` = slot equipado
 				ultima_acao = "equipou o slot %d" % cursor
 			"USE":
-				ultima_acao = "USE ainda não implementado (cura/valores em exe_items)"
+				ultima_acao = _usar()
 			"COMBINE":
-				ultima_acao = "COMBINE ainda não implementado (125 receitas em re3_combinacoes.json)"
+				# entra no modo de escolher o SEGUNDO item (no jogo é o 2º marcador, B147)
+				combinar_de = cursor
+				ultima_acao = "escolha o item para combinar"
 			"CHECK":
-				ultima_acao = "CHECK ainda não implementado (falta desenhar texto)"
+				var idc := int(_state.main_slots[cursor].get("id", 0)) if _state != null else 0
+				var e := _dado_do_item(idc)
+				mensagem = String(e.get("exam_pt", e.get("exam_en", "")))
+				ultima_acao = "examinou: %s" % mensagem.substr(0, 40)
 		return ultima_acao
 	if selecao_botao == 0:
 		alternar()                                ## EXIT fecha
@@ -460,8 +504,97 @@ func confirmar() -> String:
 	return ultima_acao
 
 
+func _usar() -> String:
+	## USE em item de CURA, com os valores da tabela `0x80010e4c` e a aplicação de `0x80067934`:
+	## soma o HP, faz clamp em maxHP, limpa o bit de veneno quando a entrada manda, e o item
+	## SOME — exceto a F. Aid Box (`0x2a`), que gasta 1 de quantidade.
+	if _state == null or cursor >= _state.main_slots.size():
+		return "sem item"
+	var slot: Dictionary = _state.main_slots[cursor]
+	var id := int(slot.get("id", 0))
+	var pl := _player()
+	if pl == null:
+		return "sem personagem"
+	var efeito: Dictionary = Itens.cura_de(id, int(pl.hp_max))
+	if not bool(efeito.get("valido", false)):
+		return "esse item não faz efeito sozinho"      ## é o caso da Erva vermelha (mensagem 7)
+	var antes: int = pl.hp
+	var teto: int = pl.hp_max
+	pl.hp = mini(antes + int(efeito["hp"]), teto)
+	if bool(efeito["veneno"]):
+		pl.status = pl.status & ~0x0200      ## `gs[0x255e] &= ~0x0200` (0x80067934)
+	if bool(efeito["gasta_um"]):
+		slot["qtd"] = maxi(0, int(slot.get("qtd", 1)) - 1)
+		if int(slot["qtd"]) == 0:
+			_state.main_slots[cursor] = {"id": 0, "qtd": 0, "flags": 0}
+	else:
+		_state.main_slots[cursor] = {"id": 0, "qtd": 0, "flags": 0}
+	queue_redraw()
+	return "curou %d -> %d de HP%s" % [antes, pl.hp,
+		" e o veneno" if bool(efeito["veneno"]) else ""]
+
+
+func _combinar(slot_a: int, slot_b: int) -> String:
+	## `combine_find` (`0x8006a898`): busca LINEAR e SIMÉTRICA na tabela de 125 receitas.
+	## Os tipos de receita estão em `Itens` (recarregar arma, simples, pólvora → munição,
+	## upgrade de arma, troca de granada, pólvora → granada, munição infinita).
+	if _state == null or slot_a == slot_b:
+		return "combinação cancelada"
+	var a: Dictionary = _state.main_slots[slot_a]
+	var b: Dictionary = _state.main_slots[slot_b]
+	var ida := int(a.get("id", 0))
+	var idb := int(b.get("id", 0))
+	if ida == 0 or idb == 0:
+		return "slot vazio"
+	var r := Itens.receita(ida, idb)
+	if r.is_empty():
+		return "não combina"
+	var tipo := int(r.get("kind", -1))
+	var c := int(r.get("c", 0))
+	var n := int(r.get("n", 0))
+	match tipo:
+		Itens.REC_SIMPLES:
+			# a + b -> c, gastando um de cada (ervas)
+			_state.main_slots[slot_a] = {"id": c, "qtd": maxi(1, n), "flags": 0}
+			_state.main_slots[slot_b] = {"id": 0, "qtd": 0, "flags": 0}
+			queue_redraw()
+			return "combinou -> item 0x%02x" % c
+		Itens.REC_RECARREGAR:
+			# arma + munição: enche a arma até o `max` do descritor e desconta da munição
+			var arma_slot := slot_a if Itens.categoria(ida) == Itens.CAT_ARMA else slot_b
+			var mun_slot := slot_b if arma_slot == slot_a else slot_a
+			var arma: Dictionary = _state.main_slots[arma_slot]
+			var mun: Dictionary = _state.main_slots[mun_slot]
+			var cap := Itens.maximo(int(arma["id"]))
+			var falta := maxi(0, cap - int(arma.get("qtd", 0)))
+			var passa := mini(falta, int(mun.get("qtd", 0)))
+			if passa <= 0:
+				return "a arma já está cheia"
+			arma["qtd"] = int(arma.get("qtd", 0)) + passa
+			mun["qtd"] = int(mun.get("qtd", 0)) - passa
+			if int(mun["qtd"]) == 0:
+				_state.main_slots[mun_slot] = {"id": 0, "qtd": 0, "flags": 0}
+			queue_redraw()
+			return "recarregou %d (arma com %d)" % [passa, int(arma["qtd"])]
+		_:
+			# pólvora, upgrade, granada e munição infinita têm regras próprias (bônus por
+			# quantidade, grupo de munição, troca de tipo) que ainda não foram ligadas.
+			return "receita do tipo %s ainda não ligada" % r.get("kind_nome", tipo)
+
+
+func _player() -> Object:
+	var g := get_node_or_null("/root/Game")
+	if g != null and g.get("mundo") != null:
+		return g.mundo.player
+	return null
+
+
 func cancelar() -> void:
-	## ESC dentro do menu: fecha o submenu se estiver aberto, senão fecha a tela.
+	## ESC dentro do menu: cancela a combinação, senão fecha o submenu, senão fecha a tela.
+	if combinar_de >= 0:
+		combinar_de = -1
+		queue_redraw()
+		return
 	if not sub_itens.is_empty():
 		sub_itens.clear()
 		queue_redraw()
@@ -470,10 +603,9 @@ func cancelar() -> void:
 
 
 func _equipavel(item_id: int) -> bool:
-	## `*(u8*)(0x800a0514 + item_id*4) == 1` — o byte 0 do descritor de item. Medido: vale
-	## exatamente para os ids **1..20** (as armas). Sem o descritor exportado ainda, uso a faixa
-	## medida; quando `exe_items.py` exportar o descritor inteiro, isto passa a ler o dado.
-	return item_id >= 1 and item_id <= 20
+	## Agora lê o DESCRITOR de verdade (`0x800a0514`, byte 0 = categoria): `cat == 1` é arma.
+	## Antes eu usava a faixa "id 1..20", que era a consequência observada, não a causa.
+	return Itens.equipavel(item_id)
 
 
 func _caixa(r: Rect2, cor: Color, t: float) -> void:

@@ -47,6 +47,16 @@ var pos := Vector3i.ZERO                  ## unidades PS1 (y = chão)
 var facing := 0                           ## ângulo PS1 de 12 bits
 var acao: Acao = Acao.PARADO
 var hp := 200                             ## `player+0xcc`, máximo 200
+## HP MÁXIMO e ESTADO, com os endereços do EXE que a tela de status lê:
+##   `gs+0x2558` (s16) = HP atual · `gs+0x255a` (u16) = **HP máximo** · `gs+0x255e` = flags
+## O `hp_max` é o que a tabela de cura usa ("cheio" = `(u8)maxHP`, `1/2` = `maxHP >> 1`), e as
+## flags têm `0x0100` = VIRUS e `0x0200` = VENENO (`0x8006e598` decide a condição por elas).
+var hp_max := 200
+var status := 0                            ## bits de `gs+0x255e`
+
+
+func envenenado_get() -> bool:
+	return (status & 0x0200) != 0
 var equipped_weapon := 0                  ## `player+0x46`; 0 = desarmada (sem mira)
 var frame_da_acao := 0                    ## ticks na ação atual (indexa a tabela de pose)
 var quickturn_restante := 0
