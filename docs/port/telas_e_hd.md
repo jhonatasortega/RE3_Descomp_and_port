@@ -219,3 +219,56 @@ o **nome do item** e o **CHECK** mostra o texto de exame em português (`re3_ite
 Regressão: `port/dev/tests/test_itens.gd`, 39 asserts com o endereço de origem em cada um
 (inclui "três `i` são mais estreitos que três `A`", que falha se alguém tratar a fonte como
 monoespaçada).
+
+
+---
+
+## 11. Acentos e a FONTE HD (o texto que comia letras)
+
+Dois problemas, um por causa do outro.
+
+**1. Os acentos não estão na faixa ASCII.** O de-para do EXE é `cod = ASCII - 0x24`, válido só
+para `0x24..0x7a`. Todo caractere acentuado caía fora e o desenho **pulava em silêncio** — em
+PT-BR isso come letras ("Está" virava "Est"). Os glifos acentuados existem, nos códigos
+`0x57..0xa0`, mas o EXE **não** guarda um mapa "unicode → código": ele recebe o texto já
+codificado em bytes de glifo.
+
+**2. A fonte do NTSC-U não tem acento.** O `ETC/TEXU.TIM` é a fonte US/JP; nos códigos altos ela
+tem **kana**, não Latim acentuado. Provei com uma tira: os códigos que o mod chama de `ã`, `á`…
+saem como katakana nesse atlas.
+
+O pack HD tem a fonte **europeia**: `misc/AED42717` (1024×1024 = 4× a página de VRAM 256×256),
+com `Ä ä Ö ö Ü ü ß Â â È è É é Ê ê Ï ï Î î Ô ô Ù ù Û û Ç ç Ñ ñ Ë ë Á á Í í Ó ó Ú ú À Ã ã à`.
+
+### 11.1 Como achei o de-para (folha auto-rotulada)
+
+O `encoding.xml` do mod PT **não serve**: ele mapeia para a fonte alternativa do próprio mod
+(`ConfigAltFont = 1` no manifesto) — lá `0x58` é `ã`, neste atlas `0x58` é `ä`.
+
+Solução: [`../../port/dev/hd_fonte_folha.gd`](../../port/dev/hd_fonte_folha.gd) gera uma folha em
+que **cada célula sai com o próprio número de código escrito embaixo**, usando os dígitos do
+próprio atlas. Aí é só ler. Resultado (o que interessa em PT-BR):
+
+| glifo | cod | glifo | cod | glifo | cod |
+|---|---|---|---|---|---|
+| `Á` `á` | 138 · 139 | `É` `é` | 100 · 101 | `Ó` `ó` | 142 · 143 |
+| `À` `à` | 156 · 160 | `Ê` `ê` | 102 · 103 | `Ô` `ô` | 108 · 109 |
+| `Ã` `ã` | 158 · 159 | `Í` `í` | 140 · 141 | `Õ` `õ` | 128 · 129 |
+| `Â` `â` | 96 · 97 | `Ç` `ç` | 114 · 115 | `Ú` `ú` | 144 · 145 |
+
+O bloco kana começa em **161** — é o limite da varredura.
+
+### 11.2 A métrica tem de vir do MESMO desenho
+
+Primeira tentativa: atlas HD com a métrica do EXE (`A` avança 14) → texto espaçado. Segunda:
+métrica do `encoding.xml` (`A` mede 10 com indent 4) → melhor, ainda espaçado. As duas são de
+**outros desenhos de fonte**.
+
+O certo é medir no atlas que se usa: [`hd_fonte_metrica.gd`](../../port/dev/hd_fonte_metrica.gd)
+percorre as 160 células e grava a **caixa de tinta** de cada glifo em unidades SD
+(`re3_font_hd_metrica.json`). Medido: `A` tem 8 px de tinta começando em x=2 (avanço 9), `i` tem
+4 px em x=4 (avanço 5), `ç` 6 px em x=5. O único número escolhido é **1 px de espaço** entre
+glifos; o resto é medido.
+
+Regressão em `test_itens.gd`: os códigos dos acentos, "uma frase em PT-BR não perde letras" e
+"`Está` é mais largo que `Est`" (se o acento não for desenhado, essa falha).

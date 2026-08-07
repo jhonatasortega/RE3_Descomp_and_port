@@ -57,6 +57,22 @@ func _process(_d: float) -> bool:
 		_fase = 2
 		return false
 	if _fase == 2:
+		# vai para a Chave do armazém (nome com acento) e faz CHECK, para ver o texto acentuado
+		menu.set("cursor", 3)
+		pad.call("set_mask", Pad.ACAO)
+		_cena.call("_on_tick", _t)
+		pad.call("set_mask", 0)
+		_cena.call("_on_tick", _t)
+		menu.set("sub_sel", 2)                  ## CHECK
+		pad.call("set_mask", Pad.ACAO)
+		_cena.call("_on_tick", _t)
+		pad.call("set_mask", 0)
+		for _k in 4:
+			_cena.call("_on_tick", _t)
+		print("[mi] CHECK -> %s" % menu.get("mensagem"))
+		_fase = 3
+		return false
+	if _fase == 9:
 		# ENTER no item selecionado: tem de abrir o submenu (EQUIP/USE + COMBINE + CHECK)
 		pad.call("set_mask", Pad.ACAO)
 		_cena.call("_on_tick", _t)

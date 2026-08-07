@@ -64,4 +64,28 @@ func run(t: Object) -> bool:
 	t.check(linhas.size() > 1, "quebra por LARGURA em pixels, não por nº de caracteres",
 		"%d linhas" % linhas.size())
 
+	# ── ACENTOS (o bug que comia letras em PT-BR) ──
+	# Os glifos acentuados NÃO estão na faixa ASCII: os códigos vêm do mapa lido da folha
+	# auto-rotulada do atlas HD (`tools/font_pt.py`). Antes `codigo()` devolvia -1 e o desenho
+	# PULAVA o caractere em silêncio.
+	t.eq(Texto.codigo_do_char("á"), 139, "á = código 139 no atlas HD")
+	t.eq(Texto.codigo_do_char("ç"), 115, "ç = 115")
+	t.eq(Texto.codigo_do_char("ã"), 159, "ã = 159 (o encoding.xml do mod diz 88, que é ä aqui)")
+	t.eq(Texto.codigo_do_char("à"), 160, "à = 160")
+	t.eq(Texto.codigo_do_char("ê"), 103, "ê = 103")
+	t.eq(Texto.codigo_do_char("õ"), 129, "õ = 129")
+	t.eq(Texto.codigo_do_char("Á"), 138, "Á = 138 (maiúscula tem glifo próprio)")
+	var frase := "Está escrito ação, coração e você — não pode faltar letra"
+	var perdidas := 0
+	for i in frase.length():
+		var ch := frase[i]
+		if ch == " " or ch == ",":
+			continue
+		if Texto.codigo_do_char(ch) < 0:
+			perdidas += 1
+	t.check(perdidas <= 1, "frase em PT-BR não perde letras (só o travessão pode faltar)",
+		"%d sem glifo" % perdidas)
+	t.check(Texto.largura("Está") > Texto.largura("Est"),
+		"o glifo acentuado ENTRA na largura (se não, ele não está sendo desenhado)")
+
 	return true

@@ -9,8 +9,8 @@
 ## Geral (ponderado por peso, 86 itens)
 
 - **Implementado:** `████████░░░░░░░░░░░░` **40%**
-- **Validado:**    `███████░░░░░░░░░░░░░` **34%**
-- Itens: **10 validados** · **33 em andamento** · **43 a fazer**
+- **Validado:**    `███████░░░░░░░░░░░░░` **35%**
+- Itens: **10 validados** · **34 em andamento** · **42 a fazer**
 
 ## Por fase
 
@@ -22,7 +22,7 @@
 | **F3** | Mundo inteiro (169 salas, 453 portas, save) | 169 salas ligadas: portas, spawn de chegada, streaming, save | 453/453 portas auditadas + rota crítica por replay (P3-06 / P3-07) | 10 | ███░░░░░ 40% | ███░░░░░ 37% |
 | **F4** | Combate e entidades | Entidade de personagem, animação de inimigo, mira, tiro, dano | Tiros para matar == original em 6 pares arma×inimigo (P4-09) | 9 | ░░░░░░░░ 4% | ░░░░░░░░ 3% |
 | **F5** | IA por classe (12 overlays) | Máquinas de estado por classe (zumbi → cão → hunter → Nemesis) | Vídeo lado-a-lado por classe, no mesmo estímulo (P5-09) | 9 | ░░░░░░░░ 0% | ░░░░░░░░ 0% |
-| **F6** | Meta-jogo | Menus, inventário, mapa, files, FMV HD, finais, Mercenários | Completável do título ao epílogo nos 2 finais + Mercenários | 12 | █░░░░░░░ 11% | █░░░░░░░ 9% |
+| **F6** | Meta-jogo | Menus, inventário, mapa, files, FMV HD, finais, Mercenários | Completável do título ao epílogo nos 2 finais + Mercenários | 12 | █░░░░░░░ 14% | █░░░░░░░ 11% |
 | **F7** | Fidelidade final e release | Tempos/fades, mixagem, input, regressão, performance, export legal | Suíte de regressão verde + build sem asset da Capcom/SHDP | 9 | ░░░░░░░░ 0% | ░░░░░░░░ 0% |
 
 ## Checklist por fase
@@ -355,7 +355,7 @@
 - [ ] **P5-09** (peso 4, impl 0%, valid 0%) — GATE F5 — todas as classes validadas em vídeo lado-a-lado
   - **Validação:** Uma pasta de comparações (original vs port) por classe, aprovada por você.
 
-### F6 — Meta-jogo  ·  impl 11% / valid 9%
+### F6 — Meta-jogo  ·  impl 14% / valid 11%
 
 **Objetivo:** Tudo fora do gameplay puro: 13 telas de menu, inventário fiel, mapa, files, FMV HD, vozes dual-idioma, dificuldades, epílogos/finais e Mercenários.
 
@@ -409,11 +409,11 @@
   - **Fonte:** docs/decomp/notes/menus.md (composição em base 320x240 escalada 4x)
   - **Reaproveita:** P1-15
   - **Nota:** A UI do RE3 é composta numa base 320x240 (x4 = 1280x960). No modo 16:9 ela precisa ancorar numa safe-area, não seguir o crop.
-- [ ] **P6-11** (peso 3, impl 0%, valid 0%) — Tabelas de texto PT-BR do mod (17 xml globais + 129 por sala) casadas por índice
+- [~] **P6-11** (peso 3, impl 30%, valid 25%) — Tabelas de texto PT-BR do mod (17 xml globais + 129 por sala) casadas por índice
   - **Validação:** Índice do XML casa 1:1 com o índice de mensagem do RDT/EXE: em 20 salas amostradas o texto PT-BR exibido é o do memo/exame certo; par EN (tabela do EXE 0x8a124) <-> PT (xml) completo por id, divergências listadas.
   - **Fonte:** docs/formatos/localizacao_ptbr.md
   - **Reaproveita:** godot/data/re3_messages.json, re3_items.json
-  - **Nota:** DESCOBERTA (2026-07-31): mod_BH3_Portuguese/xml = <Strings><Text> indexado por posição; rdt/R###.xml = texto in-game por sala (129 salas) com marcação {scroll N}. RESOLVE o TODO de godot_ui.md (textos de exame eram aproximação). items_simple.xml dá nome de item por item_id em PT-BR.
+  - **Nota:** FEITA a base do texto em PT: port/present/texto.gd desenha com a fonte do jogo e o de-para de ACENTOS. Achados: (1) o EXE mapeia cod = ASCII-0x24, valido so em 0x24..0x7a — todo acentuado caia fora e era PULADO em silencio (comia letras em PT-BR); (2) a fonte do NTSC-U (ETC/TEXU.TIM) nao tem Latim acentuado, tem KANA nos codigos altos; (3) o pack HD tem a fonte EUROPEIA (misc/AED42717, 1024x1024 = 4x a pagina 256x256) com todos os acentos; (4) o encoding.xml do mod NAO serve como de-para porque e da fonte alternativa dele (ConfigAltFont=1): la 0x58 e a-til, neste atlas e a-trema. O de-para real foi lido com uma FOLHA AUTO-ROTULADA (port/dev/hd_fonte_folha.gd): cada celula sai com o proprio codigo escrito com os digitos do atlas. A METRICA tambem foi medida no proprio atlas (caixa de tinta por glifo, port/dev/hd_fonte_metrica.gd): A tem 8 px de tinta em x=2, avanco 9 — usar a metrica do EXE ou do mod deixava o texto espacado. FALTA: as 17 tabelas globais + 129 por sala do mod (xml/rdt).
 - [ ] **P6-12** (peso 2, impl 0%, valid 0%) — Decodificar DATA_A/BSS/R###.SLD (169 arquivos; hipótese: legenda/slide por sala)
   - **Validação:** Formato descrito byte a byte com evidência (cabeçalho, contagem, payload) e o conteúdo de 3 salas confere com o que o jogo mostra; OU concluir com prova que não é necessário ao port (registrar fora de escopo).
   - **Fonte:** docs/formatos/localizacao_ptbr.md §2
