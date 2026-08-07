@@ -8,9 +8,19 @@ const HIRES := "C:/Program Files (x86)/GOG Galaxy/Games/Resident Evil 3/hires"
 
 
 func _initialize() -> void:
-	var sd := AssetIO.image("MENU/status/stmain0u_p0.png")
-	sd.convert(Image.FORMAT_RGBA8)
-	var alvo := sd.get_region(Rect2i(128, 0, 128, 256))
+	# env IDIOMA_ALVO=stmoji troca o alvo para o atlas de rótulos (256x72 -> HD 1024x288)
+	var alvo: Image
+	var hw := 512
+	var hh := 1024
+	if OS.get_environment("IDIOMA_ALVO") == "stmoji":
+		alvo = AssetIO.image("MENU/status/stmojiu_p0.png")
+		alvo.convert(Image.FORMAT_RGBA8)
+		hw = 1024
+		hh = 288
+	else:
+		var sd := AssetIO.image("MENU/status/stmain0u_p0.png")
+		sd.convert(Image.FORMAT_RGBA8)
+		alvo = sd.get_region(Rect2i(128, 0, 128, 256))
 	var d := DirAccess.open("%s/misc" % HIRES)
 	var lista := []
 	for f: String in d.get_files():
@@ -19,13 +29,13 @@ func _initialize() -> void:
 		var img := Image.new()
 		if img.load("%s/misc/%s" % [HIRES, f]) != OK:
 			continue
-		if img.get_width() != 512 or img.get_height() != 1024:
+		if img.get_width() != hw or img.get_height() != hh:
 			continue
-		img.resize(128, 256, Image.INTERPOLATE_LANCZOS)
+		img.resize(alvo.get_width(), alvo.get_height(), Image.INTERPOLATE_LANCZOS)
 		img.convert(Image.FORMAT_RGBA8)
 		lista.append([_erro(alvo, img), f.get_basename()])
 	lista.sort_custom(func(a: Array, b: Array) -> bool: return float(a[0]) < float(b[0]))
-	print("[id] %d blocos 512x1024 · os 8 melhores contra (128,0):" % lista.size())
+	print("[id] %d blocos %dx%d · os 8 melhores:" % [lista.size(), hw, hh])
 	var dir_out := ProjectSettings.globalize_path("res://_hd_cand")
 	DirAccess.make_dir_recursive_absolute(dir_out)
 	for i in mini(8, lista.size()):

@@ -272,3 +272,59 @@ glifos; o resto é medido.
 
 Regressão em `test_itens.gd`: os códigos dos acentos, "uma frase em PT-BR não perde letras" e
 "`Está` é mais largo que `Est`" (se o acento não for desenhado, essa falha).
+
+
+---
+
+## 12. Tradução do menu e as cores de seleção
+
+**As cores da seleção estavam erradas e o dado tinha a resposta.** Eu clareava o azul; na captura
+do jogo a linha selecionada é **VERMELHA**. Medindo a região do cursor (`u=120..159, v=0..29`) nas
+9 CLUTs do `STMOJIU`, as paletas são exatamente os estados:
+
+| paleta | cor | é |
+|---|---|---|
+| 2 | `(0,128,0)` verde | 2º marcador (item de ORIGEM da combinação) |
+| **3** | `(128,0,0)` **vermelho** | cursor da grade e **linha selecionada** |
+| 5 | `(0,112,184)` azul | — |
+| 6 | `(248,248,248)` branco | — |
+
+Também: a placa passou a ser um **retângulo sólido** com essa cor, e não a banda do atlas
+tingida. Motivo: no PS1 o primitivo faz `tex * rgb / 128`, e a banda é escura (20,20,19) — vezes
+um azul escuro dá **preto**. A banda é chapada, então quem importa é a cor.
+
+**Tradução.** Os rótulos `EXIT/FILE/MAP` e `EQUIP/USE/COMBINE/CHECK` são **sprites** do `STMOJIU`
+(B149..B158), e o pack HD só tem esse atlas em **inglês e russo** — varri os 14 blocos `1024×288`
+e as outras variantes são o mesmo inglês em paletas diferentes. O mod PT também não os traduziu
+(o XML dele não tem esses rótulos). Então o port **desenha como texto** com a fonte do jogo:
+`SAIR / ARQ. / MAPA` e `EQUIPAR / USAR / COMBINAR / EXAMINAR`. É desvio declarado do original.
+`ARQ.` é abreviado porque a placa tem **38 px** no dado e "ARQUIVO" mede ~56.
+
+**Bônus do caminho:** a fórmula `cod = ASCII - 0x24` **só vale para letra e dígito**. Para
+pontuação ela erra — `.` é o código **1** (a tabela lista `00=espaço 01=. 02=▶ …`), e a fórmula
+daria 10. Por isso o `Texto` consulta a tabela explícita primeiro e usa a fórmula como queda.
+
+---
+
+## 13. Tela de ARQUIVO (documentos)
+
+`port/present/menu_arquivo.gd`, aberta pelo botão `ARQ.`.
+
+O achado que simplifica: **o texto dos documentos é bitmap pré-renderizado**, não texto desenhado
+— `ETC/FILEGU.PIX` tem **31 documentos em 183 páginas** de 128×256 (é por isso que existe um
+`FILEG` por idioma). Tamanhos medidos nos descritores de `0x8009f2ec`: capa **128×168** (a arte só
+ocupa as 168 primeiras das 256 linhas), página de texto **256×176**, setas de virar 12×12.
+Os ícones da lista são o `ETC/FILEI.TIM`, uma grade **4×8 de 32×32** (32 células para 31
+documentos).
+
+Declarado, não medido: a **posição de tela** das primitivas não está nos descritores
+(`0x8006e600` escreve `u,v,clut,w,h` mas não o `x,y`, que vem de buffers de RAM) — centralizo no
+espaço 320×240. E o de-para documento → célula do `FILEI` (uso `célula = doc`).
+
+O critério de "tenho este documento" no jogo é um bit em `0x800d212c` que o handler de leitura
+acende; o port lista os documentos cujo ITEM está no inventário (categoria 7 = arquivo), que é
+subconjunto do critério real.
+
+**Em aberto:** as páginas em PT. O pack tem `memo/` com **280 imagens 1024×768** — que é 4× de
+**256×192**, e não de 128×256, ou seja o HD redesenhou as páginas em outro formato. Casar essas
+280 com os 183 slots é o próximo passo (o método da §7 se aplica).

@@ -50,6 +50,7 @@ var frame: SubViewportContainer
 var world: SubViewport
 var esp: EspBrilho
 var menu: MenuStatus
+var menu_arquivo: MenuArquivo
 var cam3d: Camera3D
 var sun: DirectionalLight3D
 var room: RoomData
@@ -148,6 +149,17 @@ func _on_tick(_frame: int) -> void:
 	# No jogo, abrir o menu SUSPENDE a task do mundo (`task_suspend(0)` em `0x8006d97c`) e
 	# retomá-la é o `task_resume(0)` de `0x8006e248` — os dois únicos sítios do EXE. Aqui isso é
 	# "não chamar `mundo.tick`": o mundo congela no estado exato, que é o comportamento certo.
+	if menu_arquivo != null and menu_arquivo.aberto:
+		if pad.just_pressed(Pad.ACAO):
+			menu_arquivo.confirmar()
+		elif pad.just_pressed(Pad.PAUSA) or pad.just_pressed(Pad.MENU):
+			menu_arquivo.cancelar()
+		elif pad.just_pressed(Pad.FWD) or pad.just_pressed(Pad.HELD_UP):
+			menu_arquivo.mover(-1)
+		elif pad.just_pressed(Pad.BACK) or pad.just_pressed(Pad.HELD_DOWN):
+			menu_arquivo.mover(1)
+		_atualizar_hud()
+		return
 	if menu != null and menu.aberto:
 		if pad.just_pressed(Pad.MENU):
 			menu.alternar()                    ## I alterna
@@ -370,6 +382,11 @@ func _montar() -> void:
 	if not menu.carregar(g_menu.state if g_menu != null else null):
 		push_warning("Screen: assets do menu ausentes — rode "
 			+ "`python tools/status_assets.py --all`")
+
+	# Tela de ARQUIVO (documentos), aberta pelo botão ARQ. do menu de status.
+	menu_arquivo = MenuArquivo.new()
+	add_child(menu_arquivo)
+	menu_arquivo.carregar(g_menu.state if g_menu != null else null)
 
 	# Oclusão: recortes 2D do cenário desenhados POR CIMA do viewport 3D — é a ordem que
 	# reproduz os priority sprites do PS1 (o 3D já está compondo sobre o background).

@@ -63,13 +63,7 @@ func _process(_d: float) -> bool:
 		_cena.call("_on_tick", _t)
 		pad.call("set_mask", 0)
 		_cena.call("_on_tick", _t)
-		menu.set("sub_sel", 2)                  ## CHECK
-		pad.call("set_mask", Pad.ACAO)
-		_cena.call("_on_tick", _t)
-		pad.call("set_mask", 0)
-		for _k in 4:
-			_cena.call("_on_tick", _t)
-		print("[mi] CHECK -> %s" % menu.get("mensagem"))
+		print("[mi] submenu aberto: %s" % [menu.get("sub_itens")])
 		_fase = 3
 		return false
 	if _fase == 9:
@@ -79,7 +73,7 @@ func _process(_d: float) -> bool:
 		pad.call("set_mask", 0)
 		_cena.call("_on_tick", _t)
 		print("[mi] Enter no item -> %s · submenu=%s" % [
-			menu.get("ultima_acao"), menu.get("sub_itens")])
+			menu.get("ultima_acao"), str(menu.get("sub_itens"))])
 		_fase = 3
 		return false
 	if _fase == 3:

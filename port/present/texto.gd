@@ -51,6 +51,10 @@ static var _hd_tentado := false
 ## `tools/font_pt.py` e `port/dev/hd_fonte_folha.gd`), porque o `encoding.xml` do mod mapeia
 ## para a fonte ALTERNATIVA dele (lá `0x58` é `ã`; neste atlas `0x58` é `ä`).
 static var _mapa_hd: Dictionary = {}
+## `caractere -> código` EXPLÍCITO (do `encoding.xml`). A fórmula `ASCII - 0x24` só vale para
+## letras e dígitos: para PONTUAÇÃO ela erra — `.` é o código **1**, e a fórmula daria 10
+## (a tabela do EXE lista `00=espaço 01=. 02=▶ 03=「 …`). Por isso a tabela vem primeiro.
+static var _mapa_ascii: Dictionary = {}
 static var _base_sem_acento: Dictionary = {}
 ## Métrica do glifo NA FONTE HD, por caractere: `{width, indent}` do `encoding.xml` do mod.
 ## O EXE tem a métrica do SD (`advance`/`trim_left` da tabela `0x80098dd0`), que é de OUTRO
@@ -83,6 +87,7 @@ static func _carregar() -> void:
 		var rp: Variant = JSON.parse_string(FileAccess.get_file_as_string(CAMINHO_PT))
 		if rp is Dictionary:
 			_mapa_hd = (rp as Dictionary).get("char_para_codigo_hd", {})
+			_mapa_ascii = (rp as Dictionary).get("char_para_codigo", {})
 			_base_sem_acento = (rp as Dictionary).get("base_sem_acento", {})
 			for e: Dictionary in (rp as Dictionary).get("entradas", []):
 				pass
@@ -112,12 +117,14 @@ static func codigo(c: int) -> int:
 	## -1 e o caractere era SILENCIOSAMENTE PULADO — era o que comia as letras acentuadas.
 	if c == 0x20:
 		return 0
-	if c >= 0x24 and c <= 0x7A:
-		return c - 0x24
 	_carregar()
 	var ch := String.chr(c)
 	if _mapa_hd.has(ch):
 		return int(_mapa_hd[ch])
+	if _mapa_ascii.has(ch):
+		return int(_mapa_ascii[ch])
+	if c >= 0x24 and c <= 0x7A:
+		return c - 0x24                    ## fórmula do EXE, que vale para letra e dígito
 	return -1
 
 

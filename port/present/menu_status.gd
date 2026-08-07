@@ -107,12 +107,17 @@ const PLACAS := [
 ]
 const PLACA_U := 88
 
-## Rótulos (STMOJIU), na ordem EXIT/FILE/MAP:
+## Rótulos dos botões. No original são SPRITES do `STMOJIU` (B151 EXIT, B149 FILE, B150 MAP) e o
+## pack HD só tem esse atlas em inglês e russo — então, como no submenu, o texto é DESENHADO com a
+## fonte do jogo, em português. O retângulo aqui guarda só a posição/tamanho da placa.
 const BOTOES := [
-	[32, 40, 40, 16, 247, 24],          ## B151 — EXIT
-	[0, 40, 32, 16, 226, 44],           ## B149 — FILE
-	[72, 40, 32, 16, 268, 44],          ## B150 — MAP
+	[32, 40, 40, 16, 247, 24],          ## B151 — o de cima
+	[0, 40, 32, 16, 226, 44],           ## B149 — esquerdo
+	[72, 40, 32, 16, 268, 44],          ## B150 — direito
 ]
+## As placas de baixo têm **38 px** de largura no dado (B113/B117), e "ARQUIVO" mede ~56 px com
+## esta fonte — não cabe. Abreviado, como o original faz com "FILE"/"MAP".
+const BOTOES_TEXTO_PT := ["SAIR", "ARQ.", "MAPA"]
 
 ## Painéis sólidos (no jogo são TILE, sem textura): [x, y, w, h] — B64, B65, B145.
 const PAINEIS := [[0, 88, 8, 96], [216, 88, 200, 96], [216, 200, 96, 24]]
@@ -125,6 +130,12 @@ const COR_TILE := Color8(8, 8, 8)
 ## quase preta no normal) e o azul da captura vem da cor do primitivo, que eu não decodifiquei.
 ## Uso o azul do próprio jogo, com a tira dando a diferença claro/escuro.
 const COR_AZUL := Color8(8, 0, 80)
+## VERMELHO e VERDE da seleção, medidos nas paletas do PRÓPRIO cursor (região `u=120..159, v=0..29`
+## do `STMOJIU`, que é o retângulo vazado): a **paleta 3 é (128,0,0)** e a **paleta 2 é (0,128,0)**.
+## São exatamente as cores da captura do jogo: a linha/item SELECIONADO fica vermelho e o segundo
+## marcador (o item de origem da combinação) fica verde. Antes eu clareava o azul, o que não existe.
+const COR_VERMELHO := Color8(128, 0, 0)
+const COR_VERDE := Color8(0, 128, 0)
 ## Moldura das janelas grandes: cinza medido em `u=8, v=192` do atlas (134,132,134).
 const COR_JANELA := Color8(134, 132, 134)
 ## ── SUBMENU DE COMANDO DO ITEM ──
@@ -142,6 +153,16 @@ const SUB_ROTULOS := {
 	"USE": [48, 56, 48, 16, 163, 0],
 	"COMBINE": [96, 56, 48, 16, 163, 0],
 	"CHECK": [192, 56, 48, 16, 163, 0],
+}
+## Texto dos comandos em PORTUGUÊS, desenhado com a fonte do jogo em vez do sprite do atlas.
+##
+## Por que: no original esses rótulos são SPRITES do `STMOJIU` (B152..B158), e o pack HD só tem
+## esse atlas em **inglês e russo** — varri os 14 blocos `1024×288` e as outras variantes são o
+## mesmo inglês em paletas diferentes. O mod PT também não os traduziu (ele traduz por XML, e o
+## XML não tem esses rótulos). Como a fonte HD já tem acento, desenhar como TEXTO é o que permite
+## ter o comando em português. **É desvio declarado do original**, que usa sprite.
+const SUB_TEXTO_PT := {
+	"EQUIP": "EQUIPAR", "USE": "USAR", "COMBINE": "COMBINAR", "CHECK": "EXAMINAR",
 }
 const RETRATO := [0, 192, 40, 56, 18, 22]        ## B2 (JILL) — paleta 2
 const CURSOR := [120, 0, 40, 30, 224, 66]        ## B146
@@ -355,6 +376,7 @@ func _draw() -> void:
 	_desenhar_placa(t)
 	_desenhar_itens(t)
 	_desenhar_cursor(t)
+	_desenhar_marcador_combinar(t)
 	_desenhar_mensagem(t)
 	_desenhar_submenu(t)
 
@@ -383,6 +405,17 @@ func _blit(tex: Texture2D, r: Array, t: float, cor := Color.WHITE, du := 0, fato
 		destino.position.y = meio + (destino.position.y - meio) * t
 		destino.size.y *= t
 	draw_texture_rect_region(tex, destino, origem, cor)
+
+
+func _desenhar_marcador_combinar(t: float) -> void:
+	## 2º marcador (B147, `u=160`): marca o item de ORIGEM enquanto se escolhe com quem combinar.
+	## Verde, que é a **paleta 2** do STMOJIU — a mesma cor do quadro verde na captura do jogo.
+	if combinar_de < 0:
+		return
+	var col := combinar_de % GRADE_COLUNAS
+	var lin := combinar_de / GRADE_COLUNAS
+	_blit(_atlas_paleta(2), [160, 0, CELULA.x, CELULA.y,
+		GRADE_ORIGEM.x + col * CELULA.x, GRADE_ORIGEM.y + lin * CELULA.y], t)
 
 
 func _desenhar_mensagem(t: float) -> void:
@@ -435,15 +468,12 @@ func _desenhar_submenu(t: float) -> void:
 		var y: int = SUB_LINHA_Y[i] if i < SUB_LINHA_Y.size() else SUB_LINHA_Y[-1] + 20 * i
 		var destacado := i == sub_sel
 		var v := 184 if destacado else 200
-		var brilho := 2.6 if destacado else 1.0
-		var cor := Color(clampf(COR_AZUL.r * brilho, 0.0, 1.0),
-			clampf(COR_AZUL.g * brilho + (0.10 if destacado else 0.0), 0.0, 1.0),
-			clampf(COR_AZUL.b * brilho, 0.0, 1.0))
-		_moldura([PLACA_U, v, 56, 8, 159, y], t, cor)
-		_moldura([PLACA_U, v + 8, 56, 8, 159, y + 8], t, cor)
-		var rot: Array = SUB_ROTULOS[sub_itens[i]].duplicate()
-		rot[5] = y
-		_blit(_palavras, rot, t, Color.WHITE, 0, _palavras_fator)
+		var cor: Color = COR_VERMELHO if destacado else COR_AZUL
+		_caixa(Rect2(159.0, float(y), 56.0, 16.0), cor, t)
+		# rótulo em PT com a fonte do jogo (ver SUB_TEXTO_PT); centralizado na placa de 56 px
+		var txt: String = SUB_TEXTO_PT.get(sub_itens[i], sub_itens[i])
+		var lw := Texto.largura(txt)
+		Texto.desenhar(self, txt, Vector2i(159 + (56 - lw) / 2, y + 2))
 
 
 func confirmar() -> String:
@@ -482,7 +512,14 @@ func confirmar() -> String:
 		ultima_acao = "EXIT"
 		return ultima_acao
 	if selecao_botao == 1:
-		ultima_acao = "FILE: a tela de arquivo ainda não foi ligada (183 páginas já extraídas)"
+		# ARQ. abre a tela de arquivo (o `screen kind 3` do menu do jogo)
+		var g := get_node_or_null("/root/Game")
+		var scr: Node = get_parent()
+		if scr != null and scr.get("menu_arquivo") != null:
+			(scr.get("menu_arquivo") as Object).call("abrir")
+			ultima_acao = "abriu o ARQUIVO"
+		else:
+			ultima_acao = "tela de arquivo não montada"
 		return ultima_acao
 	if selecao_botao == 2:
 		ultima_acao = "MAP: a tela de mapa ainda não foi ligada"
@@ -641,15 +678,23 @@ func _desenhar_botoes(t: float) -> void:
 		var p: Array = PLACAS[i]
 		var destacado := i == selecao_botao
 		var v: int = int(p[4]) if destacado else int(p[3])
-		var brilho := 2.6 if destacado else 1.0    ## a tira do destacado é ~4x mais clara
-		var cor := Color(clampf(COR_AZUL.r * brilho, 0.0, 1.0),
-			clampf(COR_AZUL.g * brilho + (0.10 if destacado else 0.0), 0.0, 1.0),
-			clampf(COR_AZUL.b * brilho, 0.0, 1.0))
+		# a tira do destacado é ~4x mais clara no atlas; a COR vem do primitivo: vermelho quando
+		# selecionado, azul-marinho quando não (medido nas paletas do cursor)
+		var cor: Color = COR_VERMELHO if destacado else COR_AZUL
 		# duas tiras de 8 px, como no dado
-		_moldura([PLACA_U, v, int(p[2]), 8, int(p[0]), int(p[1])], t, cor)
-		_moldura([PLACA_U, v + 8, int(p[2]), 8, int(p[0]), int(p[1]) + 8], t, cor)
-	for r: Array in BOTOES:
-		_blit(_palavras, r, t, Color.WHITE, 0, _palavras_fator)
+		# PLACA como retângulo SÓLIDO com a cor medida. Por quê: no PS1 o primitivo multiplica a
+		# textura pela cor (`tex * rgb / 128`), e a banda do atlas é escura (20,20,19) — multiplicar
+		# por um azul escuro (8,0,80) dá PRETO. A banda é chapada, então o que importa é a cor; a
+		# textura só serviria para dar a borda, que a moldura já desenha. Declarado.
+		_caixa(Rect2(float(p[0]), float(p[1]), float(p[2]), 16.0), cor, t)
+	for i in BOTOES.size():
+		var r: Array = BOTOES[i]
+		var txt: String = BOTOES_TEXTO_PT[i]
+		var lw := Texto.largura(txt)
+		# centralizado na placa (a placa de cima tem 80 px, as de baixo 38)
+		var pw: int = int(PLACAS[i][2])
+		var px: int = int(PLACAS[i][0])
+		Texto.desenhar(self, txt, Vector2i(px + (pw - lw) / 2, int(r[5]) + 2))
 
 
 func _desenhar_equipada(t: float) -> void:
@@ -756,9 +801,9 @@ func _desenhar_cursor(t: float) -> void:
 	# h=9`), enquanto o STMAIN0U tem `DX=0`. Bate também com o `ot = 17` → tpage `0x3A`, que é
 	# **4bpp** (`tp = 0`), o formato do STMOJIU (o STMAIN0U é 8bpp). Desenhar do STMAIN0U punha um
 	# pedaço da palavra "EQUIP" gigante na primeira célula — foi o "F" que apareceu no teste.
-	## CLUT medida: `(304,483)` = **paleta 3** do STMOJIU (`ctx+0xd3 + 3`). Sprite: retângulo
-	## VAZADO 40×30 (o crop do atlas mostra três deles em u=120/160/200).
-	_blit(_atlas_paleta(3), r, t, Color(b, b, b, 0.5))  ## SemiTrans do PS1 = B/2+F/2 (50%)
+	## CLUT medida: `(304,483)` = **paleta 3** do STMOJIU (`ctx+0xd3 + 3`), que é o VERMELHO.
+	## Sprite: retângulo VAZADO 40×30 (o crop do atlas mostra três deles em u=120/160/200).
+	_blit(_atlas_paleta(3), r, t, Color(b, b, b, 1.0))
 
 
 func _atlas_paleta(i: int) -> Texture2D:
