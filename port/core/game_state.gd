@@ -67,6 +67,28 @@ func _init() -> void:
 	reset()
 
 
+func novo_jogo() -> void:
+	## Carga inicial de JOGO NOVO, **provada byte a byte**: a rotina `0x8006d0d8` copia o template
+	## estático de `0x800a018c` para o array de inventário `0x800d2134`, e a arma equipada é o
+	## PRIMEIRO item (`0x800d225d`). Bytes do template (HARD, o principal da Jill):
+	##
+	##     03 0f 0100   82 fa 0000   83 01 0000   84 01 0000   ff ff ff ff
+	##     Hand Gun 15  Reload. 250  Game Inst.A  Game Inst.B  terminador
+	##
+	## Ou seja o jogo começa com os DOIS ARQUIVOS DE INSTRUÇÃO no inventário — é por isso que a
+	## tela de ARQUIVO não nasce vazia. Entrada = 4 B `{id, qtd, flags16 LE}`.
+	## (EASY é o template `s5=1`; Mercenaries são `s5=2` por personagem. Ver
+	## `re3_items.json.newgame_loadout_templates`, extraído do EXE.)
+	reset()
+	var carga := [[0x03, 15, 0x0001], [0x82, 250, 0x0000], [0x83, 1, 0x0000], [0x84, 1, 0x0000]]
+	for i in carga.size():
+		main_slots[i] = {"id": int(carga[i][0]), "qtd": int(carga[i][1]),
+			"flags": int(carga[i][2])}
+	equipped = 0                       ## a arma equipada é o primeiro item do template
+	stage = 1
+	room = 0                           ## `INIT_TBL.DAT` traz stage 0 / room 0 = R100
+
+
 func equipped_item_id() -> int:
 	## `item_id` da arma equipada. No EXE há DOIS campos: `inv+0x128` guarda o SLOT equipado
 	## (0xff = nenhum) e `inv+0x129` guarda o `item_id` dele — o segundo é cache do primeiro

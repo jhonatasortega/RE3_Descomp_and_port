@@ -12,7 +12,15 @@ func _initialize() -> void:
 	var alvo: Image
 	var hw := 512
 	var hh := 1024
-	if OS.get_environment("IDIOMA_ALVO") == "stmoji":
+	if OS.get_environment("IDIOMA_ALVO") == "retrato":
+		# RETRATOS: no SD são dois de 40×56 lado a lado em (0,192) = um bloco de 80×56, que em HD
+		# (4×) dá **320×224** — e o pack tem 13 arquivos desse tamanho.
+		var sdr := AssetIO.image("MENU/status/stmain0u_p2.png")
+		sdr.convert(Image.FORMAT_RGBA8)
+		alvo = sdr.get_region(Rect2i(0, 192, 80, 56))
+		hw = 320
+		hh = 224
+	elif OS.get_environment("IDIOMA_ALVO") == "stmoji":
 		alvo = AssetIO.image("MENU/status/stmojiu_p0.png")
 		alvo.convert(Image.FORMAT_RGBA8)
 		hw = 1024
@@ -20,7 +28,9 @@ func _initialize() -> void:
 	else:
 		var sd := AssetIO.image("MENU/status/stmain0u_p0.png")
 		sd.convert(Image.FORMAT_RGBA8)
-		alvo = sd.get_region(Rect2i(128, 0, 128, 256))
+		# IDIOMA_POS=0 compara com a METADE ESQUERDA (0,0), onde ficam os RETRATOS (v=192..248)
+		var px := 0 if OS.get_environment("IDIOMA_POS") == "0" else 128
+		alvo = sd.get_region(Rect2i(px, 0, 128, 256))
 	var d := DirAccess.open("%s/misc" % HIRES)
 	var lista := []
 	for f: String in d.get_files():

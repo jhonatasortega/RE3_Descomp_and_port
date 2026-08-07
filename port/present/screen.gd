@@ -387,6 +387,10 @@ func _montar() -> void:
 	menu_arquivo = MenuArquivo.new()
 	add_child(menu_arquivo)
 	menu_arquivo.carregar(g_menu.state if g_menu != null else null)
+	# Carga de JOGO NOVO (provada em 0x8006d0d8): sem isso o inventário nasce vazio e a tela de
+	# arquivo não tem os dois "Game Inst." que o jogo dá de saída.
+	if g_menu != null and g_menu.state != null and g_menu.state.item_count() == 0:
+		g_menu.state.novo_jogo()
 
 	# Oclusão: recortes 2D do cenário desenhados POR CIMA do viewport 3D — é a ordem que
 	# reproduz os priority sprites do PS1 (o 3D já está compondo sobre o background).

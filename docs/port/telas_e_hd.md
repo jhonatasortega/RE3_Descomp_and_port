@@ -328,3 +328,39 @@ subconjunto do critério real.
 **Em aberto:** as páginas em PT. O pack tem `memo/` com **280 imagens 1024×768** — que é 4× de
 **256×192**, e não de 128×256, ou seja o HD redesenhou as páginas em outro formato. Casar essas
 280 com os 183 slots é o próximo passo (o método da §7 se aplica).
+
+
+---
+
+## 14. Retrato HD, condição em PT, rolagem e a carga de jogo novo
+
+**Retrato em HD.** O bloco da metade DIREITA do `STMAIN0U` (§7.3) não cobre o retrato, que fica em
+`u=0..79, v=192..247`. Varrendo os blocos por tamanho: os dois retratos lado a lado formam um
+bloco de **80×56**, cujo 4× é **320×224** — e o pack tem 13 arquivos assim. O certo é
+`misc/71C8F6F0` (erro 0,179; alto porque o HD é um render novo, mas a imagem traz o rótulo "JILL"
+e o rosto em alta). Antes o retrato era 40×56 esticado 4×, e o usuário viu na hora.
+
+**Condição em português.** A palavra (`Fine`/`Caution`/`Danger`/`Poison`/`VIRUS`) também é sprite
+do `STMOJIU`, e o atlas HD só existe em inglês e russo. Vai como texto: **BEM / CUIDADO / PERIGO /
+VENENO / VIRUS**, nas cores do jogo (verde, amarelo, laranja, vermelho, roxo).
+
+**Rolagem do texto de exame.** Cima/baixo com a mensagem aberta ROLAM o texto em vez de trocar de
+ícone, e aparece um `>` quando ainda há linha abaixo. Conferido: um texto de 6 linhas rola 0→1→3,
+volta para 2 e para em 4 (não passa do fim).
+
+**Carga de JOGO NOVO — provada byte a byte.** A rotina `0x8006d0d8` copia o template estático de
+`0x800a018c` para o array de inventário, e a arma equipada é o **primeiro item**:
+
+```
+03 0f 0100   82 fa 0000   83 01 0000   84 01 0000   ff ff ff ff
+Hand Gun 15  Reload. 250  Game Inst.A  Game Inst.B  terminador
+```
+
+Ou seja **o jogo começa com os dois arquivos de instrução no inventário** — era o que faltava para
+a tela de ARQUIVO não nascer vazia. `GameState.novo_jogo()` faz isso.
+
+**A sala inicial.** `ETC/INIT_TBL.DAT` (2312 B) é o estado de jogo novo e vai para `0x800d1d28`;
+como `stage` e `room` moram em `0x800d1f76`/`0x800d1f78`, eles caem nos offsets **590/592** do
+arquivo — e valem **0 e 0**, que na convenção do port é **R100**. Então o armazém é a primeira
+sala JOGÁVEL; o que falta antes dela é o fluxo de boot (WARNING → CAPCOM → TÍTULO → dificuldade →
+`INIT_TBL` → OPENING), que está documentado em `menu_titulo.md` e não foi implementado.

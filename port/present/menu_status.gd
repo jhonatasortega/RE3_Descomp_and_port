@@ -167,6 +167,12 @@ const SUB_TEXTO_PT := {
 const RETRATO := [0, 192, 40, 56, 18, 22]        ## B2 (JILL) — paleta 2
 const CURSOR := [120, 0, 40, 30, 224, 66]        ## B146
 const PLACA := [0, 0, 112, 72, 56, 88]           ## B66 — a placa grande do item (ITEMG.PIX)
+## Texto da condição em PT e a cor de cada estado (as do jogo: FINE verde, CAUTION amarelo e
+## laranja, DANGER vermelho, POISON/VIRUS roxo-esverdeado). Desenhado com a fonte porque a palavra
+## original é sprite e o atlas HD só existe em inglês e russo.
+const CONDICAO_PT := ["BEM", "CUIDADO", "CUIDADO", "PERIGO", "VENENO", "VIRUS"]
+const CONDICAO_COR := [Color8(0, 200, 0), Color8(220, 200, 0), Color8(230, 140, 0),
+	Color8(220, 0, 0), Color8(180, 0, 200), Color8(160, 200, 0)]
 ## Palavras de condição: (u, v, w, h, dx, dy) de `0x800a0004 + cond*12`.
 const CONDICAO := [
 	[0, 32, 24, 8, 121, 25],            ## 0 FINE
@@ -187,6 +193,7 @@ var _state: GameState = null
 
 var _chrome: Texture2D = null           ## stmain0u paleta 0 (SD)
 var _chrome_hd: Texture2D = null        ## bloco HD da metade direita (tpage 0x9B)
+var _retratos_hd: Texture2D = null      ## bloco HD dos retratos (SD 80×56 em (0,192))
 var _retratos: Texture2D = null         ## stmain0u paleta 2
 var _palavras: Texture2D = null         ## STMOJIU — HD (1024x288) ou o PNG do PS1
 var _palavras_fator := 1                ## 4 quando o atlas é o HD
@@ -204,6 +211,7 @@ var ultima_acao := ""
 var combinar_de := -1
 ## Texto na caixa de mensagem (vazio = mostra só o nome do item selecionado).
 var mensagem := ""
+var mensagem_linha := 0                 ## primeira linha visível do texto de exame
 static var _itens_json: Dictionary = {}
 var _pronto := false
 
@@ -232,6 +240,12 @@ func carregar(state: GameState) -> bool:
 	## EQUIP, "Состояние" no lugar de condition). É o material que existe; trocar para SD é uma
 	## linha (`_chrome_fator = 1`).
 	_chrome_hd = AssetIO.texture("MENU/status/hd/chrome_9b.webp")
+	## RETRATO EM HD: `misc/71C8F6F0` (320×224) = 4× do bloco **80×56** que no SD guarda os DOIS
+	## retratos lado a lado em (0,192) — Jill em `u=0..39` e Carlos em `u=40..79`. Achado pela mesma
+	## varredura de blocos (erro 0,179; o HD é um render novo, então o erro é alto, mas é ele: a
+	## imagem tem o rótulo "JILL" e o rosto em alta). Como o bloco começa em SD (0,192), o `u,v` do
+	## registro entra descontando essa origem.
+	_retratos_hd = AssetIO.texture("MENU/status/hd/retratos.webp")
 	_chrome = AssetIO.texture("MENU/status/stmain0u_p0.png")
 	_retratos = AssetIO.texture("MENU/status/stmain0u_p2.png")
 	# PALAVRAS EM HD: `ETC/STMOJIU.webp` é 1024×288 = 4× o TIM do PS1 (256×72), e o par está
@@ -294,6 +308,12 @@ func mover_cursor(dx: int, dy: int) -> void:
 	## -1 = FILE/MAP (pela coluna) e -2 = EXIT. É escolha do port, declarada.
 	if not aberto or _anim > 0:
 		return
+	if mensagem != "":
+		# com texto de EXAME aberto, cima/baixo ROLAM o texto (antes trocavam de ícone)
+		if dy != 0:
+			mensagem_linha = clampi(mensagem_linha + dy, 0, maxi(0, _mensagem_linhas() - 2))
+			queue_redraw()
+		return
 	if not sub_itens.is_empty():
 		if dy != 0:
 			sub_sel = posmod(sub_sel + dy, sub_itens.size())
@@ -312,6 +332,7 @@ func mover_cursor(dx: int, dy: int) -> void:
 		queue_redraw()
 		return
 	mensagem = ""
+	mensagem_linha = 0
 	var col := cursor % GRADE_COLUNAS
 	var lin := cursor / GRADE_COLUNAS
 	if dy < 0 and lin == 0:
@@ -369,8 +390,18 @@ func _draw() -> void:
 	_janela(Rect2(12, 172, 200, 48), t)
 	for r: Array in MOLDURA:
 		_moldura(r, t)
-	_blit(_retratos, RETRATO, t)
-	_blit(_palavras, CONDICAO[condicao()], t, Color.WHITE, 0, _palavras_fator)
+	if _retratos_hd != null:
+		# o bloco HD cobre o SD (0,192)-(79,247): desconta a origem e multiplica por 4
+		_blit(_retratos_hd, [RETRATO[0], RETRATO[1] - 192, RETRATO[2], RETRATO[3],
+			RETRATO[4], RETRATO[5]], t, Color.WHITE, 0, 4)
+	else:
+		_blit(_retratos, RETRATO, t)
+	# A palavra da condição também é SPRITE do STMOJIU (só EN/RU no pack), então vai como texto em
+	# PT. As cores são as do jogo: FINE verde, CAUTION amarelo/laranja, DANGER vermelho.
+	var cnd := condicao()
+	var cx: int = int(CONDICAO[cnd][4])
+	var cy: int = int(CONDICAO[cnd][5])
+	Texto.desenhar(self, CONDICAO_PT[cnd], Vector2i(cx, cy - 3), 0, CONDICAO_COR[cnd])
 	_desenhar_botoes(t)
 	_desenhar_equipada(t)
 	_desenhar_placa(t)
@@ -429,9 +460,22 @@ func _desenhar_mensagem(t: float) -> void:
 		return
 	var caixa := Rect2i(20, 178, 184, 38)
 	if mensagem != "":
-		Texto.desenhar_bloco(self, mensagem, caixa)
+		var linhas := Texto.quebrar(mensagem, caixa.size.x)
+		var y := caixa.position.y
+		for i in range(mensagem_linha, linhas.size()):
+			if y + Texto.CELULA > caixa.position.y + caixa.size.y:
+				# ainda há texto: marca com a seta para baixo, como o jogo faz
+				Texto.desenhar(self, ">", Vector2i(caixa.position.x + caixa.size.x - 8,
+					caixa.position.y + caixa.size.y - 12))
+				break
+			Texto.desenhar(self, linhas[i], Vector2i(caixa.position.x, y))
+			y += Texto.ALTURA_LINHA
 		return
 	Texto.desenhar(self, _nome_do_item(id), Vector2i(caixa.position.x, caixa.position.y))
+
+
+func _mensagem_linhas() -> int:
+	return Texto.quebrar(mensagem, 184).size()
 
 
 func _nome_do_item(id: int) -> String:
@@ -505,6 +549,7 @@ func confirmar() -> String:
 				var idc := int(_state.main_slots[cursor].get("id", 0)) if _state != null else 0
 				var e := _dado_do_item(idc)
 				mensagem = String(e.get("exam_pt", e.get("exam_en", "")))
+				mensagem_linha = 0
 				ultima_acao = "examinou: %s" % mensagem.substr(0, 40)
 		return ultima_acao
 	if selecao_botao == 0:
