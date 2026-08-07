@@ -135,20 +135,34 @@ func cancelar() -> void:
 
 
 func _draw() -> void:
-	if not aberto:
+	## A LISTA não é desenhada aqui: no jogo a tela de arquivo é outro `screen kind` da MESMA task,
+	## ou seja fica DENTRO da moldura do status (a captura do jogo mostra a grade de documentos no
+	## painel alto, com o retrato e o EQUIP ainda visíveis). Quem desenha a grade é
+	## `MenuStatus._desenhar_arquivo`. Aqui só sobra a PÁGINA aberta, que ocupa a tela.
+	if not aberto or not lendo:
 		return
 	draw_rect(Rect2(0, 0, 320, 240), Color.BLACK)
 	if docs.is_empty():
-		Texto.desenhar(self, "SEM ARQUIVOS", Vector2i(110, 110))
 		return
-	var doc: Dictionary = docs[sel]
-	if lendo:
-		_desenhar_pagina(doc)
-	else:
-		_desenhar_lista()
+	_desenhar_pagina(docs[sel])
 
 
-func _desenhar_lista() -> void:
+func icone_do_doc(doc: Dictionary) -> Texture2D:
+	return _icones
+
+
+func regiao_do_doc(doc: Dictionary) -> Rect2i:
+	## Célula do documento no `FILEI.TIM` (grade 4×8 de 32×32). O de-para documento → célula não
+	## foi provado; uso `célula = doc`.
+	var cel := int(doc.get("doc", 0))
+	return Rect2i((cel % ICONE_COLUNAS) * ICONE, int(cel / ICONE_COLUNAS) * ICONE, ICONE, ICONE)
+
+
+func nome_do_doc(doc: Dictionary) -> String:
+	return _nome_do_doc(doc)
+
+
+func _desenhar_lista_antiga() -> void:
 	## Lista: ícone 32×32 do `FILEI` + nome do documento (do `re3_items.json`, em PT).
 	Texto.desenhar(self, "ARQUIVO", Vector2i(20, 14))
 	var y := 34

@@ -402,3 +402,38 @@ tratei como campo. Não era evidência. O usuário corrigiu: o jogo começa em *
 cinemática de abertura em `R10D_2`. R10D tem 13 câmeras, 49 funções de script e 13 backgrounds HD.
 A posição de spawn do port foi medida por varredura (99 pontos que o resolver aceita nas 4
 direções; `port/dev/diag_spawn_r10d.gd`) — **não** é a posição do jogo, que vem da cinemática.
+
+
+---
+
+## 16. A tela de ARQUIVO fica DENTRO da moldura — e por que PT não existe em bitmap
+
+**Onde a tela vive.** A captura do jogo (mandada pelo usuário) mostra o arquivo com o retrato, a
+condição e o EQUIP ainda visíveis: ela é outro `screen kind` da MESMA task, então a moldura
+continua e o que muda é o painel grande, que passa a ser o **B142** (200×136 em (12,84), o painel
+alto) com uma grade de documentos. Refeito assim: a grade é desenhada por
+`MenuStatus._desenhar_arquivo` e o `MenuArquivo` virou só dados/navegação.
+
+Medidas da grade **lidas da captura** (a posição das primitivas dessa tela não está nos
+descritores — `0x8006e600` grava `u,v,clut,w,h` e não o `x,y`): **5 colunas × 3 linhas**, célula
+**32×28** a partir de **(50,97)**, cursor vermelho, célula vazia com a palavra "VAZIO" e o nome do
+documento na faixa de baixo. Declarado: lido de referência, não medido no binário.
+
+**Por que os documentos não ficam em português.** Persegui isso até o fim:
+
+1. Os `Rofs*.dat` do jogo instalado **foram modificados** (2025-04-04), então parecia que o mod
+   tinha patcheado as texturas. Extraí (`tools/rofs_extract.py`): `Rofs3 = DATA/ETC` (21 arquivos)
+   e `Rofs4 = DATA_J/ETC2` (41), que tem `FILEGJ.PIX`, `STMOJIJ.TIM`, `STMAIN0J..3J`.
+2. Renderizei: **são os originais JAPONESES**. O `STMOJIJ` tem 装備/使用/組合せ (EQUIP/USE/COMBINE) e a
+   página do `FILEGJ` diz プレイマニュアル ("Manual de jogo").
+3. Ou seja **o mod não troca textura**: ele traduz DESENHANDO TEXTO (plugin + as tabelas em
+   `xml/`, com `ConfigAltFont = 1` no manifesto). É exatamente a abordagem que o port já usa.
+
+Consequência: **página de documento em PT não existe como imagem** — nem no PS1 (`FILEGU` é
+inglês), nem no PC (`FILEGJ` é japonês), nem no HD (`memo/` é russo). Para ter documento em
+português é preciso o CORPUS de texto traduzido e desenhá-lo com a fonte; nos XML do mod há texto
+de sala, item, prompt e menu, mas **não** os documentos. Fica registrado como a dependência real.
+
+Detalhe engraçado do caminho: o mod escreve "Näo", "Saläo", "Opçöes" — usando `ä`/`ö` no lugar de
+`ã`/`õ`, porque a fonte alternativa dele não tem os glifos com til. O port usa os glifos certos
+(`ã` = 159, `õ` = 129 no atlas HD), então fica **melhor** que o mod nesse ponto.

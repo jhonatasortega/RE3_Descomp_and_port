@@ -119,6 +119,21 @@ const BOTOES := [
 ## esta fonte — não cabe. Abreviado, como o original faz com "FILE"/"MAP".
 const BOTOES_TEXTO_PT := ["SAIR", "ARQ.", "MAPA"]
 
+## ── TELA DE ARQUIVO DENTRO DA MOLDURA (kind 3 da mesma task) ──
+## A tela de arquivo NÃO é uma tela cheia própria: ela é outro `screen kind` da MESMA task, então
+## a moldura, o retrato, a condição e o EQUIP continuam desenhados, e o que muda é o painel
+## grande — que passa a ser o **B142** (200×136 em (12,84), o painel alto) com uma grade de
+## documentos. A captura do jogo mostra 5 colunas × 3 linhas, cursor vermelho e uma seta verde à
+## esquerda indicando mais páginas.
+## As medidas da grade foram LIDAS DA CAPTURA (a posição das primitivas dessa tela não está nos
+## descritores — `0x8006e600` grava `u,v,clut,w,h` e não o `x,y`): célula 32×28 a partir de
+## (50,97). Declarado: lido de referência, não medido no binário.
+const ARQ_PAINEL := [12, 84, 200, 136]        ## B142
+const ARQ_ORIGEM := Vector2i(50, 97)
+const ARQ_CELULA := Vector2i(32, 28)
+const ARQ_COLUNAS := 5
+const ARQ_LINHAS := 3
+
 ## Painéis sólidos (no jogo são TILE, sem textura): [x, y, w, h] — B64, B65, B145.
 const PAINEIS := [[0, 88, 8, 96], [216, 88, 200, 96], [216, 200, 96, 24]]
 ## `rgb(8,8,8)` medido no montador de TILE (`0x8006e7d4`: `len=3, code=0x60, rgb=(8,8,8)`).
@@ -207,6 +222,8 @@ var sub_itens: Array[String] = []
 var sub_sel := 0
 ## Última ação do menu, para o HUD/log dizer o que aconteceu (e para o teste conferir).
 var ultima_acao := ""
+## Tela de arquivo (kind 3): quem tem os dados/navegação. Injetada pelo Screen.
+var arquivo: Object = null
 ## Slot que espera o segundo item da COMBINAÇÃO (-1 = não está combinando). No jogo é o
 ## 2º marcador (B147, `u=160`), desenhado enquanto `ctx+0x18 & 0x02000000`.
 var combinar_de := -1
@@ -386,9 +403,12 @@ func _draw() -> void:
 	for p: Array in PAINEIS:
 		_caixa(Rect2(p[0], p[1], p[2], p[3]), COR_TILE, t)
 	# as duas janelas grandes: a da placa do item e a da mensagem (B141 e B144, POLY_FT4 de
-	# moldura 9-fatias). Ver COR_JANELA para o que é medido e o que é aproximação.
-	_janela(Rect2(12, 84, 200, 80), t)
-	_janela(Rect2(12, 172, 200, 48), t)
+	# moldura 9-fatias). No modo ARQUIVO entra o painel ALTO (B142) no lugar dos dois.
+	if arquivo != null and arquivo.aberto:
+		_janela(Rect2(ARQ_PAINEL[0], ARQ_PAINEL[1], ARQ_PAINEL[2], ARQ_PAINEL[3]), t)
+	else:
+		_janela(Rect2(12, 84, 200, 80), t)
+		_janela(Rect2(12, 172, 200, 48), t)
 	for r: Array in MOLDURA:
 		_moldura(r, t)
 	if _retratos_hd != null:
@@ -405,9 +425,13 @@ func _draw() -> void:
 	Texto.desenhar(self, CONDICAO_PT[cnd], Vector2i(cx, cy - 3), 0, CONDICAO_COR[cnd])
 	_desenhar_botoes(t)
 	_desenhar_equipada(t)
-	_desenhar_placa(t)
+	if arquivo == null or not arquivo.aberto:
+		_desenhar_placa(t)                 ## a placa do item não existe no modo ARQUIVO
 	_desenhar_itens(t)
 	_desenhar_cursor(t)
+	if arquivo != null and arquivo.aberto:
+		_desenhar_arquivo(t)
+		return
 	_desenhar_marcador_combinar(t)
 	_desenhar_mensagem(t)
 	_desenhar_submenu(t)
@@ -437,6 +461,45 @@ func _blit(tex: Texture2D, r: Array, t: float, cor := Color.WHITE, du := 0, fato
 		destino.position.y = meio + (destino.position.y - meio) * t
 		destino.size.y *= t
 	draw_texture_rect_region(tex, destino, origem, cor)
+
+
+func _desenhar_arquivo(t: float) -> void:
+	## Grade de documentos no painel alto. Cada célula é a miniatura 32×32 do `ETC/FILEI.TIM`
+	## (grade 4×8) do documento; célula sem documento mostra "VAZIO", como na captura.
+	var docs: Array = arquivo.get("docs")
+	var sel: int = int(arquivo.get("sel"))
+	var pag := sel / (ARQ_COLUNAS * ARQ_LINHAS)
+	var base := pag * ARQ_COLUNAS * ARQ_LINHAS
+	for i in ARQ_COLUNAS * ARQ_LINHAS:
+		var idx := base + i
+		var cx := ARQ_ORIGEM.x + (i % ARQ_COLUNAS) * ARQ_CELULA.x
+		var cy := ARQ_ORIGEM.y + int(i / ARQ_COLUNAS) * ARQ_CELULA.y
+		if idx < docs.size():
+			var doc: Dictionary = docs[idx]
+			var tex: Texture2D = arquivo.call("icone_do_doc", doc)
+			if tex != null:
+				var reg: Rect2i = arquivo.call("regiao_do_doc", doc)
+				var d := Rect2(cx, cy, ARQ_CELULA.x - 2, ARQ_CELULA.y - 2)
+				if t < 1.0:
+					d.position.y = 120.0 + (d.position.y - 120.0) * t
+					d.size.y *= t
+				draw_texture_rect_region(tex, d, reg)
+		else:
+			# "VAZIO" mede ~35 px nesta fonte e a célula tem 32: desenha em escala 0,8 para caber,
+			# como na captura (lá o glifo é mais estreito). Escolha de apresentação, declarada.
+			draw_set_transform(Vector2(cx, cy + 6), 0.0, Vector2(0.8, 0.8))
+			Texto.desenhar(self, "VAZIO", Vector2i(0, 0), 0, Color(0.45, 0.35, 0.4))
+			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		if idx == sel:
+			draw_rect(Rect2(cx - 1, cy - 1, ARQ_CELULA.x, ARQ_CELULA.y), COR_VERMELHO, false, 1.0)
+	# seta verde de "há mais páginas" (a captura mostra à esquerda do painel)
+	if docs.size() > ARQ_COLUNAS * ARQ_LINHAS:
+		Texto.desenhar(self, "<", Vector2i(ARQ_PAINEL[0] + 6, ARQ_ORIGEM.y + ARQ_CELULA.y),
+			0, COR_VERDE * 2.0)
+	# nome do documento selecionado, na faixa de baixo do painel
+	if sel < docs.size():
+		Texto.desenhar(self, String(arquivo.call("nome_do_doc", docs[sel])),
+			Vector2i(ARQ_PAINEL[0] + 8, ARQ_PAINEL[1] + ARQ_PAINEL[3] - 18))
 
 
 func _desenhar_marcador_combinar(t: float) -> void:

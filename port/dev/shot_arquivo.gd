@@ -59,7 +59,7 @@ func _process(_d: float) -> bool:
 		print("[ar] salvo %s" % _nome)
 		# abre o documento e vira para a página de texto
 		arq.call("confirmar")
-		arq.call("mover", 1)
+		arq.call("virar_pagina", 1)
 		_cena.call("_on_tick", _t)
 		_nome = "_shot_arquivo_pagina.png"
 		_fase = 3
