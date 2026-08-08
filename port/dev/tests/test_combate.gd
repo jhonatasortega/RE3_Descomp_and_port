@@ -54,11 +54,14 @@ func run(t: Object) -> bool:
 	t.eq(p.mira_sub, Player.Mira.FOGO, "12 ticks segurando a mira chegam ao sub 3 (fogo)")
 	t.eq(p.acao, Player.Acao.MIRANDO, "a ação é MIRANDO")
 	t.eq(p.mira_pitch, 0x800, "pitch = (tier 0 << 9) + 0x800 (`0x8003ac5c`)")
-	## A pose de mira do EXE (anim 14) está no BANCO 1/2 do `.PLW`, que o `pld2gltf.py` ainda não
-	## extrai; usar `arm14` (seq 14 do banco 0) punha a Jill AJOELHADA. Até extrair o overlay, a
-	## mira fica no idle armado — o teste trava isso para ninguém "voltar" o mapeamento errado.
-	t.eq(p.clipe_atual(), "arm02",
-		"mira usa o idle armado enquanto o overlay de mira (banco 1/2 do PLW) não é extraído")
+	## Agora existem os clipes do BANCO 2 do PLW (`mira00..mira07`, de-para de osso provado em
+	## `plw.md` §9): hold médio é `mira02`, levantar é `mira00` e o tiro/recuo é `mira07`.
+	t.eq(p.clipe_atual(), "mira02", "hold da mira usa o `mira02` (banco 2 do PLW, pose média)")
+	var p6 := Player.new()
+	p6.equipped_weapon = 0x03
+	pad.set_mask(Pad.AIM)
+	p6.tick(pad)
+	t.eq(p6.clipe_atual(), "mira00", "no sub 0 a pose é `mira00` (levantar a arma)")
 	# o gatilho agenda o tiro para o quadro do timing e gasta 1 no disparo
 	pad.set_mask(Pad.AIM | Pad.ACAO)
 	p.tick(pad)

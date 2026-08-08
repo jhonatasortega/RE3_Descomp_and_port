@@ -79,6 +79,10 @@ const MIRA_ALTURA := 1600                 ## idem, altura
 const LEVANTAR_QUADROS := 6               ## duração do sub 0 (declarado: não medi o nº de quadros)
 var mira_sub: Mira = Mira.LEVANTAR
 var mira_tier := 0                        ## 0..3 pela elevação do alvo (auto-lock)
+## Lado da elevação: +1 alvo ACIMA, -1 ABAIXO, 0 na mesma altura. No PS1 o Y cresce para BAIXO,
+## então "acima" é `p.y < pos.y`. O EXE tira a altura do part-id travado (`player+0xc7`), que exige
+## hitbox de osso do inimigo; aqui vem da elevação. **Declarado.**
+var mira_alto := 0
 var mira_pitch := 0                       ## `player+0x6e` = (tier << 9) + 0x800 (sub 2)
 ## `player+0xc0` = OFFSET de mira, que o sub 1 interpola para 0 de 0x28 em 0x28. São campos
 ## DIFERENTES do pitch: o `+0xc0` sai da rotina do ponto do cano (`0x80018d34`) e eu havia
@@ -309,7 +313,26 @@ func clipe_atual() -> String:
 		Acao.GIRANDO, Acao.QUICKTURN:
 			return "arm00"
 		Acao.MIRANDO:
-			## ── POR QUE A POSE DE MIRA AINDA É O IDLE ARMADO (e não `arm13..arm17`) ──
+			## ── POSES DE MIRA: banco 2 do `.PLW`, exportado como `mira00..mira07` ──
+			## O de-para de osso foi provado: o **banco 2 (9 ossos) = ossos 0..8 do PLD = SUPERIOR**
+			## (raiz, cabeça, os dois braços, pelve) e o **banco 1 (7 ossos) = 0, 9..14 = pernas** —
+			## o inverso do que a doc dizia. A aplicação é **substituição do subconjunto**, não
+			## aditiva, e cada `miraNN` já vem sem trilha para `bone09..14` e sem translação de
+			## raiz, então tocá-lo sozinho dá o efeito. Papel medido pela altura do punho direito:
+			##   `mira00` 10 quadros = LEVANTAR (punho +291 → −598) · `mira02` = hold MÉDIA
+			##   `mira04` = hold ALTA · `mira06` = hold BAIXA · `mira07` 32 quadros = TIRO + recuo
+			## (o quadro do tiro do timing `0x8009cf28` — 12 no handgun — cai dentro desses 32).
+			## Ver `docs/decomp/notes/plw.md` §9.
+			if tiro_pendente >= 0 or recuo > 0:
+				return "mira07"
+			if mira_sub == Mira.LEVANTAR:
+				return "mira00"
+			if mira_alto > 0:
+				return "mira04"
+			if mira_alto < 0:
+				return "mira06"
+			return "mira02"
+			## ── (histórico) POR QUE A POSE ERA O IDLE ARMADO ──
 			## O EXE grava em `player+0xc8` os índices **13** (levantar), **14/15/16** (mira por
 			## tier), **17** (tier 3) e **19/20** (promoção de alvo alto). Eu havia mapeado direto
 			## para os clipes `arm13..arm17`, que são as **seqs 13..17 do BANCO 0** do `.PLW` — e o
@@ -455,6 +478,7 @@ func _travar_alvo() -> int:
 	## (3000 de alcance, ±1000 de largura, 1600 de altura), com clamp de arco de ±0x1000.
 	## Devolve o índice do alvo mais PRÓXIMO dentro da caixa, ou -1.
 	mira_tier = 0
+	mira_alto = 0
 	if not mira_trava():
 		return -1                          ## DIFÍCIL: não gruda em ninguém
 	if not alvos.is_valid():
@@ -486,6 +510,9 @@ func _travar_alvo() -> int:
 			# O EXE tira o tier do part-id travado (`player+0xc7`), que exige hitbox de osso —
 			# o port não tem osso de inimigo ainda, então derivo da altura. **Declarado.**
 			mira_tier = clampi(int(dy / 400), 0, 3)
+			## LADO da elevação: no PS1 o Y cresce para BAIXO, então alvo ACIMA é `p.y < pos.y`.
+			var acima := 1 if p.y < pos.y else (-1 if p.y > pos.y else 0)
+			mira_alto = acima if mira_tier > 0 else 0
 	return melhor
 
 
