@@ -142,10 +142,15 @@ func run(t) -> bool:
 	t.check(q2 < 3000, "a cena de saída termina", "%d quadros" % q2)
 	t.eq(w2.room.room_id, "R101", "★ a cena TROCOU DE SALA: R10D -> R101 (opcode 0x66)")
 	t.eq(w2.trocas, 1, "contou 1 troca de sala")
-	t.check(w2.cena == null, "a cena foi fechada ao atravessar")
-	t.check(not w2.player.em_cena(), "e o controle voltou para o jogador")
-	t.eq(cams2, [4, 5, 4, 6, 7, 8, 9] as Array[int],
-		"as câmeras da saída chegam ao `world.camera`: 4 -> 5 -> 4 -> 6 -> 7 -> 8 -> 9")
+	# ⭐ MUDOU (2026-08-08): a cena de SAÍDA é fechada ao atravessar, mas o `R101` abre a **cena de
+	# ENTRADA dele** na mesma carga — é a "cena de entrada ao ir para a próxima sala" que o dono
+	# descreveu. Ver `docs/decomp/notes/cena_r101.md` e `test_cena_r101.gd`.
+	t.eq(w2.cena_func, 3, "no R101 a cinemática de ENTRADA (função 3) assume na hora")
+	t.check(w2.player.em_cena(), "e o corpo continua dirigido por script (agora pelo R101)")
+	# O 7 do fim é a câmera de CHEGADA no R101 (emprestada junto com a chegada), lida no mesmo
+	# tick em que a porta disparou — não é câmera da função 11.
+	t.eq(cams2, [4, 5, 4, 6, 7, 8, 9, 7] as Array[int],
+		"as câmeras da saída chegam ao `world.camera`: 4 -> 5 -> 4 -> 6 -> 7 -> 8 -> 9 (+7 = chegada)")
 	# As sequências que a cena pede, na ordem (doc §6.1). ⚠ 8 e 10 são DECLARADAS: não estão no
 	# par provado de `subir.gd` (6/7) e `animacoes_player.md` as rotula por render.
 	t.eq(seqs2, [8, 7, 4, 9, 5, 6, 10] as Array[int],
@@ -172,38 +177,70 @@ func run(t) -> bool:
 		"e a chegada usada está etiquetada como DECLARADA/emprestada", deb)
 	t.check(w2.player.pos != Vector3i.ZERO, "o corpo NÃO ficou em (0,0,0)",
 		str(w2.player.pos))
-	# O ponto emprestado é MEDIDO: é a chegada de outra porta que entra no R101 (R100 -> R101).
-	var emp := World._chegada_emprestada("R101")
-	t.check(not emp.is_empty(), "há de quem emprestar a chegada em R101")
-	if not emp.is_empty():
-		t.eq(str(emp["src"]), "R100", "a chegada emprestada vem da porta R100 -> R101")
-		t.eq(emp["pos"], Vector3i(-18808, -7200, -11475),
+	# O ponto emprestado é MEDIDO: é a chegada de outra porta que entra no R101.
+	# ⭐ E agora o EMPRÉSTIMO tem critério medido: a cena de entrada do R101 declara o ANDAR do
+	# player (`40 0f 02 00` = `player+0x09` = 2 ⇒ y = -3600), então só serve chegada desse nível.
+	# Sem o critério cai o R100 (nível 4, do outro lado da sala); com ele, o R102 — a mesma
+	# vizinhança do primeiro `0x81` que a cena dá ao player, `(-8630, -27690)`.
+	var emp_sem := World._chegada_emprestada("R101")
+	t.check(not emp_sem.is_empty(), "há de quem emprestar a chegada em R101")
+	if not emp_sem.is_empty():
+		t.eq(str(emp_sem["src"]), "R100", "sem critério de andar, a ordem alfabética dá R100")
+		t.eq(emp_sem["pos"], Vector3i(-18808, -7200, -11475),
 			"e é o ponto MEDIDO daquela porta (data/room_graph.json)")
-	# E o personagem consegue se mover na chegada (senão o jogo travaria do outro lado).
+	t.eq(World._nivel_da_cena_de_entrada("R101"), 2,
+		"a cena de entrada do R101 declara o ANDAR 2 para o player (`40 0f 02 00`)")
+	var emp := World._chegada_emprestada("R101", 2)
+	if t.check(not emp.is_empty(), "e há chegada medida NESSE andar"):
+		t.eq(str(emp["src"]), "R102", "a chegada emprestada passa a vir da porta R102 -> R101")
+		t.eq(emp["pos"], Vector3i(-4434, -3600, -27933),
+			"no nível 2 (y = -3600), como a cena exige")
+	t.eq(w2.player.pos.y, -3600, "e o corpo aterrissa nesse nível no jogo", str(w2.player.pos))
+	# E o personagem consegue se mover na chegada (senão o jogo travaria do outro lado) — mas
+	# **depois** da cinemática de entrada, que agora está no comando.
+	var q_r101 := 0
+	while w2.cena != null and q_r101 < World.CENA_MAX_QUADROS + 10:
+		pad.set_mask(0)
+		w2.tick(pad)
+		q_r101 += 1
+	t.check(w2.cena == null, "a cinemática de entrada do R101 TERMINA", "%d quadros" % q_r101)
 	var pos_ap := w2.player.pos
 	for _i in 30:
 		pad.set_mask(Pad.FWD)
 		w2.tick(pad)
-	t.check(w2.player.pos != pos_ap, "na chegada em R101 o personagem RESPONDE ao input",
+	t.check(w2.player.pos != pos_ap,
+		"e depois dela o personagem RESPONDE ao input no R101",
 		"de %s para %s" % [pos_ap, w2.player.pos])
 
 	# ═══════════════════════════════════════════════════════════════════════════════════
-	t.group("4. as outras 134 caixas `sce 5` do jogo seguem INERTES (regressão)")
+	t.group("4. as outras caixas `sce 5` do jogo seguem INERTES (regressão)")
 	# ═══════════════════════════════════════════════════════════════════════════════════
-	# Medido: 135 gatilhos `sce 5` em 58 salas. Só as duas funções do R10D estão medidas, então
-	# só elas estão ligadas — as outras não podem abrir cena nenhuma (§7 do doc: há opcodes de
-	# cena sem semântica; uma thread presa num `while` prenderia o jogador para sempre).
-	t.eq(World.CENAS_LIGADAS.size(), 1, "uma única sala com cena ligada")
-	t.check(World.CENAS_LIGADAS.has(SALA), "e é o R10D")
+	# Medido: 135 gatilhos `sce 5` em 58 salas. Só o que está medido está ligado — os outros não
+	# podem abrir cena nenhuma (§7 do doc: há opcodes de cena sem semântica; uma thread presa num
+	# `while` prenderia o jogador para sempre).
+	t.eq(World.CENAS_LIGADAS.size(), 2, "duas salas com cena ligada")
+	t.check(World.CENAS_LIGADAS.has(SALA), "o R10D (entrada 7 + saída 11)")
+	t.check(World.CENAS_LIGADAS.has("R101"), "e o R101 (só a entrada, função 3)")
+	# O próprio R101 é a prova de inércia: ele tem DOIS gatilhos `sce 5` (AOT 11 -> função 12 e
+	# AOT 12 -> função 15, ambos `nFloor = 1`) e nenhum dos dois está ligado.
+	# ⚠ Antes este bloco usava o R102, mas o gatilho `sce 5` que ele tinha era ARTEFATO da
+	# polaridade invertida do `0x4c`: ele mora atrás de `4c 03 4a 01` (byte alto != 0 = condição
+	# DIRETA), isto é só existe com a flag 3/0x4a acesa — não numa partida nova.
 	var w3 := World.new()
-	if t.check(w3.carregar("R102"), "R102 carrega (tem gatilho sce 5 na função 10)"):
+	if t.check(w3.carregar("R102"), "R102 carrega"):
 		t.check(w3.cena == null, "R102 NÃO abre cinemática na carga")
-		var g := Cena.gatilho_de_evento(w3.vm, -11500, -27600)
-		if t.check(g != null, "e o gatilho sce 5 do R102 existe e contém o ponto"):
-			w3.player.pos = Vector3i(-11500, 0, -27600)
+		t.eq(Cena.gatilho_de_evento(w3.vm, -11500, -27600), null,
+			"e numa partida NOVA o R102 não tem gatilho `sce 5` (fica atrás de `4c 03 4a 01`)")
+	var w3b := World.new()
+	if t.check(w3b.carregar("R101", false), "R101 carrega sem reprisar a cinemática"):
+		t.check(w3b.cena == null, "com `com_cena = false` a entrada não roda")
+		var g := Cena.gatilho_de_evento(w3b.vm, -7500, -12000)
+		if t.check(g != null, "o gatilho `sce 5` AOT 11 do R101 existe e contém o ponto"):
+			t.eq(g.evento_func(), 12, "e pede a função 12")
+			w3b.player.pos = Vector3i(-7500, -1800, -12000)
 			pad.set_mask(0)
-			w3.tick(pad)
-			t.check(w3.cena == null,
+			w3b.tick(pad)
+			t.check(w3b.cena == null,
 				"pisar nele NÃO abre cena (função %d não medida)" % g.evento_func())
 
 	# ═══════════════════════════════════════════════════════════════════════════════════

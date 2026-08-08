@@ -177,8 +177,22 @@ const ROTINA_SUBIR := 9
 const SEQ_SUBIR := 6
 const SEQ_TOPO := 7
 ## Nomes de clipe no `port/assets/PLD/PL00.glb`. Trocar para `arm06`/`arm07` liga o banco
-## ARMADO (banco 0 do PLW) — qual dos dois o motor usa é 🟡 (ver o cabeçalho §3).
+## ARMADO (banco 0 do PLW) — qual dos dois o motor usa é 🟡 (ver o cabeçalho §3 e §6).
 const CLIPES := {SEQ_SUBIR: "anim06", SEQ_TOPO: "anim07"}
+
+## ⭐ **DURAÇÃO DE CADA CLIPE — MEDIDA, e é ela que manda no subestado.**
+##
+## `0x8003b4a8` (e `0x8003b3a0`/`0x8003b494`) fazem `jal 0x80027940` e depois
+## **`player+6 += $v0`** (`0x8003b4b0..0x8003b4c0`): o passo de animação devolve **1 no quadro em
+## que o clipe ACABA** e 0 nos outros, então **o subestado avança quando a animação termina** —
+## não por contador. Isto é: o motor toca cada clipe **exatamente uma vez, inteiro**.
+##
+## Os números abaixo são os quadros dos clipes no banco exportado (`port/assets/PLD/PL00.glb`,
+## medido: `anim06` = 0,300 s = **9 quadros** e `anim07` = 0,800 s = **24 quadros** a 30 Hz).
+## Antes o port usava 10 e 25 (vindos do rótulo de `animacoes_player.md`), o que com o
+## `loop_mode = LOOP_LINEAR` que a apresentação põe em todo clipe fazia a animação **reiniciar e
+## mostrar um quadro extra** no fim de cada fase.
+const QUADROS_CLIPE := {SEQ_SUBIR: 9, SEQ_TOPO: 24}
 
 ## Subestados de `player+6` na rotina 9 — tabela `0x800107d0`, 8 entradas, uma a uma:
 ##   0 `0x8003b294` entra: `sub = 1`, anim = linha do ANDAR da tabela 3×3 (`0x8009cde0 + 3`),
@@ -322,12 +336,29 @@ func iniciar() -> void:
 	sfx_pendente = 0
 
 
-## Duração de cada subestado em quadros. 🟡 **DECLARADO**: no motor a saída de cada subestado é
-## o RETORNO de `0x80027940` (a animação acabou), não um contador. Aqui, sem o EDD ligado, uso
-## a contagem de quadros dos clipes medidos em `docs/formatos/animacoes_player.md`
-## (seq 06 = 10 quadros, seq 07 = 25) para o estado avançar sozinho; quando o `player.gd`
-## estiver dirigindo o `AnimationPlayer`, troque por `anim_terminou()`.
-const QUADROS_SUB := {Sub.ALINHA: 6, Sub.SUBINDO: 10, Sub.NO_TOPO: 25, Sub.TERMINANDO: 2}
+## Duração de cada subestado em quadros. Agora **cada fase dura o clipe dela**, que é a regra do
+## motor (`player+6 += retorno de 0x80027940`, ver `QUADROS_CLIPE`):
+##   • `SUBINDO`    = os 9 quadros da **SEQ 6**;
+##   • `NO_TOPO`    = os 24 quadros da **SEQ 7**;
+##   • `TERMINANDO` = os 9 quadros da **SEQ 6 de novo** — ver `seq()`.
+## 🟡 `ALINHA` continua DECLARADO: no motor o sub 1 (`0x8003b2d8`) sai quando o corpo está
+## alinhado (`player+0x6e & 0x3e0 == 0`), não por contagem, e ele toca a linha de ANDAR da
+## tabela 3×3 `0x8009cde0 + 3` (índice em `0x8009cd3c`), que o port não decodificou.
+const QUADROS_SUB := {
+	Sub.ALINHA: 6,
+	Sub.SUBINDO: int(QUADROS_CLIPE[SEQ_SUBIR]),
+	Sub.NO_TOPO: int(QUADROS_CLIPE[SEQ_TOPO]),
+	Sub.TERMINANDO: int(QUADROS_CLIPE[SEQ_SUBIR]),
+}
+## Quadros em que o corpo GANHA ALTURA: só a janela da SEQ 6 (`INICIA_SUBIDA` + `SUBINDO`).
+##
+## ⭐ É medição, não gosto: o SFX de **impacto** (`0x1022c`, `0x8003b3e8`) toca no sub 5 quando
+## `player+0xc9 == 1`, isto é **no primeiro quadro da SEQ 7** — logo, quando a SEQ 7 começa o pé
+## já pousou em cima e a subida acabou. O port levantava o corpo em rampa pelos 35 quadros
+## inteiros, o que punha a Jill a 37% da altura na hora do impacto (medido em
+## `port/dev/diag_degrau.gd`: `y = -668` de `-1800`) — ela "flutuava" para cima em diagonal em vez
+## de escalar.
+const QUADROS_VERTICAL := 1 + int(QUADROS_CLIPE[SEQ_SUBIR])
 
 
 func avancar(segurando_direcao: bool) -> Sub:
@@ -376,13 +407,35 @@ func avancar(segurando_direcao: bool) -> Sub:
 func seq() -> int:
 	## Índice de sequência do EDD que o motor teria em `player+0xc8` neste subestado.
 	## -1 = o subestado usa a animação de ANDAR (linha da tabela 3×3), não uma seq própria.
+	##
+	## ⚠ **CORREÇÃO 2026-08-08 — a rotina 9 é `6 → 7 → 6`, não `6 → 7`.** A entrada no sub 6 é
+	## feita pelo `move` (`0x8003b1c4`), e ele escreve **a SEQ 6 de novo**:
+	##
+	##     8003b204  addiu $v0, $zero, 6
+	##     8003b208  sb    $v0, 6($a2)       ; player+6  = 6  (sub 6 = TERMINANDO)
+	##     8003b20c  sb    $v0, 0xc8($a2)    ; player+0xc8 = 6  ★ SEQ 6, o MESMO $v0
+	##     8003b218  sb    $zero, 0xc9($a2)  ; quadro = 0 (recomeça o clipe)
+	##     8003b21c  sb    $v0(=7), 0xca($a2)
+	##
+	## (o `+0xca = 7` é a constante `0x0007<<16` que toda a SM escreve junto — é o mesmo
+	## `0x00070006` do sub 2, byte a byte.) O port tocava a SEQ 7 no `TERMINANDO`, isto é ficava
+	## na pose de "em cima" até o fim em vez de voltar ao clipe de saída. Varri todos os stores em
+	## `+0xc8..+0xcb` na faixa `0x8003b1c4..0x8003b4f4`: são **três**, e são estes.
 	match sub:
-		Sub.INICIA_SUBIDA, Sub.SUBINDO:
+		Sub.INICIA_SUBIDA, Sub.SUBINDO, Sub.TERMINANDO:
 			return SEQ_SUBIR
-		Sub.INICIA_TOPO, Sub.NO_TOPO, Sub.TERMINANDO:
+		Sub.INICIA_TOPO, Sub.NO_TOPO:
 			return SEQ_TOPO
 		_:
 			return -1
+
+
+func fracao_vertical(quadros_de_movimento: int) -> float:
+	## Fração da ALTURA já vencida depois de `quadros_de_movimento` quadros de rotina 9.
+	## 1.0 do `INICIA_TOPO` em diante (ver `QUADROS_VERTICAL`).
+	if sub >= Sub.INICIA_TOPO:
+		return 1.0
+	return minf(1.0, float(quadros_de_movimento) / float(QUADROS_VERTICAL))
 
 
 func clipe() -> String:

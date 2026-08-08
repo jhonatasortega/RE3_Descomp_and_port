@@ -101,8 +101,25 @@ func run(t: Object) -> bool:
 	t.eq(r10d_escalaveis, 0,
 		"NENHUM objeto do R10D é escalável (0x6001 = bit 0x4000 aceso e 0x100 apagado)")
 
-	# a varredura do jogo inteiro: 4 salas sobrevivem à montagem completa (R406 declara o objeto
-	# escalável em UM ramo da função 17 e o reescreve com be_flg 0x0001 no fim, por isso não entra)
+	# A varredura do jogo inteiro: 4 salas sobrevivem à montagem completa.
+	#
+	# ⚠ **MUDOU em 2026-08-08 e é CONSEQUÊNCIA DE CORREÇÃO, não regressão:** o `0x4c` do
+	# `ScriptVM` estava com a POLARIDADE INVERTIDA (o handler `0x800546cc` devolve
+	# `flag XOR (byte alto == 0)`, ver o comentário no `vm.gd`), e isso trocava o ramo de todo
+	# `if` de flag de todo init. As duas salas que mudaram de lado, com o dado:
+	#
+	#   • **R406 ENTROU.** `func 17 +0x0000` = `if (4c 03 75 00)` — byte alto 0, logo **NEGADO**:
+	#     "a flag 3/0x75 ainda NÃO subiu". Numa partida nova é VERDADE, e o ramo verdadeiro
+	#     declara `om 0` em `(-23690, 900, -25131)` com `be_flg = 0x0100` = **escalável** (4 `case`
+	#     do mesmo `switch`, todos iguais). O ramo falso é o que põe `be_flg = 0x0000`.
+	#   • **R315 SAIU.** `func 13 +0x0078` = `if (4c 03 7e 01)` — byte alto != 0, logo condição
+	#     **DIRETA**: "a flag 3/0x7e ESTÁ acesa". E `func 0 +0x000c` faz `4d 03 7e 01` antes do
+	#     `19 0d` (gosub 13) de `+0x0026`, isto é acende a flag. Com ela acesa vale o ramo
+	#     verdadeiro: `om 7` em `(-27739, 0, -20261)` com `be_flg = 0x8000` = **não escalável**.
+	#     🟡 **E aqui fica um ASTERISCO honesto:** esse `4d` mora dentro de `if (4e 00 1b 00 17 04)`,
+	#     e o `0x4e` é opcode de condição que o port **não avalia** (entra no bloco por omissão).
+	#     Então o R315 não está *provado* fora — está fora *dado que o `0x4e` passa*. Quando o
+	#     `0x4e` for medido, este número pode voltar a 1.
 	var salas_com_ponto: Array[String] = []
 	var por_sala: Dictionary = {}
 	for id in _listar_salas():
@@ -120,9 +137,9 @@ func run(t: Object) -> bool:
 		if n > 0:
 			salas_com_ponto.append(id)
 			por_sala[id] = n
-	t.eq(salas_com_ponto, ["R210", "R219", "R315", "R50D"] as Array[String],
+	t.eq(salas_com_ponto, ["R210", "R219", "R406", "R50D"] as Array[String],
 		"as salas com objeto escalável do jogo")
-	t.eq(por_sala, {"R210": 1, "R219": 1, "R315": 1, "R50D": 3},
+	t.eq(por_sala, {"R210": 1, "R219": 1, "R406": 1, "R50D": 3},
 		"quantos objetos escaláveis por sala")
 	t.check(not salas_com_ponto.has("R10D"), "e o R10D NÃO está entre elas")
 
@@ -131,14 +148,17 @@ func run(t: Object) -> bool:
 	t.eq(s.carregar_sala("R10D"), 0, "R10D não instala nenhum ponto (não invento a lixeira)")
 	t.eq(s.carregar_sala("R100"), 0, "R100 também não")
 	t.eq(s.carregar_sala("R50D"), 3, "R50D instala 3 pontos (om 0/1/2, be_flg 0x0101)")
-	t.eq(s.carregar_sala("R315"), 1, "R315 instala 1 ponto (om 7)")
+	t.eq(s.carregar_sala("R406"), 1, "R406 instala 1 ponto (om 0, be_flg 0x0101)")
+	t.eq(s.carregar_sala("R315"), 0,
+		"R315 não instala nenhum: a flag 3/0x7e que o init acende manda no ramo `be_flg 0x8000`")
 	# e o ponto sai da POSIÇÃO do objeto, com raio declarado
-	var p315: Dictionary = s.pontos[0]
-	t.eq(p315["caixa"], Rect2i(-27589 - SubirObjeto.RAIO_DECLARADO,
-		-23328 - SubirObjeto.RAIO_DECLARADO,
+	s.carregar_sala("R406")
+	var p406: Dictionary = s.pontos[0]
+	t.eq(p406["caixa"], Rect2i(-23690 - SubirObjeto.RAIO_DECLARADO,
+		-25131 - SubirObjeto.RAIO_DECLARADO,
 		SubirObjeto.RAIO_DECLARADO * 2, SubirObjeto.RAIO_DECLARADO * 2),
 		"a caixa é o raio declarado em torno da posição do om")
-	t.eq(p315["y_topo"], -SubirObjeto.ALTURA_DECLARADA,
+	t.eq(p406["y_topo"], 900 - SubirObjeto.ALTURA_DECLARADA,
 		"e o topo é a altura declarada acima do Y do om (Y negativo = para cima)")
 
 	# ponto sintético: caixa 1000×1000 na origem, o ator ao sul dela olhando ao norte

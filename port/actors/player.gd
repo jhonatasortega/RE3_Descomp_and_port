@@ -585,9 +585,12 @@ func _detectar_degrau(andando: bool) -> void:
 	_set_acao(Acao.SUBINDO)
 
 
-## Quadros de MOVIMENTO da rotina 9: os subestados SUBINDO (SEQ 6, 10 quadros) e NO_TOPO
-## (SEQ 7, 25) — os números são os de `SubirObjeto.QUADROS_SUB`, medidos nos clipes.
-const DEGRAU_QUADROS := 35
+## Quadros de MOVIMENTO da rotina 9: os subestados de `INICIA_SUBIDA` a `TERMINANDO`, cada um com
+## a duração do clipe dele (`SubirObjeto.QUADROS_SUB`, que sai de `QUADROS_CLIPE`).
+## 1 (`INICIA_SUBIDA`) + SEQ 6 + 1 (`INICIA_TOPO`) + SEQ 7 + SEQ 6 = 44 quadros.
+const DEGRAU_QUADROS := 2 + SubirObjeto.QUADROS_SUB[SubirObjeto.Sub.SUBINDO] \
+	+ SubirObjeto.QUADROS_SUB[SubirObjeto.Sub.NO_TOPO] \
+	+ SubirObjeto.QUADROS_SUB[SubirObjeto.Sub.TERMINANDO]
 
 
 func _tick_degrau(pad: Pad) -> void:
@@ -596,9 +599,14 @@ func _tick_degrau(pad: Pad) -> void:
 	var sub := subir.avancar(pad.pressed(Pad.FWD) or pad.pressed(Pad.BACK))
 	if sub >= SubirObjeto.Sub.INICIA_SUBIDA and sub <= SubirObjeto.Sub.TERMINANDO:
 		_degrau_q = mini(_degrau_q + 1, DEGRAU_QUADROS)
+		## ⭐ ALTURA e AVANÇO são janelas DIFERENTES, e isso é medição (ver
+		## `SubirObjeto.QUADROS_VERTICAL`): o SFX de impacto do pé (`0x1022c`, `0x8003b3e8`) toca
+		## no **primeiro quadro da SEQ 7**, logo a subida termina ANTES da SEQ 7 começar. O X/Z
+		## continua em rampa por toda a ação (é a SEQ 7 que leva o corpo para dentro do topo).
+		var fv := subir.fracao_vertical(_degrau_q)
 		pos = Vector3i(
 			_degrau_de.x + (_degrau_para.x - _degrau_de.x) * _degrau_q / DEGRAU_QUADROS,
-			_degrau_de.y + (_degrau_para.y - _degrau_de.y) * _degrau_q / DEGRAU_QUADROS,
+			_degrau_de.y + roundi(float(_degrau_para.y - _degrau_de.y) * fv),
 			_degrau_de.z + (_degrau_para.z - _degrau_de.z) * _degrau_q / DEGRAU_QUADROS)
 	if subir.sfx_pendente != 0 and sfx != null:
 		## Os dois ids são MEDIDOS: `0x8003b224` = início da subida (`SubirObjeto.SFX_INICIO`) e

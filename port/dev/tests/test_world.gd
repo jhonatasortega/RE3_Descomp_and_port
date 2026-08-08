@@ -63,6 +63,16 @@ func run(t: Object) -> bool:
 			pad_zero.set_mask(Pad.ACAO)      # segurando: não repete (é borda)
 			wr.tick(pad_zero)
 		t.eq(wr.trocas, 1, "segurar E não atravessa em loop")
+		# ⚠ 2026-08-08: esta porta cai no `R101`, e o `R101` tem CINEMÁTICA DE ENTRADA (função 3,
+		# `docs/decomp/notes/cena_r101.md`). Enquanto ela roda o pad é ignorado de propósito — é o
+		# `task_suspend` do motor. Deixa a cena terminar antes de cobrar o input.
+		var q_cena := 0
+		while wr.cena != null and q_cena < World.CENA_MAX_QUADROS + 10:
+			var pad_c := Pad.new()
+			pad_c.set_mask(0)
+			wr.tick(pad_c)
+			q_cena += 1
+		t.check(wr.cena == null, "a cinemática de entrada do R101 termina", "%d quadros" % q_cena)
 		var pos_ap := wr.player.pos
 		var pad_f := Pad.new()
 		for _i in 40:

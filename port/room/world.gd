@@ -44,19 +44,37 @@ var _ancora_cena: Aot
 var cena_debitos: Array[String] = []
 
 ## Cinemáticas de script LIGADAS no jogo, por sala:
-##   `entrada` = função que o INIT abre como thread (`0x04 evt_exec`; -1 = nenhuma)
+##   `entrada`  = função que o INIT abre como thread (`0x04 evt_exec`; -1 = nenhuma). O port
+##                **não adivinha**: quem descobre é o próprio init (`vm.threads_pedidas`), e esta
+##                entrada só AUTORIZA a função a rodar (ver `_abrir_cena_de_entrada`).
 ##   `gatilhos` = funções que um AOT `sce 5` pode abrir quando o personagem pisa na caixa
+##   `chegada_nivel` = 🟡 nível de piso que a cena de entrada DECLARA para o player
+##                (`0x40` membro `0x0f` = `+0x09`), usado para escolher a chegada emprestada
+##                quando a porta vem com chegada zerada (ver `_chegada_emprestada`)
 ##
-## 🟡 **Lista DECLARADA, e curta de propósito.** As duas cenas do `R10D` são as únicas MEDIDAS
-## (`docs/decomp/notes/cena_r10d.md`, teste `-- cena`): a de ENTRADA é a **função 7**, aberta
-## pelo `04 ff 19 07` da função 5 do init, e a de SAÍDA é a **função 11**, que o AOT `sce 5`
-## pede no payload. Medi que existem **135 gatilhos `sce 5` em 58 salas** (varredura com
-## `executar(0)` nas 169); ligar todos faria o port rodar funções cujos opcodes ainda não têm
-## semântica (§7 do doc) e prenderia o jogador numa cena que talvez nunca termine — algumas
-## dessas caixas cobrem a sala inteira (`R30E` tem uma de 24980×24900). Então aqui entram as
-## cenas PROVADAS e as outras 134 seguem inertes, exatamente como já estavam.
+## 🟡 **Lista DECLARADA, e curta de propósito.** Medi que existem **135 gatilhos `sce 5` em 58
+## salas** (varredura com `executar(0)` nas 169); ligar todos faria o port rodar funções cujos
+## opcodes ainda não têm semântica (§7 do doc) e prenderia o jogador numa cena que talvez nunca
+## termine — algumas dessas caixas cobrem a sala inteira (`R30E` tem uma de 24980×24900). Então
+## aqui entram as cenas MEDIDAS e as demais seguem inertes, exatamente como já estavam.
+##
+## ── `R10D` (`docs/decomp/notes/cena_r10d.md`) ──
+## ENTRADA = **função 7** (`04 ff 19 07` na função 5 do init) · SAÍDA = **função 11** (payload do
+## AOT `sce 5`), e é ela que dispara a porta pelo `0x66`.
+##
+## ── `R101` (`docs/decomp/notes/cena_r101.md`) — a cena que o dono pediu ──
+## ENTRADA = **função 3**, e é o **único** `0x04` que o init do `R101` executa numa partida nova
+## (medido: `vm.threads_pedidas == [{slot 255, func 3}]`). O `04 ff 19 03` está em
+## `func 0 @+0x0246`, dentro do `if` de `4c 03 0b 00` — "a flag 0x0b do banco 3 **ainda não** está
+## acesa" — e o **primeiro ato da própria função 3** é `4d 03 0b 01`, que acende essa flag. Isto é:
+## **a cena de entrada do `R101` roda uma vez só, na primeira visita**, e o port herda isso de
+## graça porque o `executar(0)` avalia o `0x4c` de verdade. Os dois gatilhos `sce 5` do `R101`
+## (AOT 11 → função 12, AOT 12 → função 15, ambos `nFloor = 1`) ficam **desligados**: nenhum dos
+## dois troca de sala (o `0x66` da função 15 aponta para o AOT 7, que é `sce 2`, não porta) e a
+## função 12 usa `0x81` com rotinas não decodificadas.
 const CENAS_LIGADAS := {
 	"R10D": {"entrada": 7, "gatilhos": [11]},
+	"R101": {"entrada": 3, "gatilhos": [], "chegada_nivel": 2},
 }
 ## Rede de segurança: 4000 quadros a 30 Hz ≈ 2 min 13 s. A cena de saída do `R10D` mede 834
 ## quadros e a de entrada 260, então isto só age se uma thread ficar presa num `while` esperando
@@ -253,14 +271,33 @@ func _degraus_da_sala() -> Array[Dictionary]:
 
 
 func _abrir_cena_de_entrada() -> void:
-	## A cena de ENTRADA não tem gatilho: o INIT da sala a abre como thread. Prova, opcode por
-	## opcode (`cena_r10d.md` §2): `func 0` faz `19 02` → `func 2` faz `19 05` → `func 5` começa
-	## com **`04 ff 19 07`** = `evt_exec(slot 0xff, função 7)`. O port não roda `0x04` no modo de
-	## CARGA (só a `Cena` abre thread), então quem sabe disso é a tabela `CENAS_LIGADAS`.
+	## A cena de ENTRADA não tem gatilho: o INIT da sala a abre como thread (`0x04 evt_exec`).
+	##
+	## ⭐ **Quem descobre a cena é o init, não esta tabela.** O `executar(0)` agora REGISTRA cada
+	## `0x04` que executou em `vm.threads_pedidas` (`vm.gd`), e essa lista já passou pelos `if` de
+	## flag do script — logo ela é a resposta certa **para esta partida**. Exemplos medidos:
+	##   • `R10D`: `func 0` → `19 02` → `func 2` → `19 05` → `func 5` → **`04 ff 19 07`** (+ a
+	##     thread de ambiente `04 05 19 29`, função 41, que a tabela não autoriza);
+	##   • `R101`: um único `04 ff 19 03` (**função 3**), e só na primeira visita, porque o `if` que
+	##     o cerca é `4c 03 0b 00` = "a flag 3/0x0b ainda não subiu" e a própria função 3 a acende.
+	## A tabela `CENAS_LIGADAS` continua sendo o FREIO: só roda o que está medido.
+	if vm == null:
+		return
 	var e: Dictionary = CENAS_LIGADAS.get(room.room_id, {})
-	var fid := int(e.get("entrada", -1))
-	if fid >= 0:
-		_abrir_cena(fid, "thread do init (func 5: `04 ff 19 07`)")
+	var autorizada := int(e.get("entrada", -1))
+	for p: Dictionary in vm.threads_pedidas:
+		var fid := int(p["func"])
+		if fid != autorizada:
+			print("[world] %s: o init pediu a thread da função %d (slot %d) — NÃO ligada" % [
+				room.room_id, fid, int(p["slot"])])
+			continue
+		_abrir_cena(fid, "thread do init (`04 %02x 19 %02x`)" % [int(p["slot"]), fid])
+		return
+	if autorizada >= 0:
+		## A cena está na tabela mas o init NÃO a pediu: é o caso normal de revisita (a flag de
+		## "já rodou" está acesa). Não é erro — é o jogo.
+		print("[world] %s: cena de entrada (função %d) não foi pedida pelo init nesta partida" % [
+			room.room_id, autorizada])
 
 
 ## `nFloor = 0x80` no `+4` do AOT: "qualquer andar" (ver `Aot.floor_id`).
@@ -320,9 +357,11 @@ func _abrir_cena(func_id: int, motivo: String) -> bool:
 	if not c.iniciar(vm, func_id, state):
 		push_warning("World: cena %s função %d não iniciou" % [room.room_id, func_id])
 		return false
-	## Quem ANDA é o `player.gd` (estado CENA): a `Cena` só simula o deslocamento do `0x81`
-	## quando ninguém chama `chegou()` — ver `Cena.VELOCIDADE_DECLARADA`.
-	c.simular_movimento = false
+	## Quem ANDA com o CORPO DO PLAYER é o `player.gd` (estado CENA) e é ele que chama
+	## `chegou(bit)`. Os outros works (as entidades da rua) continuam com a `Cena`, que simula o
+	## `0x81` com a `VELOCIDADE_DECLARADA` — sem isso a função 3 do `R101` fica presa no
+	## `while (não flag(4,1))` que espera a ENTIDADE chegar (ver `Cena.atores_externos`).
+	c.atores_externos = {Player.CENA_WORK_PLAYER: true}
 	c.por_ator(1, 0, player.pos, player.facing)
 	cena = c
 	cena_func = func_id
@@ -423,7 +462,7 @@ func aplicar_chegada(porta: Aot) -> void:
 		# Para o jogo não travar sem inventar coordenada, o port EMPRESTA a chegada de outra
 		# porta que entra na MESMA sala: é um ponto **medido** (está em `data/room_graph.json`,
 		# gerado do SCD), só não é o desta porta. Fica registrado em `cena_debitos`.
-		emp = _chegada_emprestada(porta.to_room_id())
+		emp = _chegada_emprestada(porta.to_room_id(), _nivel_da_cena_de_entrada(porta.to_room_id()))
 		if emp.is_empty():
 			player.pos = _desencravar(player.pos)
 		else:
@@ -458,10 +497,30 @@ func aplicar_chegada(porta: Aot) -> void:
 static var _grafo: Variant = null
 
 
-static func _chegada_emprestada(destino: String) -> Dictionary:
-	## Chegada MEDIDA de outra porta que entra em `destino` — a de menor sala de origem, para ser
-	## determinístico. 🟡 **DECLARADA como substituta**: é um ponto que o jogo comprovadamente usa
-	## para entrar nessa sala, mas **não é** a chegada da porta roteirizada (que vem `(0,0,0)`).
+static func _nivel_da_cena_de_entrada(destino: String) -> int:
+	## Nível de piso que a cena de ENTRADA do destino declara para o player, ou `-1`.
+	##
+	## ⭐ É a evidência nova que estreita a chegada zerada do `R10D → R101`. A função 3 do `R101`
+	## faz, no player (`47 01 00`), **`40 0f 02 00`** (+0x005c) = membro `0x0f` = `player+0x09` = 2,
+	## e `+0x09` é o NÍVEL DO PISO (o mesmo byte que o `world.tick` usa como grupo do RVD:
+	## `gs+0x2495` = `0x800CCBCD` = `player+0x09`). Nível 2 ⇒ **y = −3600**. A cena não escreve X/Z
+	## em momento nenhum (varri: nenhum `0x40`/`0x41` nos membros `0x09`/`0x0b` do work `1:0` nas 19
+	## funções do `R101`), então a POSIÇÃO continua vindo da porta — mas o ANDAR passa a ser medido.
+	var e: Dictionary = CENAS_LIGADAS.get(destino, {})
+	return int(e.get("chegada_nivel", -1))
+
+
+static func _chegada_emprestada(destino: String, nivel := -1) -> Dictionary:
+	## Chegada MEDIDA de outra porta que entra em `destino`.
+	## 🟡 **DECLARADA como substituta**: é um ponto que o jogo comprovadamente usa para entrar
+	## nessa sala, mas **não é** a chegada da porta roteirizada (que vem `(0,0,0)`).
+	##
+	## Ordem de escolha: (1) as que caem no ANDAR que a cena de entrada declara (`nivel`, ver
+	## `_nivel_da_cena_de_entrada`); (2) entre as que sobram, a de menor sala de origem, para ser
+	## determinístico. O critério de andar **corrige o empréstimo do `R101`**: por ordem alfabética
+	## saía a chegada do `R100`, `(-18808, -7200, -11475)` = **nível 4**, a ~16 mil unidades de onde
+	## a coreografia da cena começa; com o andar 2 sai a do `R102`, `(-4434, -3600, -27933)`, que é
+	## a mesma vizinhança do primeiro `0x81` do player na cena (`(-8630, -27690)`).
 	## Devolve `{}` quando não há de quem emprestar.
 	if destino == "":
 		return {}
@@ -486,8 +545,16 @@ static func _chegada_emprestada(destino: String) -> Dictionary:
 			"cam": int(E.get("to_camera", 0))})
 	if candidatas.is_empty():
 		return {}
-	candidatas.sort_custom(func(x: Dictionary, y: Dictionary) -> bool:
-		return str(x["src"]) < str(y["src"]))
+	if nivel >= 0:
+		var y := -nivel * Collision.ALTURA_POR_NIVEL
+		var no_andar: Array[Dictionary] = []
+		for c: Dictionary in candidatas:
+			if (c["pos"] as Vector3i).y == y:
+				no_andar.append(c)
+		if not no_andar.is_empty():
+			candidatas = no_andar
+	candidatas.sort_custom(func(x: Dictionary, y2: Dictionary) -> bool:
+		return str(x["src"]) < str(y2["src"]))
 	return candidatas[0]
 
 

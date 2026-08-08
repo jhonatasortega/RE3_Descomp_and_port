@@ -121,6 +121,11 @@ var spawns: Array[Spawn] = []
 ## Disparos de som do script (P2-08): {op, id, loop, extra}. A fila real do motor é
 ## 32×10B (`0x800de648` loop / `0x800de798` one-shot); aqui guarda-se o disparo.
 var sons: Array[Dictionary] = []
+## THREADS que o script PEDIU nesta execução (`0x03`/`0x04 evt_exec`): `{slot, func}`, na ordem.
+## No motor cada pedido vira uma tarefa de script (`0x80052478`); na CARGA o port só registra —
+## é a lista que `World._abrir_cena_de_entrada()` consulta para saber qual é a cena de entrada
+## desta sala **nesta** partida (a lista já passou pelos `if`/`0x4c` de flag do init).
+var threads_pedidas: Array[Dictionary] = []
 var flags_lidos := 0
 var flags_escritos := 0
 var desvios := 0
@@ -328,15 +333,31 @@ func passo() -> void:
 				pc += 2
 
 		0x4C:                             # CHECK flag: gateia o IF
-			# byte1 = banco · u16@+2 = bit, com o BYTE ALTO = negação
-			# (`0x800546cc`: retorna ((word & mask) != 0) XOR negação, IP += 4)
+			# ⚠ **CORREÇÃO 2026-08-08 — a POLARIDADE estava invertida.** O handler é
+			# `0x800546cc` e o desmontado não deixa margem:
+			#
+			#     lhu  $a1, 2($v0)      ; a1 = u16@+2
+			#     andi $a2, $a1, 0x1f   ; bit dentro da palavra
+			#     sra  $a1, $a1, 8      ; a1 = BYTE ALTO
+			#     sltiu $a1, $a1, 1     ; a1 = (byte alto == 0)
+			#     sltu $v0, $zero, $v0  ; v0 = (palavra & mask) != 0
+			#     jr   $ra
+			#     xor  $v0, $v0, $a1    ; resultado = flag XOR (byte alto == 0)
+			#
+			# Isto é: **byte alto 0 ⇒ a condição é NEGADA** (`4c 07 1f 00` = "o item de bit
+			# 0x1f AINDA NÃO foi pego"), e byte alto != 0 ⇒ condição direta. O port fazia o
+			# contrário, o que invertia TODO `if` de flag de todo init de sala. Era o que
+			# esconde a cena de entrada do `R101` (`4c 03 0b 00` = "a cena ainda NÃO rodou").
+			# O `_avaliar_condicao()` do `while` já estava certo — as duas concordam agora.
+			#
+			# O dispatch confirma o resto: `0x80052c78` re-despacha em retorno 1, e em retorno
+			# **0** (`0x80052ca4`) desempilha `obj+0x140` e escreve o alvo no PC = o `else`.
 			var bank := u8(pc + 1)
-			var operando := u16(pc + 2)
-			var bit := operando & 0xFF
-			var negar := (operando >> 8) != 0
+			var bit := u8(pc + 2)
+			var alto := u8(pc + 3)
 			var ligado := state.flag_get(bank, bit) if state != null else false
 			flags_lidos += 1
-			if (ligado != negar):
+			if ligado != (alto == 0):
 				pc += 4                   # condição verdadeira: entra no bloco
 			else:
 				_falhar_condicao()        # falsa: pula para o alvo empilhado pelo if_begin
@@ -357,6 +378,16 @@ func passo() -> void:
 
 		0x63, 0x64:                       # sce_aot_set (AABB) / sce_aot_set_4p (quad)
 			_registrar_aot(op)
+			pc += size_of(op)
+
+		0x03, 0x04:                       # evt_exec: o init PEDE uma thread — só REGISTRA
+			# `0x80052e78` / `0x80052ea4`: `slot = byte@+1` (0xff = qualquer livre 2..9) e
+			# `função = byte@+3`. No modo de CARGA o port não abre thread nenhuma (quem abre é a
+			# `Cena`), mas REGISTRAR o pedido é o que torna a cena de entrada DESCOBERTA em vez
+			# de adivinhada: `World._abrir_cena_de_entrada()` lê esta lista, que já passou pelos
+			# `if`/`0x4c` do init — logo ela contém a cena de PRIMEIRA VISITA e mais nada.
+			# O PC anda os mesmos 4 bytes de antes (nada de comportamento novo).
+			threads_pedidas.append({"slot": u8(pc + 1), "func": u8(pc + 3)})
 			pc += size_of(op)
 
 		0x65:                             # aot_reset: desativa o AOT de mesmo id

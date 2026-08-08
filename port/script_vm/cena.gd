@@ -121,6 +121,19 @@ var fade_ativo: Dictionary = {}
 var eventos: Array[Dictionary] = []    ## linha do tempo: {quadro, tipo, ...}
 var troca_de_sala: Dictionary = {}     ## pedido de porta do `0x66` (vazio = nenhum)
 var simular_movimento := true          ## ver `VELOCIDADE_DECLARADA`
+## Works que alguém de FORA dirige — o `world.gd` põe `"1:0"` aqui, porque quem anda com o corpo
+## do player é o `player.gd` e é ele que chama `chegou(bit)`.
+##
+## ⚠ **Achado de 2026-08-08, e ele custou a cena de entrada do `R101`.** Antes isto era um único
+## `simular_movimento = false`, que desligava a simulação de **todos** os atores. No `R10D` isso
+## passou porque nenhuma thread espera o bit de uma entidade; no `R101` a função 3 faz
+## `47 03 00` (work da ENTIDADE 0) · `81 00 09 01 …` · `10 04 08 00` / `4c 04 01 00` — um
+## `while (não flag(4,1))` esperando a **entidade** chegar. Sem ninguém para andar com ela, a
+## thread ficava presa e a cinemática só terminava pela rede de segurança dos 4000 quadros
+## (medido: `cena função 3 abandonada em 4000 quadros`). O port não tem ator de entidade, então a
+## `Cena` continua sendo quem move os works que **não** estão nesta lista — com a
+## `VELOCIDADE_DECLARADA`, que já era declarada.
+var atores_externos: Dictionary = {}
 var max_quadros := 20000               ## rede de segurança
 
 
@@ -423,6 +436,8 @@ func chegou(bit: int) -> void:
 
 func _andar_atores() -> void:
 	for k: String in atores:
+		if atores_externos.has(k):
+			continue                          ## quem dirige este ator é o `player.gd`
 		var a: Dictionary = atores[k]
 		if not bool(a.get("indo", false)):
 			continue
