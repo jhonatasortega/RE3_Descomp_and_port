@@ -601,9 +601,14 @@ func _tick_degrau(pad: Pad) -> void:
 			_degrau_de.y + (_degrau_para.y - _degrau_de.y) * _degrau_q / DEGRAU_QUADROS,
 			_degrau_de.z + (_degrau_para.z - _degrau_de.z) * _degrau_q / DEGRAU_QUADROS)
 	if subir.sfx_pendente != 0 and sfx != null:
-		## `0x8003b224` (SFX_INICIO) e `0x8003b3e8` (SFX_IMPACTO) — os dois ids são medidos, mas o
-		## de-para id -> banco do port ainda não cobre esses dois: fica registrado, sem tocar nada.
-		pass
+		## Os dois ids são MEDIDOS: `0x8003b224` = início da subida (`SubirObjeto.SFX_INICIO`) e
+		## `0x8003b3e8` = impacto do pé no topo (`SFX_IMPACTO`, quando `player+0xc9 == 1`). O `Sfx`
+		## já resolve o banco dos dois (varredura dos 155 pedidos de SE — ver
+		## `docs/decomp/notes/exe_audio.md` §12), então aqui é só dizer QUANDO.
+		if subir.sfx_pendente == SubirObjeto.SFX_IMPACTO:
+			sfx.subir_impacto()
+		else:
+			sfx.subir()
 	frame_da_acao += 1
 	if not subir.ativo:
 		pos = _degrau_para
