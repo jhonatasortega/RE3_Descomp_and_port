@@ -158,9 +158,92 @@ func carregar(room_id: String, com_cena := true) -> bool:
 	for bit in GameState.BITS_PER_BANK:
 		state.flag_set(Cena.BANCO_RASCUNHO, bit, false)
 	_fechar_cena(false)
+	player.degraus = _degraus_da_sala()
+	if player.degraus.size() > 0:
+		print("[world] %s: %d degrau(s) de subir/descer na colisão" % [
+			room_id, player.degraus.size()])
 	if com_cena:
 		_abrir_cena_de_entrada()
 	return true
+
+
+# ═══════════════ DEGRAUS: subir/descer é AÇÃO DO JOGADOR, e sai da COLISÃO ═══════════════
+#
+# ⚠ **Isto CORRIGE a conclusão de `port/script_vm/subir.gd` §5 e de `cena_r10d.md` §6** no que
+# importa para o jogador. As duas afirmações continuam verdadeiras — *nenhum objeto `0x7f` do
+# `R10D` é escalável* (os 3 têm `be_flg = 0x6001`, e **medi que nada mexe nisso em runtime**: são
+# declarados UMA vez na função 4 e nenhuma das 49 funções escreve o membro `0x00` de um work que
+# não seja o player) — mas **a conclusão que se tirou delas estava errada**: o que a Jill escala
+# no `R10D` **não é um objeto de script, é a GEOMETRIA DE COLISÃO**, e por isso o agregador de
+# `om` (`0x80036570`) nunca ia achá-la.
+#
+# O que o dado diz (medido em `port/dev/_tmp_r10d*.gd`, ver `cena_r10d.md` §10):
+#
+#   #7  forma 7  x[-6368..-4129] z[-15823..-10197]  base_y=0      topo=-1800  nível 0
+#   #9  forma 8  x[-4128..-3328] z[-15823..-10197]  base_y=-1800  topo=-3600  nível 1
+#   #8  forma 8  x[-7169..-6369] z[-15859..-10233]  base_y=-1800  topo=-3600  nível 1
+#
+# Os três se encaixam sem folga (`-7169..-6369 | -6368..-4129 | -4128..-3328`) e atravessam a
+# viela INTEIRA em Z. Consequências, todas verificadas com o resolver do port:
+#   • `#7` é uma PLATAFORMA de um nível (`topo == base_y - 1800`) e o `floor_height` do port já
+#     devolve `-1800` dentro dela: o TOPO dela é piso do nível 1;
+#   • a faixa de nível (`+0x0C..+0x0D`, ARD.md §3.8.1) faz `#7` colidir **só com quem está no
+#     nível 0** — quem está em cima anda por ela;
+#   • **a viela está SELADA no nível 0**: BFS na régua do resolver, do spawn e da posição da
+#     captura do dono, alcança 2265 nós e **NÃO chega** na caixa do gatilho `sce 5`;
+#   • as duas `forma 8` são os FLANCOS, ativas só no nível 1, e a de OESTE (`x[-7169..-6369]`)
+#     cai **dentro** da caixa do gatilho (`x[-8585..-5285] z[-15000..-11300]`).
+#
+# ➜ O único caminho é **subir no nível 0 pelo flanco leste, atravessar o topo e DESCER no flanco
+#   oeste — e a descida cai dentro da caixa**, que é exatamente o que o dono descreve.
+#
+# 🟡 **HIPÓTESE (não provada no EXE), com a evidência que a sustenta:** a assinatura
+# "plataforma de um nível + registro `forma 8` encostado no nível de cima" é o marcador de
+# degrau escalável. `forma 8` **nunca colide no predicado** (`0x8004f02c`: `jr $ra; move
+# $v0,$zero`) e **não dá piso** (`floor_height` não a trata), mas responde no resolver junto de
+# 1/5/7 (`0x8004c960`) — ou seja é um bloco que existe só para o MOVIMENTO. São **25 registros
+# `forma 8` no jogo, todos com `bits = 0xfe48`**, e a assinatura completa aparece em **28
+# registros / 14 salas** (contra 224 plataformas de um nível em 69 salas): `R10D`, `R101`/`R601`,
+# `R106`/`R121`/`R621`, `R108`/`R122`/`R622`, `R20B`/`R70B`, `R40D`, **`R504`** e **`R510`** — e
+# `R510 → R504` é justamente a porta que `door_handler.md` rotulou *one_way_fall, spawn
+# scripted*. O que NÃO medi: o sítio do EXE que liga a rotina 9 por colisão (o caminho por `om`
+# está provado em `subir.gd` §2 e não é este).
+
+
+func _degraus_da_sala() -> Array[Dictionary]:
+	## Degraus da sala corrente: `{caixa, y_topo, y_base}` em unidades PS1.
+	var saida: Array[Dictionary] = []
+	if room == null or room.colisao == null:
+		return saida
+	var f8: Array[Collision.Rect] = []
+	for r: Collision.Rect in room.colisao.rects:
+		if r.forma == 8:
+			f8.append(r)
+	if f8.is_empty():
+		return saida
+	for r: Collision.Rect in room.colisao.rects:
+		if r.topo != r.base_y - Collision.ALTURA_POR_NIVEL:
+			continue                          ## não é plataforma de UM nível
+		if r.forma != 1 and r.forma != 7 and r.forma != 5:
+			continue
+		if r.forma == 1 and (r.mask & 0x0F00) != 0:
+			continue                          ## parede com arestas: o topo não é piso
+		var tem := false
+		for q: Collision.Rect in f8:
+			if q.base_y != r.topo:
+				continue                      ## o flanco tem de estar no nível de CIMA
+			var toca_x := absi(q.x1 - r.x0) <= 5 or absi(q.x0 - r.x1) <= 5
+			var toca_z := absi(q.z1 - r.z0) <= 5 or absi(q.z0 - r.z1) <= 5
+			var sobre_x := mini(q.x1, r.x1) - maxi(q.x0, r.x0) > 0
+			var sobre_z := mini(q.z1, r.z1) - maxi(q.z0, r.z0) > 0
+			if (toca_x and sobre_z) or (toca_z and sobre_x):
+				tem = true
+				break
+		if not tem:
+			continue
+		saida.append({"caixa": Rect2i(r.x0, r.z0, r.x1 - r.x0, r.z1 - r.z0),
+			"y_topo": r.topo, "y_base": r.base_y})
+	return saida
 
 
 # ═════════════════════════ as três linhas da §6.2 de cena_r10d.md ═════════════════════════
@@ -180,13 +263,34 @@ func _abrir_cena_de_entrada() -> void:
 		_abrir_cena(fid, "thread do init (func 5: `04 ff 19 07`)")
 
 
+## `nFloor = 0x80` no `+4` do AOT: "qualquer andar" (ver `Aot.floor_id`).
+const ANDAR_QUALQUER := 0x80
+
+
+func _gatilho_no_andar() -> Aot:
+	## O gatilho `sce 5` que contém o personagem **E vale no andar dele**.
+	##
+	## ⭐ O `nFloor` (`+4` do `0x63`) é o ANDAR EXIGIDO, e o port o ignorava. No `R10D` ele é
+	## **0** (`63 01 05 41 00 00 …`), isto é **só no nível 0** — e é isso que fecha o relato do
+	## dono: andando EM CIMA da plataforma (nível 1) a caixa não dispara; ela dispara quando a
+	## Jill **DESCE** no flanco oeste, que cai dentro dela. Sem este filtro a cena abria antes,
+	## com o corpo ainda no telhado do obstáculo (medido: disparava em `x = -5300, y = -1800`).
+	for a: Aot in vm.aots_de_sce(Aot.SCE_EVENTO):
+		if not a.contem(player.pos.x, player.pos.z):
+			continue
+		if a.floor_id != ANDAR_QUALQUER and a.floor_id != player.nivel():
+			continue
+		return a
+	return null
+
+
 func _procurar_gatilho_de_cena() -> void:
 	## Um quadro de busca de gatilho: primeiro AOT `sce 5` ATIVO que contém o personagem. O
 	## handler `0x800512bc` só faz `evt_exec` com o payload — "pisar na caixa" **é** "abrir a
 	## thread" (`Aot.evento_func()`).
 	if vm == null or room == null:
 		return
-	var g := Cena.gatilho_de_evento(vm, player.pos.x, player.pos.z)
+	var g := _gatilho_no_andar()
 	if g == null:
 		_ancora_cena = null
 		return
@@ -568,7 +672,9 @@ func tick(pad: Pad) -> void:
 	# O Y NÃO é integrado: é rederivado do piso todo frame (`0x80033b88` → `floor_height`
 	# `0x8004d720` → grava em `entity+0x38`). É o que faz descer escada/rampa — sem isto a
 	# Jill descia flutuando no Y do andar de cima (relato do usuário).
-	if room.colisao != null:
+	# ⚠ EXCEÇÃO: durante a rotina 9 (subir/descer degrau) quem manda no Y é a própria ação — o
+	# corpo está NO AR entre dois níveis e o piso puxaria de volta a cada quadro.
+	if room.colisao != null and not player.subindo():
 		player.pos.y = room.colisao.floor_height(player.pos.x, player.pos.z, player.pos.y)
 	# O "grupo" das zonas RVD (`gs+0x2495`) é o NÍVEL DO PISO do player: `gs+0x2495` =
 	# `0x800CCBCD` = player`+0x09`, que o passe de piso grava com `-Y/1800` todo frame. O byte

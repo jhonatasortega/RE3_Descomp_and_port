@@ -41,7 +41,7 @@ const GIRO_POR_FRAME := 39
 ## Quick-turn do RE clássico: 180° em ~0,25 s = ~8 ticks -> 2048/8 = 256 unidades por tick
 const QUICKTURN_POR_FRAME := 256
 
-enum Acao { PARADO, ANDANDO, CORRENDO, RE, GIRANDO, QUICKTURN, MIRANDO, CENA }
+enum Acao { PARADO, ANDANDO, CORRENDO, RE, GIRANDO, QUICKTURN, MIRANDO, CENA, SUBINDO }
 
 var pos := Vector3i.ZERO                  ## unidades PS1 (y = chão)
 var facing := 0                           ## ângulo PS1 de 12 bits
@@ -212,6 +212,10 @@ func tick(pad: Pad) -> void:
 			_tick_cena()
 			return
 		sair_da_cena()
+	# ── ROTINA 9 (subir/descer degrau) em curso: ela dirige o corpo, o pad só a mantém ──
+	if subir.ativo:
+		_tick_degrau(pad)
+		return
 	var frente := pad.pressed(Pad.FWD)
 	var re := pad.pressed(Pad.BACK)
 	var correr := pad.pressed(Pad.RUN)
@@ -299,6 +303,8 @@ func tick(pad: Pad) -> void:
 		# pode exceder o teto e congelar.
 		_mover(0, 0)
 
+	# É aqui que r1/r2 decidem entrar na rotina 9 (`0x800397c0`: `player+4 = 0x901`).
+	_detectar_degrau(frente or re)
 	frame_da_acao += 1
 
 
@@ -490,6 +496,128 @@ func _andar_na_cena() -> void:
 	pos.z += dz * VEL_ANDAR / d
 
 
+# ══════════ DEGRAU — SUBIR e DESCER são AÇÕES DO JOGADOR (a rotina 9 de verdade) ══════════
+#
+# O dono está certo, e a conclusão de `subir.gd` §5 ("não existe subir no R10D") vinha de olhar
+# no lugar errado: o que se escala ali **não é objeto `0x7f`, é a GEOMETRIA DE COLISÃO** — uma
+# plataforma de um nível com um registro `forma 8` encostado no nível de cima. A dedução, os
+# endereços e os números estão em `World._degraus_da_sala()` e em `cena_r10d.md` §10. E é a
+# **DESCIDA no flanco oeste que cai dentro da caixa do AOT `sce 5`** — ou seja é ela que dispara
+# a cutscene de saída, exatamente como o dono descreveu.
+#
+# O que é PROVADO aqui: a máquina de estados e as animações são as da rotina 9
+# (`port/script_vm/subir.gd`: `0x8003b244`, tabela de 8 subestados `0x800107d0`, **SEQ 6** em
+# `0x8003b39c` e **SEQ 7** em `0x8003b3c4`) e os 6 quadros de contato (`0x800365c8`).
+# 🟡 O que é DECLARADO: (a) o gatilho — o sítio do EXE que liga a rotina 9 a partir da COLISÃO
+# não foi achado (o caminho por `om` está provado e não é este), então aqui o gatilho é
+# geométrico: 6 quadros andando com a sonda de ação (620 un) sobre o degrau; (b) a TRANSLAÇÃO —
+# o motor move o corpo pelo root motion da pose, e o port interpola em linha reta do pé ao
+# destino ao longo dos subestados de movimento.
+## Meia-passada além da sonda: é o quanto o corpo entra no topo do degrau. Declarado.
+const DEGRAU_ENTRADA := 300
+
+## Degraus da sala corrente (`{caixa: Rect2i, y_topo: int, y_base: int}`), postos pelo `world.gd`.
+var degraus: Array[Dictionary] = []
+## A máquina de estados da rotina 9 (arquivo de outro agente, usado sem alterar).
+var subir := SubirObjeto.new()
+var _degrau: Dictionary = {}
+var _degrau_descendo := false
+var _degrau_de := Vector3i.ZERO
+var _degrau_para := Vector3i.ZERO
+var _degrau_contato := 0
+var _degrau_q := 0
+signal subiu(de: Vector3i, para: Vector3i, descendo: bool)
+
+
+func subindo() -> bool:
+	## O `world.gd` consulta isto para NÃO rederivar o Y do piso durante a subida.
+	return subir.ativo
+
+
+static func _em_caixa(c: Rect2i, x: int, z: int) -> bool:
+	return x >= c.position.x and x <= c.position.x + c.size.x \
+		and z >= c.position.y and z <= c.position.y + c.size.y
+
+
+func _detectar_degrau(andando: bool) -> void:
+	## O detector (`0x80036c60` + `0x80036570`): 6 quadros de contato **andando** e com a sonda
+	## de ação sobre o degrau. Fora disso a contagem zera, como no motor (`0x80036ca0`).
+	if subir.ativo or degraus.is_empty() or not andando or acao == Acao.MIRANDO:
+		_degrau_contato = 0
+		_degrau = {}
+		return
+	var s := ScriptVM.sonda_de(pos, facing)
+	var achado: Dictionary = {}
+	var descendo := false
+	for g: Dictionary in degraus:
+		var c: Rect2i = g["caixa"]
+		var corpo_dentro := _em_caixa(c, pos.x, pos.z)
+		var sonda_dentro := _em_caixa(c, s.x, s.y)
+		if not corpo_dentro and sonda_dentro and pos.y == int(g["y_base"]):
+			achado = g                       ## SUBIR: no chão, de frente para a plataforma
+			descendo = false
+			break
+		if corpo_dentro and not sonda_dentro and pos.y == int(g["y_topo"]):
+			achado = g                       ## DESCER: em cima, de frente para fora
+			descendo = true
+			break
+	if achado.is_empty():
+		_degrau_contato = 0
+		_degrau = {}
+		return
+	if not _degrau.is_empty() and achado != _degrau:
+		_degrau_contato = 0
+	_degrau = achado
+	_degrau_descendo = descendo
+	_degrau_contato += 1
+	if _degrau_contato < SubirObjeto.FRAMES_CONTATO:
+		return
+	# `0x800397c4`: `player+4 = 0x901` — entra na rotina 9.
+	_degrau_contato = 0
+	_degrau_de = pos
+	var y_dest: int = int(_degrau["y_base"]) if descendo else int(_degrau["y_topo"])
+	var alvo := ScriptVM.sonda_de(pos, facing)
+	var frente := Vector2i((PS1Math.rsin(facing) * DEGRAU_ENTRADA) >> PS1Math.SHIFT,
+		(-PS1Math.rcos(facing) * DEGRAU_ENTRADA) >> PS1Math.SHIFT)
+	_degrau_para = Vector3i(alvo.x + frente.x, y_dest, alvo.y + frente.y)
+	_degrau_q = 0
+	subir.iniciar()
+	_set_acao(Acao.SUBINDO)
+
+
+## Quadros de MOVIMENTO da rotina 9: os subestados SUBINDO (SEQ 6, 10 quadros) e NO_TOPO
+## (SEQ 7, 25) — os números são os de `SubirObjeto.QUADROS_SUB`, medidos nos clipes.
+const DEGRAU_QUADROS := 35
+
+
+func _tick_degrau(pad: Pad) -> void:
+	if acao != Acao.SUBINDO:
+		_set_acao(Acao.SUBINDO)
+	var sub := subir.avancar(pad.pressed(Pad.FWD) or pad.pressed(Pad.BACK))
+	if sub >= SubirObjeto.Sub.INICIA_SUBIDA and sub <= SubirObjeto.Sub.TERMINANDO:
+		_degrau_q = mini(_degrau_q + 1, DEGRAU_QUADROS)
+		pos = Vector3i(
+			_degrau_de.x + (_degrau_para.x - _degrau_de.x) * _degrau_q / DEGRAU_QUADROS,
+			_degrau_de.y + (_degrau_para.y - _degrau_de.y) * _degrau_q / DEGRAU_QUADROS,
+			_degrau_de.z + (_degrau_para.z - _degrau_de.z) * _degrau_q / DEGRAU_QUADROS)
+	if subir.sfx_pendente != 0 and sfx != null:
+		## `0x8003b224` (SFX_INICIO) e `0x8003b3e8` (SFX_IMPACTO) — os dois ids são medidos, mas o
+		## de-para id -> banco do port ainda não cobre esses dois: fica registrado, sem tocar nada.
+		pass
+	frame_da_acao += 1
+	if not subir.ativo:
+		pos = _degrau_para
+		_degrau = {}
+		_degrau_q = 0
+		subiu.emit(_degrau_de, _degrau_para, _degrau_descendo)
+		_set_acao(Acao.PARADO)
+
+
+func clipe_do_degrau() -> String:
+	var c := subir.clipe()
+	return c if c != "" else "arm00"
+
+
 func clipe_da_cena() -> String:
 	## Clipe do quadro corrente de cinemática. Ver `CENA_CLIPE_FMT` para o que é declarado aqui.
 	if cena_bit >= 0:
@@ -548,6 +676,9 @@ func clipe_atual() -> String:
 		Acao.CENA:
 			## AÇÃO 4: quem escolhe o clipe é o script (`0x80` -> `player+0xc8`).
 			return clipe_da_cena()
+		Acao.SUBINDO:
+			## ROTINA 9: SEQ 6 -> SEQ 7 (`anim06`/`anim07`), o par provado em `subir.gd`.
+			return clipe_do_degrau()
 		Acao.ANDANDO:
 			return "arm00"
 		Acao.CORRENDO:

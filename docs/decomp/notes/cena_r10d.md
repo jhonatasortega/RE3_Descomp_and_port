@@ -30,8 +30,8 @@
 | é FMV? | **não** — `R10D` não tem opcode `0x7a` (49 funções varridas) | `boot_ptbr_hd.md` §7.2 |
 | existe `R10D_2`? | **não**; e não precisa: as duas cenas moram no mesmo SCD | §2 |
 | como se sai da sala? | a função 11 dispara a porta **pelo opcode `0x66`** | §4 |
-| a Jill sobe na lixeira? | **sim, e é o script que faz** — `0x80` + translação manual | §6 |
-| existe objeto escalável no `R10D`? | **não**, e a conclusão de `subir.gd` continua certa | §6 |
+| a Jill sobe na lixeira? | **sim, e é AÇÃO DO JOGADOR** (§10 corrige a §6) — degrau de COLISÃO, rotina 9 | §10 |
+| existe objeto escalável (`0x7f`) no `R10D`? | **não** (nem em runtime, §10.1) — mas o degrau está na COLISÃO | §10 |
 
 ---
 
@@ -277,7 +277,8 @@ Os `cut_chg` e os `sleep` são **exatos** (saem do bytecode). Os instantes de CH
 
 ---
 
-## 6. O SUBIR — é coreografia da cena, e as duas conclusões anteriores estão certas
+## 6. O SUBIR — ⚠ **VER §10: a conclusão desta seção FOI CORRIGIDA** (subir/descer são
+AÇÕES DO JOGADOR, sobre a geometria de colisão; a medição dos `0x7f` continua certa)
 
 O dono insistiu que a Jill sobe na lixeira; `subir.gd` provou que **nenhum objeto do `R10D` é
 escalável** (os 3 `0x7f` têm `be_flg = 0x6001`: bit `0x4000` aceso e `0x100` apagado, reprovando
@@ -506,3 +507,145 @@ godot --headless --audio-driver Dummy --path port \
 
 No jogo: entre no `R10D` (é a sala inicial do `screen.gd`), veja a abertura devolver o controle na
 câmera 0 e ande para **oeste** até a caixa `x[-8585..-5285] z[-15000..-11300]`.
+
+---
+
+## 10. ⭐⭐ CORREÇÃO — o SUBIR é AÇÃO DO JOGADOR, e é a DESCIDA que abre a cena (2026-08-08)
+
+> **O dono estava certo e a §6 estava errada na conclusão.** Ele afirmou que **subir e descer da
+> lixeira são ações do jogador** e que **a descida aciona a cutscene**. Estava. O erro não foi de
+> medição — os números da §6 estão todos certos — foi de **inferência**: procurou-se o objeto
+> escalável entre os `0x7f` (objetos de script) e, não achando, concluiu-se que a subida só
+> existia roteirizada. **O que a Jill escala no `R10D` não é objeto de script: é a GEOMETRIA DE
+> COLISÃO.**
+
+### 10.1 A hipótese do flag de RUNTIME foi testada — e é NEGATIVA
+
+Antes de tudo, o que o coordenador levantou (o mesmo tipo de erro que já pegou a colisão: ler o
+valor de fábrica em vez do corrente). Medido:
+
+- os 3 `0x7f` do `R10D` são declarados **uma única vez**, na **função 4**, e sempre com
+  `be_flg = 0x6001` (varredura linear do bytecode das 49 funções);
+- `be_flg` em runtime: **`0x6001` depois do `executar(0)`**, **`0x6001` depois de rodar a cena de
+  entrada (função 7)** e **`0x6001` depois de rodar as 49 funções**;
+- **não existe opcode que reescreva o registro do `om`**: o candidato natural seria
+  `0x47 work_set` + `0x40 member_set` no membro `0x00` (= `entry+0`), e a varredura do `R10D`
+  mostra que **nenhum** `0x40` com work `!= 1` toca o membro `0x00` — os que existem são
+  membro `0x07` (`+0x46`) em works `3:n` e membro `0x0d` (ângulo) em `4:2`. As entradas da tabela
+  `0x80010b60` do `0x47` também não apontam para o pool de `om` (`gs+0x4328`).
+
+➜ A §5 de [`subir.gd`](../../../port/script_vm/subir.gd) continua **verdadeira**: nenhum objeto
+`0x7f` do `R10D` é escalável, nem de fábrica nem em runtime. O que caiu foi a conclusão tirada
+dela.
+
+### 10.2 O que a Jill escala: três registros de COLISÃO que se encaixam
+
+```
+#7  forma 7  x[-6368..-4129] z[-15823..-10197]  base_y=0      topo=-1800  nível 0
+#9  forma 8  x[-4128..-3328] z[-15823..-10197]  base_y=-1800  topo=-3600  nível 1
+#8  forma 8  x[-7169..-6369] z[-15859..-10233]  base_y=-1800  topo=-3600  nível 1
+```
+
+Os três se encaixam **sem folga** (`-7169..-6369 | -6368..-4129 | -4128..-3328`) e atravessam a
+viela inteira em Z. Somando o que já estava provado em `ARD.md`:
+
+- `#7` é uma **plataforma de um nível** (`topo == base_y − 1800`) e o `floor_height` do port já
+  devolve **−1800** dentro dela: o topo dela é piso do nível 1;
+- `+0x0C..+0x0D` é a faixa de níveis em que o registro colide (ARD.md §3.8.1) ⇒ `#7` só barra
+  quem está no **nível 0**; quem está em cima anda por ela;
+- **a viela está SELADA no nível 0**: BFS na régua do resolver do port, do spawn e da posição da
+  captura do dono, alcança **2265 nós e NÃO chega na caixa do gatilho**. Sem subir, `R10D` não tem
+  saída — era o bug de verdade;
+- as duas `forma 8` são os **flancos**, ativos só no nível 1, e a de **oeste** (`x[-7169..-6369]`)
+  cai **dentro da caixa do gatilho** (`x[-8585..-5285] z[-15000..-11300]`).
+
+➜ **Sobe no flanco leste, atravessa o topo, desce no flanco oeste — e a descida cai na caixa.**
+Exatamente o relato.
+
+### 10.3 ⭐ O `nFloor` do AOT — o campo que faltava, e é ele que faz "a DESCIDA acionar"
+
+`Aot.floor_id` (o `+4` do `0x63`, `0x80` = qualquer andar) **existia parseado e não era usado**.
+No gatilho do `R10D` ele é **0**:
+
+```
+63 01 05 41 00 00 | 77 de 68 c5 e4 0c 74 0e | ff 00 19 0b 00 00
+op aot sce sat  nFloor=0
+```
+
+Isto é: a caixa **só vale no nível 0**. Andando **em cima** da plataforma (nível 1) ela não
+dispara — medido: sem o filtro a cena abria em `x = -5300, y = -1800`, com a Jill ainda no telhado
+do obstáculo. Com o filtro (`World._gatilho_no_andar()`), a cena abre **no meio da descida**,
+quando o nível do piso volta a 0. É a frase do dono, verificada.
+
+### 10.4 🟡 O que é HIPÓTESE (e a evidência que a sustenta)
+
+**"Plataforma de um nível + registro `forma 8` encostado no nível de cima" = degrau escalável.**
+Não achei o sítio do EXE que liga a rotina 9 a partir da colisão (o caminho por `om` está provado
+em `subir.gd` §2 e **não** é este). O que sustenta:
+
+1. `forma 8` **nunca colide no predicado** (`0x8004f02c`: `jr $ra; move $v0,$zero`) e **não dá
+   piso** (`floor_height` não a trata), mas **responde no resolver** junto de 1/5/7
+   (`0x8004c960`) — é um bloco que existe só para o MOVIMENTO, e no nível de cima. Faz o papel de
+   guarda-corpo: impede sair andando do topo, obrigando a ação de descer;
+2. são **25 registros `forma 8` no jogo, todos com `bits = 0xfe48`**;
+3. a assinatura completa dá **28 registros em 14 salas** — contra **224 plataformas de um nível em
+   69 salas**, ou seja é raro: `R10D`, `R101`/`R601`, `R106`/`R121`/`R621`, `R108`/`R122`/`R622`,
+   `R20B`/`R70B`, `R40D`, **`R504`** e **`R510`** (os pares repetidos são a mesma sala em cenários
+   diferentes ⇒ **8 lugares distintos**);
+4. **`R510 → R504`** é justamente a porta que `door_handler.md` rotulou *one_way_fall, arrival
+   ZERADO (spawn scripted)* — cair de um nível para outro;
+5. a necessidade geométrica do `R10D` (§10.2) e o relato do dono.
+
+### 10.5 O que ficou ligado
+
+- **`World._degraus_da_sala()`**: extrai os degraus da colisão da sala na carga (2 no `R10D`,
+  4 no `R504`, 1 no `R510`, 0 no `R100`/`R102`);
+- **`World._gatilho_no_andar()`**: aplica o `nFloor` ao gatilho de cena;
+- **`Player`, ação `SUBINDO`**: usa a máquina de estados PROVADA da rotina 9
+  (`SubirObjeto`, 8 subestados de `0x800107d0`, **SEQ 6** `0x8003b39c` / **SEQ 7** `0x8003b3c4`,
+  6 quadros de contato `0x800365c8`), com dois pontos 🟡 **declarados**: o **gatilho** é
+  geométrico (6 quadros andando com a sonda de ação de 620 un sobre o degrau, porque o sítio do
+  EXE não foi achado) e a **translação** é interpolação linear do pé ao destino ao longo dos
+  subestados de movimento (o motor usa o root motion da pose);
+- o `world.gd` **não rederiva o Y do piso durante a rotina 9** (o corpo está entre dois níveis).
+
+### 10.6 A rota, medida no port, do começo ao fim
+
+```
+q   0  a cutscene de ENTRADA roda (260 quadros) e devolve o controle em (10416, 0, -14499)
+q 191  andando para OESTE, 6 quadros de contato -> rotina 9: SOBE (anim06 -> anim07)
+q 238  em cima da plataforma, nível 1, (-4598, -1800)
+q 258  seguindo a oeste, o flanco oeste -> rotina 9: DESCE
+q 266  o nível do piso volta a 0 DENTRO da caixa -> ★ cena de SAÍDA (função 11)
+q 900  o 0x66 dispara a porta -> R101
+```
+
+**Como jogar:** no `R10D`, deixe a abertura terminar e **ande para OESTE** (a esquerda da tela na
+câmera 0). Ela sobe na lixeira sozinha depois de ~6 quadros encostada, atravessa o topo, desce do
+outro lado e a cutscene de saída começa.
+
+### 10.7 Sobre "a cinemática de entrada não anima nada"
+
+Medido pelo caminho REAL (`game.tscn` → `Game.tick` → `Screen._on_tick`, com o `AnimationPlayer`
+lido a cada quadro): **anima**. `current_animation` vai `arm02` → **`anim20`** (quadro de script
+128, junto com 20 quadros de translação manual `+22`/`-98`) → **`anim05`** (quadro 182) → `arm02`
+ao devolver o controle. O que o dono viu tem duas causas, e nenhuma é o engate:
+
+1. **os 127 primeiros quadros de script (4,2 s) são de IDLE** — é o que a função 7 manda: as três
+   trocas de câmera (11 → 12 → 10) acontecem antes de qualquer `0x80`;
+2. **a Jill não está onde a cena foi autorada.** O `Screen.actor_ps1` é ponto **declarado** e as
+   duas animações rodam lá; a própria cena não escreve posição absoluta em nenhum momento
+   (varri: nenhum `0x40` no membro `0x09`/`0x0b` do work `1:0` em todo o `R10D`), e o `0x81` dela
+   vem com destino `(0,0)` (§9.3). ➜ **A posição inicial do `R10D` NÃO está no script da sala**;
+   ela vem de fora (candidato: `INIT_TBL.DAT` / o `door_handler` da entrada do jogo), e isso segue
+   **não medido**. O `ação 0 clipe arm02` que o dono leu no HUD é o estado **depois** da cena
+   (medido: é exatamente o que aparece no quadro seguinte ao fim dela).
+
+### 10.8 Em aberto depois deste round
+
+1. o **sítio do EXE** que liga a rotina 9 a partir da colisão (§10.4 é hipótese);
+2. a **posição inicial do `R10D`** (§10.7) — o spawn do port segue declarado;
+3. o `nFloor` só foi aplicado ao **gatilho de cena**; porta e item continuam sem o filtro (não
+   mexi para não arriscar as 453 travessias do `-- world`);
+4. os dois SFX da rotina 9 (`0x10200` em `0x8003b224` e `0x1022c` em `0x8003b3e8`) não tocam: o
+   de-para id → banco do port não cobre esses ids.

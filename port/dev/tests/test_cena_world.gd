@@ -207,6 +207,135 @@ func run(t) -> bool:
 				"pisar nele NÃO abre cena (função %d não medida)" % g.evento_func())
 
 	# ═══════════════════════════════════════════════════════════════════════════════════
+	t.group("6. o DEGRAU: subir e descer são AÇÕES DO JOGADOR, e é a descida que abre a cena")
+	# ═══════════════════════════════════════════════════════════════════════════════════
+	# ⚠ Isto corrige a conclusão que se tirou de `subir.gd` §5. O que a Jill escala no R10D não é
+	# objeto `0x7f` (nenhum é escalável, e MEDI que nada mexe no `be_flg` em runtime) — é a
+	# GEOMETRIA DE COLISÃO: a plataforma de um nível `x[-6368..-4129] z[-15823..-10197]`
+	# (`base_y=0 topo=-1800`) com os dois flancos `forma 8` no nível de cima. Ver
+	# `World._degraus_da_sala()` e `cena_r10d.md` §10.
+	var wd := _mundo()
+	t.eq(wd.player.degraus.size(), 2, "R10D declara 2 degraus (a plataforma vem em 2 registros)")
+	if wd.player.degraus.size() > 0:
+		var g0: Dictionary = wd.player.degraus[0]
+		t.eq(g0["caixa"], Rect2i(-6368, -15823, 2239, 5626), "a caixa do degrau é a medida")
+		t.eq(int(g0["y_base"]), 0, "base do degrau: nível 0")
+		t.eq(int(g0["y_topo"]), -1800, "topo do degrau: nível 1 (é o que o floor_height dá lá)")
+	# ── A VIELA ESTÁ SELADA NO NÍVEL 0: sem o degrau, andar para oeste PARA na plataforma ──
+	var wsem := _mundo()
+	while wsem.cena != null:
+		pad.set_mask(0)
+		wsem.tick(pad)
+	wsem.player.degraus = []                      ## desliga o degrau de propósito
+	wsem.player.pos = Vector3i(9404, 0, -13317)
+	wsem.player.facing = 3072                     ## oeste (facing 0 = -Z, logo -X = 3072)
+	for _i in 400:
+		pad.set_mask(Pad.FWD)
+		wsem.tick(pad)
+	t.check(wsem.player.pos.x > -6368,
+		"SEM o degrau, andar para oeste esbarra na plataforma e a caixa fica inalcançável",
+		str(wsem.player.pos))
+	t.check(wsem.cena == null, "e por isso a cena de saída nunca dispara")
+	# ── COM o degrau: do spawn, andando para oeste, ela sobe ──
+	while wd.cena != null:
+		pad.set_mask(0)
+		wd.tick(pad)
+	wd.player.pos = Vector3i(9404, 0, -13317)
+	wd.player.facing = 3072
+	var q_subiu := -1
+	var clipes: Array[String] = []
+	for i in 400:
+		pad.set_mask(Pad.FWD)
+		wd.tick(pad)
+		if wd.player.acao == Player.Acao.SUBINDO:
+			if q_subiu < 0:
+				q_subiu = i
+			var c := wd.player.clipe_atual()
+			if not clipes.has(c):
+				clipes.append(c)
+		elif q_subiu >= 0:
+			break
+	t.check(q_subiu > 0, "do spawn, andando para OESTE ela chega ao degrau e SOBE",
+		"quadro %d" % q_subiu)
+	t.check(clipes.has("anim06") and clipes.has("anim07"),
+		"a subida toca o par PROVADO SEQ 6 / SEQ 7 (`anim06`/`anim07`)", str(clipes))
+	t.eq(wd.player.pos.y, -1800, "e termina no nível 1, em cima da plataforma",
+		str(wd.player.pos))
+	t.check(wd.player.pos.x < -4129 and wd.player.pos.x > -6368,
+		"com o corpo DENTRO da caixa do degrau (em cima dela)", str(wd.player.pos))
+	# ── e seguir para oeste em cima dela leva à cena de saída e a R101 ──
+	var q2b := 0
+	while wd.room.room_id == "R10D" and q2b < 1500:
+		pad.set_mask(Pad.FWD)
+		wd.tick(pad)
+		q2b += 1
+	t.eq(wd.room.room_id, "R101",
+		"★ subir + seguir a oeste abre a cena de saída e leva a R101 — a sala tem saída A PÉ")
+
+	# ── nFloor: a caixa NÃO vale em cima da plataforma; vale quando ela DESCE ──
+	# O `+4` do `0x63` é o ANDAR EXIGIDO (`Aot.floor_id`; `0x80` = qualquer) e no R10D é **0**
+	# (`63 01 05 41 00 00 …`). O port ignorava esse campo e a cena abria com a Jill ainda no
+	# telhado do obstáculo (medido: disparava em x=-5300, y=-1800). É o que o dono descreve:
+	# **é a DESCIDA que aciona**.
+	var wnf := _mundo()
+	var gnf := Cena.gatilho_de_evento(wnf.vm, -7000, -13000)
+	if t.check(gnf != null, "o gatilho sce 5 do R10D existe"):
+		t.eq(gnf.floor_id, 0, "nFloor do gatilho = 0 (só vale no nível 0)")
+	while wnf.cena != null:
+		pad.set_mask(0)
+		wnf.tick(pad)
+	# em cima da plataforma, DENTRO da caixa em x/z, mas no nível 1: não pode disparar
+	wnf.player.pos = Vector3i(-5500, -1800, -13000)
+	wnf.player.facing = 0
+	pad.set_mask(0)
+	wnf.tick(pad)
+	t.check(wnf.cena == null,
+		"em cima da plataforma (nível 1) a caixa NÃO dispara, mesmo com x/z dentro dela")
+	# o mesmo x/z no nível 0: dispara
+	wnf.player.pos = Vector3i(-5500, 0, -13000)
+	pad.set_mask(0)
+	wnf.tick(pad)
+	t.check(wnf.cena != null, "no nível 0, o mesmo ponto dispara a cena de saída")
+
+	# ═══════════════════════════════════════════════════════════════════════════════════
+	t.group("7. a DESCIDA também é ação (mesmo par de animação), e o degrau é raro no jogo")
+	# ═══════════════════════════════════════════════════════════════════════════════════
+	var wde := _mundo()
+	while wde.cena != null:
+		pad.set_mask(0)
+		wde.tick(pad)
+	# em cima da plataforma, olhando para LESTE (facing 1024): o flanco leste NÃO é a caixa do
+	# gatilho (ela vai só até x = -5285), então dá para medir a descida isolada.
+	wde.player.pos = Vector3i(-4500, -1800, -13000)
+	wde.player.facing = 1024
+	var desceu := false
+	var clipes_d: Array[String] = []
+	for _i in 200:
+		pad.set_mask(Pad.FWD)
+		wde.tick(pad)
+		if wde.player.acao == Player.Acao.SUBINDO:
+			desceu = true
+			var cd := wde.player.clipe_atual()
+			if not clipes_d.has(cd):
+				clipes_d.append(cd)
+		elif desceu:
+			break
+	t.check(desceu, "em cima da plataforma, andar para fora entra na rotina 9 (DESCER)")
+	t.check(clipes_d.has("anim06") and clipes_d.has("anim07"),
+		"a descida usa o MESMO par SEQ 6 / SEQ 7 (`subir.gd`: são subir E descer)", str(clipes_d))
+	t.eq(wde.player.pos.y, 0, "e o corpo termina no nível 0", str(wde.player.pos))
+	# A assinatura do degrau é RARA: 25 registros `forma 8` no jogo; a assinatura completa
+	# (plataforma de 1 nível + `forma 8` encostado no nível de cima) dá 28 registros em 14 salas.
+	# Entre elas R504 e R510 — e `R510 -> R504` é a porta "one_way_fall / spawn scripted".
+	var esperado_deg := {"R10D": 2, "R504": 4, "R510": 1, "R100": 0, "R102": 0}
+	for sala: String in esperado_deg:
+		var wx := World.new()
+		if not wx.carregar(sala):
+			continue
+		t.eq(wx.player.degraus.size(), int(esperado_deg[sala]),
+			"%s: %d degrau(s)" % [sala, int(esperado_deg[sala])])
+
+	# ═══════════════════════════════════════════════════════════════════════════════════
 	t.group("5. sala sem gatilho: o tick normal não mudou")
 	# ═══════════════════════════════════════════════════════════════════════════════════
 	var w4 := World.new()
