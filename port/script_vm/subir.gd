@@ -36,7 +36,9 @@ extends RefCounted
 ## a) **Detecção de contato** — `0x80036c60`, uma das entradas da tabela de handler por tipo de
 ##    objeto de cenário `0x8009cc64` (índice = `om+4`); é a **entrada 0**
 ##    (`0x8009cc64[0] = 0x80036c60`). O laço que a chama percorre o pool de 32 objetos `om`
-##    (`gs+0x4328`, passo `0x194`, fim em `gs+0x75a8`) em `0x8003650c..0x8003654c`:
+##    (a partir de `gs+0x4328` = `0x800cea60`, passo `0x194`, até o ponteiro de fim em
+##    `gs+0x75a8`) em `0x8003650c..0x8003654c`. E o `om+4` é ZERO porque `0x8003580c` o zera
+##    (`sw $zero, 4($s1)`), logo objeto de cenário cai sempre na entrada 0:
 ##
 ##      if (!(obj->flags & 1)) return;                                   // 0x80036c7c
 ##      if (player+5 != 1 && player+5 != 9) obj+0xc0 = 0;   // rotina andar(1)/subir(9)

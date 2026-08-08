@@ -170,8 +170,9 @@ Além disso a caixa `x[-8585..-5285] z[-15000..-11300]` **não contém** a posi�
 
 ### 3.1 A cadeia, sítio por sítio
 
-**a) Laço per-frame de objetos** — `0x8003650c..0x8003654c`: percorre o pool de 32 entradas de
-404 B (`gs+0x4328` = `0x800cea60` até `gs+0x75a8`, passo `0x194`) e despacha por `lbu 4($s0)` na
+**a) Laço per-frame de objetos** — `0x8003650c..0x8003654c`: percorre o pool de **32** entradas de
+404 B a partir de `gs+0x4328` (= `0x800cea60`) com passo `0x194`, até o ponteiro de fim guardado em
+`gs+0x75a8` (`lw $v0, 0x75a8($s1)`; `(0x75a8-0x4328)/0x194 = 32`) e despacha por `lbu 4($s0)` na
 tabela `0x8009cc64` (6 entradas válidas). O handler do `0x7f` (`0x80056510`) monta a entrada
 exatamente em `gs + 0x4328 + slot*0x194` e `0x8003580c  sw $zero, 4($s1)` zera o seletor — logo
 objeto de cenário cai sempre na **entrada 0 = `0x80036c60`**.
