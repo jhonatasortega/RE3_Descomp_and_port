@@ -1,6 +1,6 @@
 # Decompilação de conteúdo RE3 — PROGRESSO
 
-> **GERADO** por `tools/decomp_progress.py` a partir de [`progress.json`](progress.json). Não edite à mão — edite o JSON e rode o script.
+> **GERADO** por `tools/decomp_progress.py` a partir de [`progress.json`](progress.json). Não edite à mão — edito falando da posite o JSON e rode o script.
 >
 > Método (decomp.dev-adaptado): decompila o **conteúdo** (formatos/assets/lógica), não binário nativo. **decompilado** = entendemos+extraímos · **vinculado** = ligado no protótipo Godot.
 

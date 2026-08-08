@@ -140,11 +140,21 @@ func run(t: Object) -> bool:
 	pad7.mouse_dy = Player.MIRA_MOUSE_ZONA
 	p7.tick(pad7)
 	t.eq(p7.mira_alto, -1, "ponteiro para BAIXO = mira baixa")
-	t.eq(p7.clipe_atual(), "mira06", "e a pose vira a `mira06` (hold baixo)")
+	## a troca de altura passa pela RAMPA de 20 quadros (`mira05`) antes do hold — é isso que tira
+	## o "salto" de pose que o usuário viu
+	t.eq(p7.clipe_atual(), "mira05", "primeiro toca a rampa de 20 quadros")
+	pad7.mouse_dy = 0
+	for _i in Player.MIRA_RAMPA_QUADROS:
+		p7.tick(pad7)
+	t.eq(p7.clipe_atual(), "mira06", "e só então assenta no hold baixo (`mira06`)")
 	pad7.mouse_dy = -Player.MIRA_MOUSE_ZONA * 3
 	p7.tick(pad7)
 	t.eq(p7.mira_alto, 1, "ponteiro para CIMA = mira alta")
-	t.eq(p7.clipe_atual(), "mira04", "e a pose vira a `mira04` (hold alto)")
+	t.eq(p7.clipe_atual(), "mira03", "sobe pela rampa `mira03`")
+	pad7.mouse_dy = 0
+	for _i in Player.MIRA_RAMPA_QUADROS:
+		p7.tick(pad7)
+	t.eq(p7.clipe_atual(), "mira04", "e assenta no hold alto (`mira04`)")
 	# soltar a mira zera o acumulador vertical
 	pad7.set_mask(0)
 	pad7.mouse_dy = 0

@@ -137,6 +137,7 @@ var _add: ColorRect
 var _sub: ColorRect
 var _acumulado := 0.0
 var _pad_antes := 0
+var _mouse_antes_bt := false            ## borda do botão esquerdo (clique no título)
 var _fim := false
 
 
@@ -424,6 +425,16 @@ func _ler_pad() -> void:
 		for tecla: int in Pad.KEYMAP:
 			if Input.is_key_pressed(tecla as Key):
 				m |= int(Pad.KEYMAP[tecla])
+	## CLIQUE DO MOUSE no título (pedido do usuário). Lido por borda, como no menu do jogo; o
+	## ponteiro entra no espaço 320×240 do nó do título (que tem escala 4).
+	if titulo != null and titulo.visible:
+		var agora_bt := Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+		if agora_bt and not _mouse_antes_bt:
+			var pt: Vector2 = titulo.to_local(titulo.get_global_mouse_position())
+			if titulo.clicar(pt) != "":
+				_mouse_antes_bt = agora_bt
+				return
+		_mouse_antes_bt = agora_bt
 	var novo := m & ~_pad_antes
 	_pad_antes = m
 	if novo == 0:

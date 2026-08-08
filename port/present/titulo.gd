@@ -261,6 +261,58 @@ func _draw() -> void:
 		_rotulo(chave, chave, b if sel2 else 1.0, not sel2)
 
 
+func caixa_do_item(i: int) -> Rect2:
+	## Retângulo de tela (320×240) do item `i` do menu — a MESMA geometria do desenho: `x_tela`/
+	## `y_tela` do JSON (âncoras de `0x801945e4`) e a caixa de TINTA medida no atlas HD.
+	var itens: Array[String] = ITENS_DIFICULDADE if fase == Fase.DIFICULDADE else ITENS_MENU
+	if i < 0 or i >= itens.size():
+		return Rect2()
+	var ro: Variant = _rotulos.get(itens[i])
+	var sp: Variant = _sprites.get(itens[i])
+	if not (ro is Dictionary):
+		return Rect2()
+	var r: Dictionary = ro
+	var w := int(r.get("w", 0))
+	var tw := int(r.get("tinta_w", w))
+	if tw <= 0:
+		tw = w
+	var h := int(r.get("h", 0))
+	var x := int(r.get("x_tela", 0))
+	var y := int(r.get("y_tela", 0))
+	if x == 0 and sp is Dictionary:
+		x = int((sp as Dictionary).get("x", 0))
+	if y == 0 and sp is Dictionary:
+		y = int((sp as Dictionary).get("y", 0))
+	## folga de 3 px em volta: o alvo de clique/toque não pode ser do tamanho exato da tinta
+	return Rect2(float(x - 3), float(y - 3), float(tw + 6), float(h + 6))
+
+
+func clicar(p: Vector2) -> String:
+	## CLIQUE/TOQUE na tela de título (pedido do usuário; serve para o port de celular também).
+	## Regra igual à do inventário: o 1º clique SELECIONA o item sob o ponteiro, e o 2º clique no
+	## MESMO item CONFIRMA.
+	if fase != Fase.MENU and fase != Fase.DIFICULDADE:
+		return ""
+	var itens: Array[String] = ITENS_DIFICULDADE if fase == Fase.DIFICULDADE else ITENS_MENU
+	for i in itens.size():
+		if not caixa_do_item(i).has_point(p):
+			continue
+		var atual := cursor_dificuldade if fase == Fase.DIFICULDADE else cursor
+		if i == atual:
+			confirmar()
+			return "confirmou %s" % itens[i]
+		if fase == Fase.DIFICULDADE:
+			cursor_dificuldade = i
+		else:
+			cursor = i
+		pediu_sfx.emit(4)                       ## SFX de cursor (`0x801956f4`)
+		ticks = 0                               ## reinicia o timeout do atrator
+		_pulso_i = 0
+		queue_redraw()
+		return "selecionou %s" % itens[i]
+	return ""
+
+
 func _rotulo(chave_sprite: String, chave_rotulo: String, mod: float,
 		semitransparente: bool) -> void:
 	## Desenha um rótulo do atlas HD na posição do `SPRT` do PS1.
