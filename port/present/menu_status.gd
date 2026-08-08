@@ -671,10 +671,10 @@ func _desenhar_submenu(t: float) -> void:
 
 
 ## ── CLIQUE / TOQUE ──
-## Pedido do usuário, pensando no port de celular: **clicar seleciona**. A regra é a de toque:
-## o 1º clique move o cursor para o que está embaixo do ponteiro, e o 2º clique no MESMO lugar
-## confirma (abre o submenu, ativa o botão, entra no documento). As caixas de acerto são as mesmas
-## do desenho, então não há número novo aqui — é a geometria já medida.
+## Pedido do usuário: **um clique seleciona E confirma**. Eu havia feito em dois passos (1º
+## destaca, 2º confirma) pensando em toque de celular, e o próprio usuário apontou que era isso
+## que atrapalhava — no mouse o esperado é resolver no primeiro clique. As caixas de acerto são as
+## mesmas do desenho, então não há número novo aqui: é a geometria já medida.
 func clicar(p: Vector2) -> String:
 	if not aberto or _anim > 0:
 		return ""
@@ -690,43 +690,35 @@ func clicar(p: Vector2) -> String:
 		var por := ARQ_COLUNAS * ARQ_LINHAS
 		var pag: int = int(arquivo.get("sel")) / por
 		var alvo := pag * por + cel
-		if alvo == int(arquivo.get("sel")):
-			arquivo.call("confirmar")
-			return "abriu documento"
-		arquivo.set("sel", alvo)
+		arquivo.set("sel", alvo)                  ## um clique: põe o cursor E abre
 		arquivo.call("queue_redraw")
-		return "documento %d" % alvo
+		arquivo.call("confirmar")
+		return "abriu documento %d" % alvo
 	# submenu aberto: as três placas
 	if not sub_itens.is_empty():
 		for i in sub_itens.size():
 			var y: int = SUB_LINHA_Y[i] if i < SUB_LINHA_Y.size() else SUB_LINHA_Y[-1] + 20 * i
 			if Rect2(159, y, 56, 16).has_point(p):
-				if sub_sel == i:
-					return confirmar()
-				sub_sel = i
+				sub_sel = i                       ## um clique resolve
 				queue_redraw()
-				return "submenu %d" % i
+				return confirmar()
 		return ""
 	# botões SAIR / ARQ. / MAPA
 	for i in PLACAS.size():
 		var b: Array = PLACAS[i]
 		if Rect2(float(b[0]), float(b[1]), float(b[2]), 16.0).has_point(p):
-			if selecao_botao == i:
-				return confirmar()
-			selecao_botao = i
+			selecao_botao = i                     ## um clique resolve
 			queue_redraw()
-			return "botão %d" % i
+			return confirmar()
 	# grade de itens (2 colunas × 5 linhas de 40×30 em (224,66))
 	var gx := int((p.x - GRADE_ORIGEM.x) / CELULA.x)
 	var gy := int((p.y - GRADE_ORIGEM.y) / CELULA.y)
 	if p.x >= GRADE_ORIGEM.x and p.y >= GRADE_ORIGEM.y 			and gx >= 0 and gx < GRADE_COLUNAS and gy >= 0 and gy < GRADE_LINHAS:
 		var slot := gy * GRADE_COLUNAS + gx
-		if slot == cursor and selecao_botao < 0:
-			return confirmar()
-		cursor = slot
+		cursor = slot                             ## um clique: põe o cursor E abre o submenu
 		selecao_botao = -1
 		queue_redraw()
-		return "slot %d" % slot
+		return confirmar()
 	return ""
 
 
