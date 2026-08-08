@@ -71,11 +71,16 @@ Cadeia completa: `0x800746c0` -> anel -> `0x80074770`/`0x80074820` -> `0x800749a
   descartado por `re3_sfx.py`, que numera os WAV por posição entre as amostras
   reais -> **`vag k` => `<banco>_{k-2:02d}.wav`**.
 
+Além dos 35 bancos do disco (`SOUND/*.VH` + `R000.SND`), **todo `STAGE*/DOOR??.DO1`
+embute um banco VAB de PORTA** com o mesmo formato (`cat 4`, 4 ids) — 76 bancos, provado
+em 76/76. Ver o bloco `bancos_porta`/`parse_porta` e `exe_audio.md §4.4`.
+
 Uso:
     python tools/exe_audio.py                 # gera <out>/data/re3_se.json + sfx_map.json
     NOSTALGIA_OUT=port python tools/exe_audio.py
-    python tools/exe_audio.py --verificar     # roda as asserções e imprime o relatório
+    python tools/exe_audio.py --verificar     # 1345 asserções; sai != 0 se alguma falhar
     python tools/exe_audio.py --tabela C_00   # imprime a tabela de SE de um banco
+    NOSTALGIA_OUT=port python tools/exe_audio.py --portas   # 147 WAV dos bancos de porta
 
 Ver: docs/decomp/notes/exe_audio.md
 """
@@ -138,11 +143,26 @@ ACOES = {
         "call site 0x80077f40 (a1=0 -> UI). NÃO PROVADO")),
     "acao_15": dict(cat=0, id=15, conf="DECLARADO", prova=(
         "call site 0x800485e4 (a1=0 -> UI). NÃO PROVADO")),
+    # ---- porta: banco cat 4, embutido nos DOOR*.DO1 ----
+    "porta_abrir": dict(cat=4, id=0, conf="MEDIA", prova=(
+        "cat 4 = banco de PORTA: os 76 STAGE*/DOOR??.DO1 embutem um banco VAB (magic "
+        "0x0001eeee) cujos descritores usam banco 4 em 76/76, e é o recurso que o loader "
+        "0x80012818 carrega com a string de depuração 'DOOR SOUND' (0x800103ac, passada em "
+        "a3 por 0x80016534). Call site de cat 4 no EXE: 0x800161c4 (a0=0x401 -> cat 4, "
+        "id 1), na região de setup/animação de porta. A tabela tem só 4 ids (0..3) e 3-4 "
+        "amostras por porta — coerente com abrir/fechar/trancada. QUAL id é abrir e qual é "
+        "fechar NÃO foi medido: 'abrir'=0 e 'fechar'=1 é ORDEM DECLARADA")),
+    "porta_fechar": dict(cat=4, id=1, conf="MEDIA", prova=(
+        "mesmo banco de porta_abrir; o id 1 é o que aparece no call site 0x800161c4 "
+        "(a0=0x401). A associação id->abrir/fechar é DECLARADA, não medida")),
+    "porta_trancada": dict(cat=4, id=2, conf="DECLARADO", prova=(
+        "3º id do banco de porta. Nome DECLARADO por eliminação (abrir/fechar/trancada) — "
+        "NÃO PROVADO")),
 }
 
 # Banco padrão de cada `cat` quando o port não sabe qual está carregado.
 # C_00 é o banco de MENU (mesma tabela de SE que C_01) — é o certo para som de UI.
-BANCO_PADRAO = {0: "C_00", 1: "A_01", 2: "R000"}
+BANCO_PADRAO = {0: "C_00", 1: "A_01", 2: "R000", 4: "S1_DOOR00"}
 
 # Reserva para os ids de cat 0 que só existem nos bancos DE ÁREA (C_02..C_0D) — o
 # tiro, por exemplo, não existe em C_00/C_01. Qual C_ vale em cada sala é decidido no
@@ -190,6 +210,34 @@ def parse_header(vh, vb_len):
     }
 
 
+def tons_do_header(vh, h):
+    """Tons `VagAtr` lidos por OFFSET (`hdr+0x30`, `n_tons` x 32 B).
+
+    `vab.parse_tones` acha os tons pelo marcador `c0 00 c1 00 c2 00 c3 00` em
+    `reserved[4]`. Isso funciona nos `.VH`/`.SND` do disco, mas **falha nos bancos
+    embutidos nos `DOOR*.DO1`**: lá alguns tons não têm o marcador, e o resto do arquivo
+    (modelo/textura) pode conter bytes parecidos. Como o layout do header está provado
+    (35/35 + 76/76), ler por offset é determinístico e mais rigoroso.
+    """
+    out = []
+    for i in range(h["n_tons"]):
+        t = h["hdr"] + 0x30 + i * 32
+        a = vh[t:t + 8]
+        adsr1, adsr2, prog, vg = struct.unpack_from("<4H", vh, t + 16)
+        out.append({
+            "prior": a[0], "mode": a[1], "vol": a[2], "pan": a[3],
+            "center": a[4], "shift": a[5], "min": a[6], "max": a[7],
+            "adsr1": adsr1, "adsr2": adsr2, "prog": prog, "vag": vg,
+        })
+    return out
+
+
+def vagtab_do_header(vh, h):
+    """Tabela VAG lida por OFFSET (`hdr + u32@hdr+0x08`, `n_vags+1` entradas u16)."""
+    off = h["hdr"] + h["off_vagtab"]
+    return list(struct.unpack_from("<%dH" % (h["n_vags"] + 1), vh, off))
+
+
 def decodifica_descritor(desc):
     """Campos do descritor de SE (u32). Só os campos PROVADOS ganham nome."""
     b0, b1, b2, b3 = desc & 0xFF, (desc >> 8) & 0xFF, (desc >> 16) & 0xFF, (desc >> 24) & 0xFF
@@ -205,12 +253,20 @@ def decodifica_descritor(desc):
 
 
 def parse_banco(nome, ph, pc):
-    """Tabela de SE + tons + amostras de um banco. Levanta ValueError se o formato não fecha."""
-    vh = open(ph, "rb").read()
-    vb_len = os.path.getsize(pc)
+    """Tabela de SE + tons + amostras de um banco (par de arquivos `.VH`+`.VB`)."""
+    return parse_bytes(nome, open(ph, "rb").read(), os.path.getsize(pc),
+                       os.path.basename(ph), os.path.basename(pc))
+
+
+def parse_bytes(nome, vh, vb_len, arq="", corpo=""):
+    """Núcleo do parse: `vh` = bytes do header, `vb_len` = tamanho do corpo PS-ADPCM.
+
+    Serve tanto para o par `.VH`+`.VB` do disco quanto para o banco **embutido** nos
+    `DOOR*.DO1` (§porta), onde header e corpo moram no mesmo arquivo.
+    """
     h = parse_header(vh, vb_len)
-    tons = vab.parse_tones(vh)
-    vagtab = vab.find_vagtab(vh, vb_len)
+    tons = tons_do_header(vh, h)
+    vagtab = vagtab_do_header(vh, h)
     se = {}
     for i in range(h["n_se"]):
         d = struct.unpack_from("<I", vh, i * 4)[0]
@@ -219,7 +275,15 @@ def parse_banco(nome, ph, pc):
         info = decodifica_descritor(d)
         it = info["tom"]
         if it >= len(tons):
-            raise ValueError("%s id %d: tom %d fora do range (%d tons)" % (nome, i, it, len(tons)))
+            # Acontece em **12 dos 159** descritores dos bancos de porta e em NENHUM dos
+            # 278 dos bancos do disco. Motivo medido: a tabela de SE das portas é um
+            # TEMPLATE — os ids 0 e 1 são byte-idênticos (`0x00601408`, `0x00612408`) nas
+            # 76 portas, mas 12 portas têm só 2 tons, e aí o id 1 (que aponta o tom 2)
+            # fica pendurado. É inconsistência do dado original, não do formato: marcamos
+            # e seguimos, em vez de inventar outro layout de campo para forçar o encaixe.
+            info["invalido"] = "tom %d >= n_tons %d (entrada sobrando do template)" % (it, len(tons))
+            se[i] = info
+            continue
         tom = tons[it]
         vg = tom["vag"]
         info["vag"] = vg
@@ -232,16 +296,87 @@ def parse_banco(nome, ph, pc):
             info["vb_bytes"] = (vagtab[vg] - vagtab[vg - 1]) * 8
         se[i] = info
     return {
-        "arquivo": os.path.basename(ph), "corpo": os.path.basename(pc),
+        "arquivo": arq, "corpo": corpo,
         "banco": (min(v["banco"] for v in se.values()) if se else None),
         "n_se": h["n_se"], "n_tons": len(tons), "n_vags": len(vagtab) - 1,
         "vb_bytes": vb_len, "vol_mestre": h["vol_mestre"], "pan_mestre": h["pan_mestre"],
-        "se": se, "_hdr": h,
+        "se": se, "_hdr": h, "_vagtab": vagtab,
+        # taxa por VAG (vem do tom que o referencia) — usada na extração dos WAV de porta
+        "_taxa_por_vag": {v["vag"]: v["taxa_hz"] for v in se.values() if "vag" in v},
     }
 
 
-def coletar():
-    return {n: parse_banco(n, ph, pc) for n, ph, pc in bancos_disponiveis()}
+# ───────────────────────── bancos de PORTA (`DOOR*.DO1`) ─────────────────────────
+# Achado desta rodada: **todo `STAGE*/DOOR??.DO1` embute um banco VAB completo** com o
+# mesmo magic `0x0001eeee`. É o "DOOR SOUND" que o loader `0x80012818` carrega (a string
+# de depuração está em `0x800103ac` e é passada em `a3` por `0x80016534`).
+#
+# Layout do banco embutido — provado em **76/76** arquivos:
+#     [tabela de SE: 4 x u32] [header VAB @0x10] [tons @0x40] [tabela VAG] [corpo PS-ADPCM]
+#     corpo começa em `hdr + u32@hdr+0x04` (fim do bloco do header) e tem `u32@hdr+0x00` bytes
+# Todos usam **banco 4** no descritor → **`cat 4` é o banco de PORTA**.
+DOOR_GLOB = os.path.join("STAGE*", "DOOR*.DO1")
+
+
+def bancos_porta():
+    """[(nome, caminho)] dos bancos de som de porta."""
+    import glob
+    out = []
+    for p in sorted(glob.glob(paths.cd_data(DOOR_GLOB))):
+        stage = os.path.basename(os.path.dirname(p))          # STAGE1..STAGE7
+        porta = os.path.splitext(os.path.basename(p))[0]       # DOOR00..
+        out.append(("S%s_%s" % (stage[-1], porta), p))
+    return out
+
+
+def parse_porta(nome, caminho):
+    """Banco VAB embutido num `.DO1`. Devolve (info, bytes_do_corpo)."""
+    b = open(caminho, "rb").read()
+    i = b.find(struct.pack("<I", MAGIC_VAB))
+    if i < 0:
+        raise ValueError("%s: sem magic 0x0001eeee" % caminho)
+    hdr = i - 0x10
+    vb_size, total = struct.unpack_from("<2I", b, hdr)
+    base = hdr + total                                   # corpo logo após o bloco do header
+    if base + vb_size > len(b):
+        raise ValueError("%s: corpo não cabe (base %#x + %d > %d)" % (caminho, base, vb_size, len(b)))
+    info = parse_bytes(nome, b, vb_size, os.path.basename(caminho), "(embutido)")
+    info["vb_offset"] = base
+    return info, b[base:base + vb_size]
+
+
+def coletar(portas=False):
+    d = {n: parse_banco(n, ph, pc) for n, ph, pc in bancos_disponiveis()}
+    if portas:
+        for n, p in bancos_porta():
+            try:
+                d[n] = parse_porta(n, p)[0]
+            except ValueError as ex:
+                print("  aviso: %s" % ex)
+    return d
+
+
+def extrair_portas():
+    """Escreve os WAV dos bancos de porta em `<out>/assets/SOUND/SFX/<banco>/`."""
+    import wave
+    n_wav = 0
+    for nome, p in bancos_porta():
+        info, corpo = parse_porta(nome, p)
+        vagtab = info["_vagtab"]
+        outdir = paths.assets("SOUND", "SFX", nome)
+        os.makedirs(outdir, exist_ok=True)
+        for k in range(2, len(vagtab)):                  # VAG#1 = bloco mudo, descartado
+            a, z = vagtab[k - 1] * 8, vagtab[k] * 8
+            pcm = vab.decode_adpcm(corpo, a, z)
+            taxa = info["_taxa_por_vag"].get(k, 22050)
+            with wave.open(os.path.join(outdir, "%s_%02d.wav" % (nome, k - 2)), "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(taxa)
+                w.writeframes(struct.pack("<%dh" % len(pcm), *pcm))
+            n_wav += 1
+    print("portas: %d WAV -> %s" % (n_wav, paths.assets("SOUND", "SFX")))
+    return n_wav
 
 
 # ─────────────────────────────── saída ───────────────────────────────
@@ -301,7 +436,7 @@ META = {
 
 
 def gerar():
-    bancos = coletar()
+    bancos = coletar(portas=True)
     dados = {"_meta": META, "acoes": {}, "banco_padrao": BANCO_PADRAO,
              "banco_jogo": BANCO_JOGO, "bancos": {}}
 
@@ -322,7 +457,7 @@ def gerar():
             if b["banco"] != cat:
                 continue
             info = b["se"].get(sid)
-            if info and not info["dummy"]:
+            if info and not info.get("dummy", True) and "invalido" not in info:
                 por_banco[nome] = info["wav"]
         # 1ª escolha: o banco padrão do cat. Se o id não existir lá (caso do tiro, que só
         # vive nos bancos de área), cai no BANCO_JOGO — declarado, não medido.
@@ -388,12 +523,20 @@ def verificar():
         h = parse_header(vh, vb_len)
         chk(h["vb_size_ok"],
             "%s: hdr+0x00 (%d) != |.VB| (%d)" % (nome, h["vb_size"], vb_len))
-        tons = vab.parse_tones(vh)
-        chk(h["n_tons"] == len(tons),
-            "%s: hdr+0x14 (%d) != tons achados (%d)" % (nome, h["n_tons"], len(tons)))
-        chk(h["hdr"] + 0x30 + 32 * len(tons) == h["hdr"] + h["off_vagtab"],
+        # nos bancos do disco os dois caminhos (marcador vs offset) tem de CONCORDAR —
+        # e' o que valida ler por offset nos DOOR*.DO1, onde o marcador nao serve
+        tons_sig = vab.parse_tones(vh)
+        chk(h["n_tons"] == len(tons_sig),
+            "%s: hdr+0x14 (%d) != tons achados pelo marcador (%d)" % (nome, h["n_tons"], len(tons_sig)))
+        tons = tons_do_header(vh, h)
+        chk(tons == tons_sig, "%s: tons por offset != tons por marcador" % nome)
+        chk(0x30 + 32 * len(tons) == h["off_vagtab"],
             "%s: tons nao terminam onde hdr+0x08 aponta a tabela VAG" % nome)
-        vagtab = vab.find_vagtab(vh, vb_len)
+        vagtab = vagtab_do_header(vh, h)
+        chk(vagtab == vab.find_vagtab(vh, vb_len),
+            "%s: tabela VAG por offset != por varredura" % nome)
+        chk(vagtab[0] == 0 and vagtab[-1] * 8 == vb_len,
+            "%s: tabela VAG nao vai de 0 a |.VB|/8" % nome)
         bks = set()
         for i in range(h["n_se"]):
             d = struct.unpack_from("<I", vh, i * 4)[0]
@@ -445,6 +588,48 @@ def verificar():
     chk(ui_wavs == ["C_00/C_00_%02d.wav" % i for i in range(5)],
         "os 5 sons de UI deviam ser os WAV 00..04 de C_00, obtido %s" % ui_wavs)
 
+    # ── bancos de PORTA embutidos nos DOOR*.DO1 ──
+    portas = bancos_porta()
+    chk(len(portas) == 76, "esperados 76 DOOR*.DO1, achei %d" % len(portas))
+    n_porta = 0
+    for nome, p in portas:
+        try:
+            info, corpo = parse_porta(nome, p)
+        except ValueError as ex:
+            chk(False, str(ex))
+            continue
+        n_porta += 1
+        tab = info["_vagtab"]
+        chk(tab[0] == 0 and tab[-1] * 8 == len(corpo),
+            "%s: tabela VAG não fecha com o corpo (%d vs %d)" % (nome, tab[-1] * 8, len(corpo)))
+        # cada VAG tem de terminar num bloco com flag de fim (bit0) — prova de que a base
+        # do corpo (hdr + total) está certa
+        for k in range(1, len(tab)):
+            chk(corpo[tab[k] * 8 - 16 + 1] & 0x01,
+                "%s: VAG %d não termina em flag de fim" % (nome, k))
+        chk(info["n_se"] == 4, "%s: esperadas 4 entradas de SE, achei %d" % (nome, info["n_se"]))
+        chk(info["banco"] == 4, "%s: banco deveria ser 4 (porta), achei %s" % (nome, info["banco"]))
+    chk(n_porta == 76, "76 bancos de porta parseados, achei %d" % n_porta)
+
+    # o id 0 (som principal da porta) existe e e' VALIDO nas 76; e a tabela e' template
+    padroes = set()
+    n_desc_porta = n_inval = 0
+    for nome, p in portas:
+        info = parse_porta(nome, p)[0]
+        vh = open(p, "rb").read()
+        padroes.add(tuple(struct.unpack_from("<4I", vh, 0)))
+        n_desc_porta += len(info["se"])
+        n_inval += sum(1 for v in info["se"].values() if "invalido" in v)
+        chk(0 in info["se"] and "invalido" not in info["se"][0],
+            "%s: id 0 (som principal) deveria ser valido" % nome)
+    chk(len(padroes) == 3,
+        "esperados 3 padroes distintos de tabela SE nas portas, achei %d" % len(padroes))
+    chk(all(pd[0] == 0x00601408 and pd[1] == 0x00612408 for pd in padroes),
+        "os ids 0 e 1 das portas deveriam ser identicos nas 76 (template)")
+    chk((n_desc_porta, n_inval) == (159, 12),
+        "portas: esperados 159 descritores com 12 invalidos, achei %d com %d"
+        % (n_desc_porta, n_inval))
+
     print("verificacao: %d ok, %d falha" % (ok, falha))
     return ok, falha
 
@@ -469,6 +654,9 @@ def main(argv):
         return 1 if verificar()[1] else 0
     if "--tabela" in argv:
         tabela(argv[argv.index("--tabela") + 1])
+        return 0
+    if "--portas" in argv:
+        extrair_portas()
         return 0
     gerar()
     return 0

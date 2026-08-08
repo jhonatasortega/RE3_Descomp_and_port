@@ -38,9 +38,14 @@ func run(t: Object) -> bool:
 		return true
 	var d: Dictionary = dados
 
-	# ── 1. os 35 bancos do disco entraram ──
+	# ── 1. os bancos entraram: 35 do disco + 76 de porta ──
 	var bancos: Dictionary = d.get("bancos", {})
-	t.eq(bancos.size(), 35, "35 bancos VAB (20 A_, 14 C_, R000) na tabela de SE")
+	t.eq(bancos.size(), 111, "111 bancos: 35 do disco (20 A_, 14 C_, R000) + 76 de porta")
+	var n_porta := 0
+	for nome: String in bancos:
+		if nome.contains("_DOOR"):
+			n_porta += 1
+	t.eq(n_porta, 76, "76 bancos de porta (todo STAGE*/DOORxx.DO1 embute um banco VAB)")
 
 	# ── 2. formato do banco: tabela de SE = hdr/4 (magic 0x0001eeee em hdr+0x10) ──
 	t.eq(int((bancos.get("C_00", {}) as Dictionary).get("n_se", -1)), 16,
@@ -116,20 +121,46 @@ func run(t: Object) -> bool:
 	var n_desc := 0
 	var fora := 0
 	var sem_wav := 0
+	var n_desc_porta := 0
+	var inval_porta := 0
 	for nome: String in bancos:
 		var b: Dictionary = bancos[nome]
 		var n_tons := int(b.get("n_tons", 0))
 		var se: Dictionary = b.get("se", {})
+		var eh_porta := nome.contains("_DOOR")
 		for k: String in se:
 			var info: Dictionary = se[k]
+			if eh_porta:
+				n_desc_porta += 1
+				if info.has("invalido"):
+					inval_porta += 1
+				continue
 			n_desc += 1
 			if int(info.get("tom", -1)) >= n_tons:
 				fora += 1
 			if not bool(info.get("dummy", false)) and str(info.get("wav", "")) == "":
 				sem_wav += 1
-	t.eq(n_desc, 278, "278 descritores de SE usados nos 35 bancos")
+	t.eq(n_desc, 278, "278 descritores de SE usados nos 35 bancos do disco")
 	t.eq(fora, 0, "nenhum descritor aponta tom fora do banco (byte1>>4 < n_tons)")
 	t.eq(sem_wav, 0, "todo SE não-mudo resolve um WAV")
+
+	# ── 5b. bancos de porta (cat 4) ──
+	t.group("Audio/porta")
+	t.eq(n_desc_porta, 159, "159 descritores nos 76 bancos de porta")
+	# a tabela de SE das portas é um TEMPLATE: os ids 0/1 são byte-idênticos nas 76, mas 12
+	# portas só têm 2 tons — aí o id 1 fica pendurado. Inconsistência do dado ORIGINAL.
+	t.eq(inval_porta, 12,
+		"12 descritores de porta apontam tom fora do próprio banco (sobra do template)")
+	var d00: Dictionary = bancos.get("S1_DOOR00", {})
+	t.eq(int(d00.get("banco", -1)), 4, "banco de porta = cat 4 (descritor byte0 bits1-3)")
+	t.eq(int(d00.get("n_se", -1)), 4, "banco de porta tem 4 ids de SE (tabela em 0x00..0x0f)")
+	t.eq(int(d00.get("vb_bytes", -1)), 16688,
+		"S1_DOOR00: corpo PS-ADPCM de 16688 B embutido (hdr+0x00), começa em hdr+total")
+	var se_d00: Dictionary = d00.get("se", {})
+	t.eq(str((se_d00.get("0", {}) as Dictionary).get("desc", "")), "0x00601408",
+		"id 0 do banco de porta = 0x00601408 (idêntico nas 76 portas)")
+	t.eq(str((se_d00.get("1", {}) as Dictionary).get("desc", "")), "0x00612408",
+		"id 1 do banco de porta = 0x00612408 (idêntico nas 76 portas)")
 
 	# ── 6. API do Sfx ──
 	t.group("Audio/Sfx API")
@@ -163,6 +194,16 @@ func run(t: Object) -> bool:
 	t.eq(s.banco_area(), "C_05", "definir_banco_area aceita um banco que existe")
 	s.definir_banco_area("NAO_EXISTE")
 	t.eq(s.banco_area(), "", "definir_banco_area ignora banco inexistente")
+
+	# porta: cada DOORxx.DO1 tem o próprio som (madeira != portão de metal)
+	t.eq(s.acao_id("porta_abrir"), 0, "porta_abrir = SE id 0 do banco de porta")
+	t.eq(s.acao_cat("porta_abrir"), 4, "porta vem do cat 4 (banco embutido no .DO1)")
+	t.check(not s.acao_confiavel("porta_abrir"),
+		"porta_abrir NÃO é ALTA (qual id é abrir vs fechar não foi medido)")
+	s.definir_banco_porta("S1_DOOR03")
+	t.eq(s.banco_porta(), "S1_DOOR03", "definir_banco_porta aceita porta existente")
+	s.definir_banco_porta("S9_DOOR99")
+	t.eq(s.banco_porta(), "", "definir_banco_porta ignora porta inexistente")
 
 	# ── 7. os WAV existem em disco e carregam ──
 	t.group("Audio/assets")

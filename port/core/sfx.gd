@@ -17,7 +17,9 @@ extends Node
 ##
 ## `cat` **é o id do banco VAB** (a mesma função `0x800750e4` busca `cat` e o banco do
 ## descritor na tabela de 8 slots `0x800e0664`): **0 = `C_xx`** (jogador/UI/global),
-## **1 = `A_xx`** (área), **2 = `R###.SND`** (sala).
+## **1 = `A_xx`** (área), **2 = `R###.SND`** (sala), **4 = porta** (banco embutido em cada
+## `STAGE*/DOORxx.DO1` — é o recurso que o loader `0x80012818` puxa com a string de
+## depuração `"DOOR SOUND"` de `0x800103ac`).
 ##
 ## O descritor dá o índice do TOM (`byte1 >> 4`); o `vag` do tom é a amostra. Como
 ## `re3_sfx.py` descarta o VAG#1 (bloco mudo do SPU), **`vag k` => `<banco>_{k-2}.wav`**.
@@ -44,6 +46,7 @@ var _pool: Array[AudioStreamPlayer] = []
 var _prox := 0
 var _cache: Dictionary = {}                     ## rel -> AudioStreamWAV
 var _banco_area := ""                           ## banco C_ da área atual (ver definir_banco_area)
+var _banco_porta := ""                          ## banco da porta em uso (ver definir_banco_porta)
 var _volume_db := 0.0
 var _ultimo := ""                               ## último rel tocado (harness/teste)
 
@@ -123,6 +126,44 @@ func tiro() -> bool:
 func impacto_ataque() -> bool:
 	## SE id 0 (`0x8003d208`, vizinhança do "acerto conectado" `0x8003d14c`). DECLARADO.
 	return tocar_acao("impacto_ataque")
+
+
+func porta_abrir() -> bool:
+	## Som principal da porta. `cat 4` = banco embutido no `DOORxx.DO1` daquela porta.
+	## O id 0 é o único **válido nas 76 portas** — por isso é o "principal".
+	## Se a porta atual foi informada (`definir_banco_porta`), usa o som DELA.
+	return _tocar_porta("porta_abrir")
+
+
+func porta_fechar() -> bool:
+	## SE id 1 do banco da porta (existe em 64 das 76). "fechar" é ordem DECLARADA.
+	return _tocar_porta("porta_fechar")
+
+
+func porta_trancada() -> bool:
+	## SE id 2 do banco da porta — existe em só 4 das 76. Nome DECLARADO.
+	return _tocar_porta("porta_trancada")
+
+
+func definir_banco_porta(nome: String) -> void:
+	## Diz qual porta está sendo usada, no formato `S<stage>_DOOR<xx>` (ex.: "S1_DOOR03").
+	## Cada `DOORxx.DO1` traz o próprio banco de som — é o que dá porta de madeira ≠ portão
+	## de metal. Vazio = cai no padrão do `re3_se.json`.
+	_banco_porta = nome if _bancos.has(nome) else ""
+
+
+func banco_porta() -> String:
+	return _banco_porta
+
+
+func _tocar_porta(acao: String) -> bool:
+	if _banco_porta != "":
+		var a: Variant = _acoes.get(acao)
+		if a is Dictionary:
+			var pb: Variant = (a as Dictionary).get("por_banco")
+			if pb is Dictionary and (pb as Dictionary).has(_banco_porta):
+				return tocar_arquivo(str((pb as Dictionary)[_banco_porta]))
+	return tocar_acao(acao)
 
 
 # ───────────────────────────── API genérica ─────────────────────────────

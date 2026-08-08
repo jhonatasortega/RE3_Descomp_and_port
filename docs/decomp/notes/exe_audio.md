@@ -133,6 +133,7 @@ descritor dentro de um arquivo cita **um único** banco, sempre o do próprio ar
 | 0 | `C_00`..`C_0D` | 16 | **jogador / UI / global** |
 | 1 | `A_01`..`A_14` | 32 | ambiente de **área** |
 | 2 | `R###.SND` | 48 | efeitos de **sala** |
+| **4** | `STAGE*/DOOR??.DO1` (banco **embutido**) | 4 | **porta** — ver §4.4 |
 
 `C_00`/`C_01` são os bancos de **menu** (tabela de SE idêntica entre os dois);
 `C_02`..`C_0D` são os bancos de **área** do jogador — e são os únicos que definem os ids de
@@ -194,17 +195,72 @@ vag k   =>   assets/SOUND/SFX/<banco>/<banco>_{k-2:02d}.wav
 
 Tons cujo `vag == 1` são **placeholders mudos** (o motor toca, mas o waveform é silêncio).
 
+### 4.4 Banco de PORTA — embutido em `DOOR??.DO1` (`cat 4`)
+
+Achado desta rodada, seguindo a string de depuração **`"DOOR SOUND"`** em `0x800103ac`
+(vizinha de `"DOOR TEXTURE"` em `0x80010398`), usada em `0x80016534` como `a3` do loader
+`0x80012818` — que recebe `a0 = 0x801fc100` (destino em RAM) e uma entrada de LBA/tamanho
+da tabela `0x800946a4`.
+
+**Todo `STAGE*/DOOR??.DO1` embute um banco VAB completo**, com o mesmo magic
+`0x0001eeee`. Provado em **76/76** arquivos:
+
+```
+[tabela de SE: 4 x u32]  [header VAB @0x10]  [tons @0x40]  [tabela VAG]  [corpo PS-ADPCM]  [modelo…]
+```
+
+- `hdr` = **`0x10`** → a tabela de SE tem **4 entradas** (ids 0..3);
+- **o corpo PS-ADPCM começa em `hdr + u32@hdr+0x04`** (logo depois do bloco do header) e tem
+  `u32@hdr+0x00` bytes. Prova: com essa base, **todo** VAG da tabela termina num bloco com
+  flag de fim (bit0) — em 76/76 bancos. E os marcadores de mudo do SPU caem exatamente nos
+  fins de VAG (em `DOOR00`: `0xf0`, `0x1600`, `0x2db0`, `0x41f0`, cujos deltas — 5392, 6064,
+  5184 — reproduzem as durações da tabela VAG `[0, 6, 680, 1438, 2086]`);
+- os descritores usam **banco 4** em 76/76 → **`cat 4` é o banco de porta**. Casa com o
+  único call site de `cat 4` no EXE: **`0x800161c4`** (`a0 = 0x401` → cat 4, id 1), na região
+  de setup/animação de porta.
+
+**A tabela de SE das portas é um TEMPLATE.** Só existem **3 padrões distintos** nas 76, e os
+ids 0 e 1 são **byte-idênticos em todas**:
+
+| Padrão | Ocorrências |
+|---|---:|
+| `00601408`, `00612408`, `ffffffff`, `ffffffff` | 72 |
+| `00601408`, `00612408`, `0fe23408`, `07e34408` | 3 |
+| `00601408`, `00612408`, `0fe23308`, `ffffffff` | 1 |
+
+Consequência medida: **12 dos 159** descritores apontam um tom **fora** do próprio banco —
+são as 12 portas que só têm 2 tons e mantiveram o id 1 (que aponta o tom 2) herdado do
+template. É **inconsistência do dado original**, não do formato (nos 278 descritores dos
+bancos do disco isso acontece **0 vezes**). A ferramenta marca `invalido` e segue, em vez de
+inventar outro layout de campo para forçar o encaixe.
+
+O **id 0 é o único válido nas 76 portas** — por isso é tratado como o som principal.
+`porta_abrir = 0` / `porta_fechar = 1` / `porta_trancada = 2` é **ordem DECLARADA**: qual id
+é abrir e qual é fechar **não foi medido**.
+
+Extrair: `NOSTALGIA_OUT=port python tools/exe_audio.py --portas` → **147 WAV** em
+`assets/SOUND/SFX/S<stage>_DOOR<xx>/`. É o que dá porta de madeira ≠ portão de metal.
+
 ### 4.3 Validação (`python tools/exe_audio.py --verificar`)
 
-**708 asserções, 0 falhas.** As que sustentam o de-para:
+**1345 asserções, 0 falhas.** As que sustentam o de-para:
 
-- `hdr+0x00 == len(.VB)` em 35/35 bancos;
+- `hdr+0x00 == len(.VB)` em 35/35 bancos do disco;
 - `hdr+0x14 == nº de tons achados pelo marcador `c0 00 c1 00 c2 00 c3 00`` em 35/35;
-- tons terminam exatamente onde `hdr+0x08` aponta a tabela VAG em 35/35;
-- **`b1 >> 4 < n_tons` em 278/278** descritores usados — o campo tem 4 bits e o banco mais
-  rico tem exatamente **16** tons, ou seja o campo está *justo*, sem folga;
+- **ler os tons e a tabela VAG por OFFSET dá o mesmo resultado que achá-los por
+  assinatura/varredura**, em 35/35 — é isso que autoriza usar o offset nos `DOOR*.DO1`,
+  onde o marcador `reserved[4]` não serve (parte dos tons não o tem, e o resto do arquivo
+  — modelo/textura — produz falsos positivos);
+- tons terminam exatamente onde `hdr+0x08` aponta a tabela VAG, e a tabela vai de `0` a
+  `len(.VB)/8`, em 35/35;
+- **`b1 >> 4 < n_tons` em 278/278** descritores usados dos bancos do disco — o campo tem 4
+  bits e o banco mais rico tem exatamente **16** tons, ou seja o campo está *justo*, sem
+  folga;
 - todo `tom.vag` cai dentro da tabela VAG;
-- cada arquivo cita **um único** banco nos seus descritores.
+- cada arquivo cita **um único** banco nos seus descritores;
+- portas: 76 bancos, todos com 4 ids e banco 4; **todo VAG termina em flag de fim** com a
+  base `hdr+total`; 3 padrões de tabela; 159 descritores com exatamente 12 inválidos; id 0
+  válido em 76/76.
 
 ---
 
@@ -424,10 +480,11 @@ blocos `<Text>`, 13 `{clear}` + 4 `{timed}`. `epilogue.xml`: 1 bloco, 13 `{clear
 | Descritor: `b1` bits0-3 e `b3` bits1-7 | **NÃO PROVADO** | — |
 | `cat` == id de banco VAB | fechado (§3) | **ALTA** |
 | De-para dos 5 sons de menu | fechado (§5.1) | **ALTA** (4 evidências independentes) |
-| Nome das ações de jogo (tiro, porta, passo, item) | **DECLARADO** — call site provado, semântica não | BAIXA |
+| **Porta**: banco `cat 4` embutido nos 76 `DOOR??.DO1` | fechado (§4.4) | **ALTA** no formato / **MÉDIA** no nome (qual id é abrir vs fechar não foi medido) |
+| Nome das ações de jogo (tiro, passo, item) | **DECLARADO** — call site provado, semântica não | BAIXA |
 | Quem preenche `SND_CTX + cat*4` (área → banco `C_`/`A_`) | **NÃO LOCALIZADO** | — |
-| Porta / passo / pegar item | **não identificados** — nenhum call site de `0x800746c0` pôde ser amarrado a essas ações nesta rodada | — |
-| Recarga | **não identificada** | — |
+| Passo / pegar item / recarga | **não identificados** — nenhum call site de `0x800746c0` pôde ser amarrado a essas ações nesta rodada | — |
+| `cat 3`, `cat 5`, `cat 6`, `cat 7` | call sites achados (`0x80078004`/`0x80078048`/`0x8007807c` para 5/6/7), banco de origem **não localizado** | — |
 | De-para sala → faixa de BGM | **aberto** (§7); não há opcode de BGM no SCD | — |
 | Idioma real das 370 vozes e do `MAIN07` | **inferido** (§8) | MÉDIA — falta ouvir |
 
@@ -439,10 +496,13 @@ blocos `<Text>`, 13 `{clear}` + 4 `{timed}`. `epilogue.xml`: 1 bloco, 13 `{clear
 # tabela de SE de um banco
 python tools/exe_audio.py --tabela C_00
 
-# 708 asserções que sustentam o de-para
+# 1345 asserções que sustentam o de-para
 python tools/exe_audio.py --verificar
 
-# gera data/re3_se.json + data/sfx_map.json no destino do port
+# extrai os WAV dos 76 bancos de porta (147 amostras)
+NOSTALGIA_OUT=port python tools/exe_audio.py --portas
+
+# gera data/re3_se.json (111 bancos) + data/sfx_map.json no destino do port
 NOSTALGIA_OUT=port python tools/exe_audio.py
 
 # teste do port (68 asserções) — SEMPRE com filtro, a suíte inteira leva ~7 min
