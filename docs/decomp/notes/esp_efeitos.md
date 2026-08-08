@@ -632,7 +632,99 @@ de fluxo.
 
 ---
 
-## 10. Como medir de novo
+## 10. PROFUNDIDADE do efeito de sala — a ordem de desenho (2026-08-08)
+
+O fogo do `R10D` já aparecia no jogo, mas **na frente de tudo** (relato do dono: "o fogo está
+na layer errada", e depois "uma chama na parede, na altura do peito"). Os dois sintomas têm a
+mesma causa: **falta de ordem de desenho**. E a ordem, no RE3, não é z-buffer:
+
+| quem | chave de Ordering Table | prova |
+|---|---|---|
+| sprite de máscara do cenário (priority sprite) | `depth` CRU do RDT | `0x80048844` (`bank = depth>>10`, `entry = depth & 1023`) |
+| personagem | `zona_de_prioridade(x,z) * 1024 + min(SZ>>5, 1023)` | `0x80037d50` (seção 14 do RDT) + `0x8002b86c` |
+| **efeito ESP** | `OT_index = z >> 5`, `z` saturado em `0x7fff` | `0x80022de0` |
+
+`SZ` e o `z` do ESP são a MESMA grandeza: o Z de câmera em unidades de mundo (matriz 1.12
+unitária do `LookAt` em `0x80078954`). Ordem de varredura da OT (`0x80029618`): bancos `N..1`
+e o banco `0` por último, cada um de `1023` para `0` → **chave MENOR = desenhado depois = NA
+FRENTE**. Logo as três chaves são comparáveis com `<`.
+
+**O que continua NÃO PROVADO:** o BANCO de OT em que `esp_draw_all` insere. A base da tabela
+chega em `sp+0x44` de `0x80022ccc` e não foi rastreada até a origem (lacuna 5 da §9). O port
+declara: usa a **mesma zona de prioridade do ponto do efeito** que o motor usa para o
+personagem — é regra de lugar, não de entidade, e evita o viés de fixar banco `0` (que faria
+toda chama vencer um personagem em zona de banco ≥ 1).
+
+O que o port faz com isso (`port/present/esp_sala.gd`): duas camadas de desenho, escolhidas
+por chama e por tick — atrás do `SubViewportContainer` do 3D quando `chave >= chave_do
+personagem`, e num `CanvasLayer` próprio (acima do 3D e da oclusão) quando é menor. Nas duas,
+o nó redesenha por conta própria os recortes do cenário com chave menor que a da chama (os
+pixels vêm do background HD, como em `port/room/occlusion.gd`).
+
+Medido no `R10D` com a Jill no spawn `(9404, 0, -13317)` (`port/dev/diag_esp_prof.gd`):
+
+| câmera | chave da Jill | chamas no quadro | recortes que cobrem chama |
+|---|---|---|---|
+| 0 | 147 | 8 (chaves 219..358 → todas atrás) | 12 |
+| 1 | 145 | 1 (chave 134 → **na frente**) | 0 |
+| 10 | 145 | 8 (uma com chave 142, na frente) | 27 |
+| 4, 5, 6 | 409..447 | 0..4 | 0 (essas câmeras não têm priority sprite) |
+
+**A "chama na parede" era isto:** a instância `(10523, 0, -9979)` (a menor, `param_hi = 0x1000`
+= 768 unidades de largura) projeta, na câmera 0, em `(38, 619)` — em cima do pedestal de pedra
+da esquerda. O `y` dela é **`0` no dado do opcode `0x70`** (medido; as 8 chamas do `R10D` têm
+`y = 0`), ou seja **não havia Y para corrigir**: ela está no chão, atrás do pilar, e sem ordem
+de desenho era pintada SOBRE o pilar. Com a regra da OT o pilar (priority sprite de chave
+menor) a cobre e ela desaparece dessa câmera — e continua visível da câmera 1, onde o cenário
+tem a mesma chama pintada no background. Prova visual: `port/dev/_esp/_prova_profundidade.png`
+(esquerda sem profundidade, direita com; embaixo a câmera 10).
+
+Limite declarado, herdado da oclusão: o recorte de máscara é um RETÂNGULO opaco (a forma
+per-pixel vive no atlas do PS1, que o port não sabe indexar), então onde o bloco cobre fundo
+vazio a chama ganha um "mordido" de canto reto. É o mesmo limite que o `occlusion.gd` já
+declara para o personagem.
+
+---
+
+## 11. QUADROS EM HD do pack (Seamless HD Project) — de-para provado (2026-08-08)
+
+Os quadros de ESP em SD são 24×24 a 48×48 texels; esticados 4× no quadro do port viram
+blocões. O pack HD do PC tem `hires/effect` (343 arquivos) e `hires/effect0` (48), **todos
+1024×1024 RGBA**. O de-para foi fechado por conteúdo, e é barato porque a geometria é
+conhecida:
+
+* `1024 = 4 × 256`, e **256×256 é exatamente uma TPAGE de 4bpp** do PS1 (64 halfwords × 256
+  linhas). Cada arquivo é uma página inteira, **já colorida** (a CLUT foi aplicada);
+* logo o sprite que a tabela B põe em `(u, v)` da tpage está em `(u*4, v*4)` do `.webp`, com
+  lado `size*4`. **Não há busca de posição** — só a escolha do arquivo.
+
+Critério (`tools/esp_decode.py hd`):
+1. **FORMA** — NCC de `luminância × alfa` nos pixels dos quadros que a sala realmente usa.
+   Medido no `R10D`: verdadeiro **0,9992** (banco `0x24`) e **0,9986** (`0x26`); primeiro
+   reprovado **0,763** e **0,503**. É separação de ordem de grandeza, não de calibração fina.
+2. **COR** — entre os empatados na forma (a mesma página aparece em vários arquivos, um por
+   linha de CLUT em uso), o menor RMS de cor contra o sprite SD **daquela variante**. No
+   `R10D` isso é o que separa `effect/D51197D9` (paleta da linha 488, banco `0x24`) de
+   `effect/156E5DED` (linha 490, banco `0x26`): RMS 7,2 e 8,5 contra 10,6/15,1 do trocado.
+
+**Não há atribuição global (Hungarian) aqui, de propósito:** o pareamento não é 1:1 — uma
+página HD serve MUITAS salas (as 156 com ESP compartilham páginas de efeito), então unicidade
+seria uma restrição falsa. O que substitui a atribuição global é o vínculo geométrico
+`(u,v) × 4`, que torna cada par decidível sozinho com folga medida. (A atribuição global é a
+ferramenta certa quando o vínculo geométrico não existe — é o caso dos memos/UI, ver
+`tools/hd_map_build.py` e `port/data/hd_ui_map.json`.)
+
+Saída: `assets/ESP/sala/<SALA>/hd/t{tipo}_A{a}_B{b}_v{var}_{px}x{px}.png` (px = `size*4`) e o
+mapa `port/data/esp_hd_map.json` com NCC, RMS, IoU de alfa e o NCC do primeiro reprovado —
+ou seja, a folga fica registrada par por par. `esp_sala.gd` prefere o HD e cai no SD sozinho.
+
+> Cuidado com as variantes por data do pack (o conjunto de janeiro/2025 é RUSSO e o de junho é
+> PT-BR): aqui **não se aplica**, porque efeito não tem texto. O critério de idioma
+> (`tools/memo_pt.py`) vale para `memo`/`misc`/UI.
+
+---
+
+## 12. Como medir de novo
 
 ```bash
 # desassemblar (o exe_parse trava em instruções COP2/GTE; use um passo-a-passo)
@@ -650,4 +742,16 @@ PYTHONIOENCODING=utf-8 python tools/esp_decode.py dump port/assets/ESP
 # xrefs / callers
 PYTHONIOENCODING=utf-8 python tools/esp_scan_helper.py xref 0x800ba728 0x800ba8a8
 PYTHONIOENCODING=utf-8 python tools/esp_scan_helper.py jal 0x8001b484
+
+# quadros do ESP da SALA (SD) e o de-para HD (§11)
+PYTHONIOENCODING=utf-8 python tools/esp_decode.py dump port/assets/ESP --all-rooms
+PYTHONIOENCODING=utf-8 python tools/esp_decode.py hd --room STAGE1/R10D
+PYTHONIOENCODING=utf-8 python tools/esp_decode.py hd            # as 156 salas com ESP
+
+# profundidade no port (§10): números e foto
+GODOT="/c/Program Files (x86)/Steam/steamapps/common/Godot Engine/godot.windows.opt.tools.64.exe"
+"$GODOT" --headless --path port --script res://dev/diag_esp_prof.gd
+ESP_CAMS=0,10 "$GODOT" --path port --rendering-driver opengl3 \
+    --script res://dev/shot_esp_prof.gd          # NÃO usar --headless (não renderiza)
+"$GODOT" --headless --path port --script res://dev/run_tests.gd -- esp
 ```

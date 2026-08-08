@@ -76,6 +76,10 @@ docs/**/*.webp
 godot/anim_shots/
 godot/dev/*.png
 port/dev/*.png
+## também nas SUBPASTAS de dev (port/dev/_esp/, etc.): `port/dev/*.png` só pega o 1º nível,
+## e por isso capturas do fogo tinham sido versionadas por engano
+port/dev/**/*.png
+port/dev/**/*.png.import
 
 # Config local do Claude Code
 .claude/settings.local.json

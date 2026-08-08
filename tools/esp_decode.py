@@ -918,6 +918,7 @@ HD_PASTAS = ("effect", "effect0")
 HD_ESCALA = 4                  # 1024/256: medido em todos os 391 arquivos
 HD_LADO_SD = 256               # lado da tpage de 4bpp em pixels
 HD_NCC_MIN = 0.95              # verdadeiros >=0.99; o segundo colocado real fica <0.75
+HD_BLOCO = 24                  # candidatos por bloco no casamento (teto de memoria)
 JSON_HD = os.path.join(ROOT, "port", "data", "esp_hd_map.json")
 
 
@@ -1041,19 +1042,27 @@ def hd_sala(sala, outdir, nomes, pag, arqs, verbose=True):
             if n_alvo == 0:
                 continue
             alvo /= n_alvo
-            cand = pag[:, y0:y0 + h, x0:x0 + w, :].astype(np.float32)
-            L = _lum(cand)[:, val]
-            L -= L.mean(axis=1, keepdims=True)
-            nn = np.linalg.norm(L, axis=1)
-            nn[nn == 0] = 1.0
-            ncc = (L / nn[:, None]) @ alvo
-            # --- etapa 2: COR (RMS) entre os que passaram na forma ---
+            # --- etapa 2 (junto): COR (RMS) e cobertura de alfa ---
             op = val & (sd[..., 3] > 0)
             sdc = sd[..., :3].astype(np.float32)[op]
-            hdc = cand[..., :3][:, op]
-            rms = np.sqrt(((hdc - sdc) ** 2).sum(-1)).mean(axis=1)
-            aopt = cand[..., 3][:, op] > 8
-            iou = (aopt.sum(axis=1) / max(1, int(op.sum())))
+            n_op = max(1, int(op.sum()))
+            # Em BLOCOS de candidatos: a pilha inteira em float32 chega a centenas de MB
+            # num recorte grande (foi assim que a varredura das 156 salas estourou memoria).
+            n_cand = pag.shape[0]
+            ncc = np.zeros(n_cand, dtype=np.float32)
+            rms = np.zeros(n_cand, dtype=np.float32)
+            iou = np.zeros(n_cand, dtype=np.float32)
+            for s0 in range(0, n_cand, HD_BLOCO):
+                cand = pag[s0:s0 + HD_BLOCO, y0:y0 + h, x0:x0 + w, :].astype(np.float32)
+                L = _lum(cand)[:, val]
+                L -= L.mean(axis=1, keepdims=True)
+                nn = np.linalg.norm(L, axis=1)
+                nn[nn == 0] = 1.0
+                ncc[s0:s0 + cand.shape[0]] = (L / nn[:, None]) @ alvo
+                hdc = cand[..., :3][:, op]
+                rms[s0:s0 + cand.shape[0]] = np.sqrt(
+                    ((hdc - sdc) ** 2).sum(-1)).mean(axis=1)
+                iou[s0:s0 + cand.shape[0]] = (cand[..., 3][:, op] > 8).sum(axis=1) / n_op
             passou = np.where(ncc >= HD_NCC_MIN)[0]
             if passou.size == 0:
                 if verbose:
