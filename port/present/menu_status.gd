@@ -346,6 +346,17 @@ func avancar() -> void:
 	queue_redraw()
 
 
+## Som do menu: o de-para id → amostra está provado (`0x800746c0` → descritor no offset 0 do
+## `.VH`; 4 mover, 5 cancelar, 6 confirmar, 7 inválido, 9 abrir — ver `docs/decomp/notes/exe_audio.md`).
+## O `Game.sfx` é o tocador; aqui só se diz QUANDO.
+func _sfx() -> Sfx:
+	var laco := Engine.get_main_loop()
+	if laco == null:
+		return null
+	var g: Node = (laco as SceneTree).root.get_node_or_null("/root/Game")
+	return g.get("sfx") as Sfx if g != null else null
+
+
 func mover_cursor(dx: int, dy: int) -> void:
 	## Navegação. Na grade é `col ± 1` / `lin ± 1` (`0x80066788`+, o cursor de tela é
 	## `x = col*40, y = lin*30`). Subindo da primeira linha sai da grade: o jogo permite o índice
@@ -355,6 +366,9 @@ func mover_cursor(dx: int, dy: int) -> void:
 	## -1 = FILE/MAP (pela coluna) e -2 = EXIT. É escolha do port, declarada.
 	if not aberto or _anim > 0:
 		return
+	var som := _sfx()
+	if som != null:
+		som.menu_mover()
 	if mensagem != "":
 		# com texto de EXAME aberto, cima/baixo ROLAM o texto (antes trocavam de ícone)
 		if dy > 0 and _datilo < mensagem.length():
@@ -731,6 +745,9 @@ func confirmar() -> String:
 	## Enter/ação. Devolve o que aconteceu (também fica em `ultima_acao`).
 	if not aberto or _anim > 0:
 		return ""
+	var som := _sfx()
+	if som != null:
+		som.menu_confirmar()
 	if combinar_de >= 0:
 		var feito := _combinar(combinar_de, cursor)
 		combinar_de = -1
@@ -897,6 +914,9 @@ func _player() -> Object:
 
 
 func cancelar() -> void:
+	var som := _sfx()
+	if som != null:
+		som.menu_cancelar()
 	## ESC dentro do menu, na ordem do jogo: **primeiro desfaz um passo**, e só fecha a tela quando
 	## não há nada aberto. Antes, no modo EXAMINAR o ESC fechava a tela inteira em vez de voltar.
 	if mensagem != "":

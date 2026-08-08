@@ -53,6 +53,10 @@ desktop.ini
 
 # === Saídas de diagnóstico do port (renders/screenshots de validação) ===
 port/_shot*.png
+## regra GERAL: toda captura de teste na raiz do port começa com "_" e é lixo local
+port/_*.png
+port/_*.png.import
+port/_*.webp
 port/_ui_*.png
 port/_diag_*.png
 port/*.png

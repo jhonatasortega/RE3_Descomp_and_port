@@ -39,6 +39,12 @@ func _init(estado: GameState = null) -> void:
 	## O player precisa do estado para gastar munição no tiro e da lista de ALVOS para o
 	## auto-lock da mira (`0x800445c8` varre os inimigos da sala).
 	player.estado = state
+	## Tocador de SFX do jogo (o de-para de som está provado; ver `docs/decomp/notes/exe_audio.md`)
+	var laco := Engine.get_main_loop()
+	if laco != null:
+		var g_sfx: Node = (laco as SceneTree).root.get_node_or_null("/root/Game")
+		if g_sfx != null:
+			player.sfx = g_sfx.get("sfx") as Sfx
 	player.alvos = func() -> Array:
 		var fora: Array = []
 		if vm == null:

@@ -380,8 +380,14 @@ func _tick_mira(pad: Pad) -> void:
 
 func _puxar_gatilho() -> void:
 	## Gatilho: `player+0xe3` é a máquina de debounce do EXE; aqui a borda do botão basta, porque
-	## o `Pad.just_pressed` já é borda. Sem munição = clique seco (o EXE escolhe o SFX "vazio"
-	## pelos bits `0x200`/`0x400` de `player+0xe4`).
+	## o `Pad.just_pressed` já é borda.
+	##
+	## CORREÇÃO: eu havia escrito que o EXE escolhe o SFX "seco/tiro/vazio" pelos bits
+	## `0x200`/`0x400` de `player+0xe4` — isso veio da minha nota em `exe_combat.md` e **não se
+	## sustenta**: não existe esse `andi` nem leitura de `+0xe4` em `0x800776b0`. O som do TIRO é
+	## `cat 0 / id 11`, pedido em `0x8003ad6c` (medido na varredura de áudio, ver
+	## `docs/decomp/notes/exe_audio.md`). Clique seco sem munição segue sendo comportamento do
+	## port, declarado.
 	var st := _estado()
 	var qtd := int(st.equipped_qtd()) if st != null else 0
 	if qtd <= 0:
@@ -413,6 +419,10 @@ func _resolver_tiro() -> void:
 	var st := _estado()
 	if st != null:
 		st.gastar_municao_equipada(1)
+	## SOM DO TIRO: `cat 0 / id 11`, pedido em `0x8003ad6c` (de-para provado em
+	## `docs/decomp/notes/exe_audio.md`). O tocador é o `Game.sfx`; o player só diz QUANDO.
+	if sfx != null:
+		sfx.tiro()
 	var de := pos
 	var para := pos + Vector3i(
 		PS1Math.rsin(facing) * MIRA_ALCANCE >> PS1Math.SHIFT, 0,
@@ -482,6 +492,8 @@ func _travar_alvo() -> int:
 ## O `GameState` vem injetado pela sala (o player não conhece a árvore de cena). `null` = teste
 ## isolado, e aí o tiro roda sem gastar munição.
 var estado: GameState = null
+## Tocador de efeitos (`Game.sfx`), injetado pela sala. `null` = teste isolado, sem som.
+var sfx: Sfx = null
 
 
 func _estado() -> GameState:
