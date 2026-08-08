@@ -321,7 +321,14 @@ BOOT_FASE=menu BOOT_CURSOR=0 godot --path port --rendering-driver opengl3 \
     --script res://dev/shot_boot.gd
 BOOT_FASE=fmv BOOT_FMV_T=21 godot --path port --rendering-driver opengl3 \
     --script res://dev/shot_boot.gd
+# prova a última perna: o boot TROCA para game.tscn e a captura sai dentro da R10D
+BOOT_FASE=jogo BOOT_ENTRAR=1 godot --path port --rendering-driver opengl3 \
+    --script res://dev/shot_boot.gd
 ```
+
+Verificado assim: a captura de `BOOT_FASE=jogo BOOT_ENTRAR=1` sai com a HUD
+`sala R10D  câmera 1/13 (attr 29623, fov 54.8)` e a Jill em `PS1(9404, 0, -13317)` —
+ou seja, `boot.tscn` → `game.tscn` → sala inicial, sem passo intermediário manual.
 
 ---
 

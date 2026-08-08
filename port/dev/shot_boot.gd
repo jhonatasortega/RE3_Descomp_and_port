@@ -20,6 +20,8 @@ extends SceneTree
 ##     BOOT_TICKS    ticks a avançar DENTRO do passo (para pegar o meio de um fade)
 ##     BOOT_OUT      PNG de saída (default res://_boot_<fase>.png)
 ##     BOOT_FMV_T    com BOOT_FASE=fmv: segundo do vídeo a capturar (testa a legenda)
+##     BOOT_ENTRAR   1 = deixa o boot TROCAR para game.tscn no fim (prova "cai no jogo";
+##                   com BOOT_FASE=jogo a captura sai já dentro da sala inicial)
 
 var _cena: Node
 var _saida := ""
@@ -33,7 +35,7 @@ func _initialize() -> void:
 	_saida = _env("BOOT_OUT", "res://_boot_%s.png" % _fase)
 	var packed: PackedScene = load("res://scenes/boot.tscn")
 	_cena = packed.instantiate()
-	_cena.set("entrar_no_jogo", false)
+	_cena.set("entrar_no_jogo", _env("BOOT_ENTRAR", "") != "")
 	_cena.set("tocar_fmv", _fase == "fmv")
 	root.add_child(_cena)
 
@@ -84,9 +86,13 @@ func _process(_delta: float) -> bool:
 			_posicionar_fmv()
 		if _quadros < 20:
 			return false
-	else:
+	elif is_instance_valid(_cena) and _cena.is_inside_tree():
 		# congela o passo: sem isso o `_process` do Boot faria a fase andar antes do clique
 		_cena.set("process_mode", Node.PROCESS_MODE_DISABLED)
+	else:
+		# o Boot trocou de cena (caiu no jogo): dá mais quadros para a sala compor
+		if _quadros < 40:
+			return false
 	if _quadros < 8:                             ## deixa o webp carregar e compor
 		return false
 	var img := root.get_texture().get_image()
