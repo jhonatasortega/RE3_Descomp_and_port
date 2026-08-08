@@ -62,6 +62,13 @@ static var _base_sem_acento: Dictionary = {}
 ## atlas HD deixa o texto espaçado — foi o que apareceu no primeiro teste.
 static var _metrica_hd: Dictionary = {}
 static var _tinta_hd: Dictionary = {}   ## cod -> {x, w, adv} medido no atlas HD
+## Os SÍMBOLOS do começo da tabela (`charset` do `re3_font.json`, lido do EXE):
+##   `00` espaço · `01` . · **`02` ▶** · `03` 「 · `04` 」 · `05` ( · `06` ) · `07` 『 · `08` 』
+##   `09` “ · `0A` ” · **`0B` ▼**
+## São eles que o jogo usa como seta de "há mais" — e não existe `◀` na fonte: a seta para a
+## esquerda é o `▶` desenhado ESPELHADO (`desenhar_seta`).
+const SETA_DIREITA := 0x02
+const SETA_BAIXO := 0x0B
 
 
 static func _carregar() -> void:
@@ -100,6 +107,12 @@ static func _carregar() -> void:
 				if w == null:
 					continue
 				_metrica_hd[ch] = {"adv": int(w), "trim": int(ind) if ind != null else 0}
+	## SÍMBOLOS do EXE por ÚLTIMO (o bloco acima SUBSTITUI `_mapa_ascii`): sem isso o `▼` caía na
+	## fórmula `ASCII - 0x24` e saía outro glifo — era o "!" que aparecia no lugar da seta.
+	for k: String in (_dados.get("charset", {}) as Dictionary):
+		var chs := String((_dados["charset"] as Dictionary)[k])
+		if chs.length() == 1 and not _mapa_ascii.has(chs) and not _mapa_hd.has(chs):
+			_mapa_ascii[chs] = k.hex_to_int()
 
 
 static func atlas(clut := 0) -> Texture2D:
@@ -184,16 +197,26 @@ static func metrica(ch: String, hd: bool) -> Dictionary:
 	return {"adv": a, "trim": trim(cod), "w": a}
 
 
-static func largura(s: String, hd := true) -> int:
+static func largura(s: String, hd := true, escala := 1.0) -> int:
 	## Largura em pixels de tela (320×240) de uma linha, pela tabela proporcional.
-	var w := 0
+	var w := 0.0
 	var usa_hd := hd and atlas_hd() != null
 	for i in s.length():
 		var ch := s[i]
 		if codigo_do_char(ch) < 0:
 			continue
-		w += int(metrica(ch, usa_hd)["adv"])
-	return w
+		w += float(metrica(ch, usa_hd)["adv"]) * escala
+	return int(w)
+
+
+static func escala_para_caber(s: String, largura_max: int) -> float:
+	## Maior escala ≤ 1 que faz `s` caber em `largura_max`. É o que resolve "EXAMINAR" estourando a
+	## placa de 56 px do submenu: a fonte do jogo é de 14 px e o rótulo em PT é mais comprido que o
+	## `CHECK` do original, então o port ENCOLHE em vez de vazar.
+	var w := largura(s)
+	if w <= largura_max or w == 0:
+		return 1.0
+	return float(largura_max) / float(w)
 
 
 static func quebrar(s: String, largura_max: int) -> Array[String]:
@@ -213,8 +236,30 @@ static func quebrar(s: String, largura_max: int) -> Array[String]:
 	return linhas
 
 
+static func desenhar_seta(ci: CanvasItem, cod: int, onde: Vector2i, cor := Color.WHITE,
+		escala := 1.0, espelhar := false) -> void:
+	## Desenha um GLIFO por código (as setas `▶`/`▼` do começo da tabela). `espelhar` vira o `▶`
+	## para a esquerda, que é como o jogo faz o `◀` da página anterior — a fonte não tem esse glifo.
+	var tex := atlas_hd()
+	var fator := 4
+	if tex == null:
+		tex = atlas(0)
+		fator = 1
+	if tex == null:
+		return
+	var u := (cod % COLUNAS) * CELULA
+	var v := int(cod / COLUNAS) * CELULA + V_BASE
+	var lado := CELULA * escala
+	var d := Rect2(float(onde.x), float(onde.y), lado, lado)
+	if espelhar:
+		d.position.x += lado
+		d.size.x = -lado
+	ci.draw_texture_rect_region(tex, d,
+		Rect2i(u * fator, v * fator, CELULA * fator, CELULA * fator), cor)
+
+
 static func desenhar(ci: CanvasItem, s: String, onde: Vector2i, clut := 0,
-		cor := Color.WHITE) -> int:
+		cor := Color.WHITE, escala := 1.0) -> int:
 	## Desenha uma linha e devolve a largura usada. Coordenadas no espaço 320×240.
 	# HD primeiro: é a fonte EUROPEIA do pack, a única com os glifos acentuados. O SD (TEXU do
 	# NTSC-U) não tem acento nenhum, então em PT-BR ele sempre comeria letras.
@@ -225,7 +270,7 @@ static func desenhar(ci: CanvasItem, s: String, onde: Vector2i, clut := 0,
 		fator = 1
 	if tex == null:
 		return 0
-	var x := onde.x
+	var x := float(onde.x)
 	for i in s.length():
 		var ch := s[i]
 		var cod := codigo_do_char(ch)
@@ -238,10 +283,11 @@ static func desenhar(ci: CanvasItem, s: String, onde: Vector2i, clut := 0,
 		var a := int(m["adv"])
 		var w := int(m.get("w", a))
 		# recorta só a TINTA (largura `w` a partir de `trim`) e anda o avanço
-		ci.draw_texture_rect_region(tex, Rect2(x, onde.y, w, CELULA),
+		ci.draw_texture_rect_region(tex,
+			Rect2(x, float(onde.y), float(w) * escala, CELULA * escala),
 			Rect2i((u + t) * fator, v * fator, w * fator, CELULA * fator), cor)
-		x += a
-	return x - onde.x
+		x += float(a) * escala
+	return int(x) - onde.x
 
 
 static func desenhar_bloco(ci: CanvasItem, s: String, caixa: Rect2i, clut := 0,

@@ -57,6 +57,7 @@ const DIGITO_W := 8
 const DIGITO_H := 11
 const DIGITO_V := 19                    ## `v0 = 0x13` em `0x8006c940`
 const DIGITO_U0 := 4                    ## `u0 = 4 + d*8`
+const QTD_ESCALA := 0.9                 ## dígitos 10% menores (ajuste pedido, não medida)
 const ANIM_QUADROS := 6                 ## abertura/fechamento (`0x800741a0`), 6 quadros
 const CURSOR_PASSO := 2                 ## `ctx+0x22` ±2
 const CURSOR_TETO := 0x3F               ## clamp
@@ -151,6 +152,7 @@ const COR_AZUL := Color8(8, 0, 80)
 ## marcador (o item de origem da combinação) fica verde. Antes eu clareava o azul, o que não existe.
 const COR_VERMELHO := Color8(128, 0, 0)
 const COR_VERDE := Color8(0, 128, 0)
+const COR_SETA := Color8(0, 220, 0)     ## verde da seta de página (medido na captura do jogo)
 ## Moldura das janelas grandes: cinza medido em `u=8, v=192` do atlas (134,132,134).
 const COR_JANELA := Color8(134, 132, 134)
 ## ── SUBMENU DE COMANDO DO ITEM ──
@@ -180,6 +182,13 @@ const SUB_TEXTO_PT := {
 	"EQUIP": "EQUIPAR", "USE": "USAR", "COMBINE": "COMBINAR", "CHECK": "EXAMINAR",
 }
 const RETRATO := [0, 192, 40, 56, 18, 22]        ## B2 (JILL) — paleta 2
+## ── O BURACO DA MOLDURA (medido no atlas) ──
+## O bloco B0 (64×64 em (8,16)) tem a janela escura em `x[8..54] y[6..59]` locais, ou seja
+## **x[16..62] y[22..75]** na tela: 47×54. O registro do retrato é 40×**56** em (18,22), então ele
+## passa 3 px do fundo da janela — e no HD isso fica gritante porque a arte do pack redesenhou a
+## Jill maior (a densidade de tinta medida vai de x=0 a x≈155 dos 320, e o rosto encosta na base).
+## Aqui o retrato é ENCAIXADO na janela mantendo a proporção 40:56 (= 39×54, centrado em x).
+const JANELA_RETRATO := [16, 22, 47, 54]
 const CURSOR := [120, 0, 40, 30, 224, 66]        ## B146
 const PLACA := [0, 0, 112, 72, 56, 88]           ## B66 — a placa grande do item (ITEMG.PIX)
 ## Texto da condição em PT e a cor de cada estado (as do jogo: FINE verde, CAUTION amarelo e
@@ -230,6 +239,11 @@ var combinar_de := -1
 ## Texto na caixa de mensagem (vazio = mostra só o nome do item selecionado).
 var mensagem := ""
 var mensagem_linha := 0                 ## primeira linha visível do texto de exame
+## MÁQUINA DE ESCREVER do texto de exame: quantos caracteres já apareceram. O jogo escreve o texto
+## de EXAMINAR letra por letra e o jogador pula com o direcional para baixo — foi o que o usuário
+## apontou ("preenchido como se fosse digitado em uma máquina de escrever").
+var _datilo := 0
+const DATILO_POR_TICK := 2              ## caracteres por tick de 30 Hz
 static var _itens_json: Dictionary = {}
 var _pronto := false
 
@@ -315,6 +329,9 @@ func avancar() -> void:
 			aberto = false
 			visible = false
 			_fechando = false
+	# máquina de escrever do texto de exame
+	if mensagem != "" and _datilo < mensagem.length():
+		_datilo = mini(_datilo + DATILO_POR_TICK, mensagem.length())
 	# piscada do cursor: sobe/desce de 2 em 2 com clamp em 0x3f
 	if _piscada_sobe:
 		_piscada += CURSOR_PASSO
@@ -340,6 +357,10 @@ func mover_cursor(dx: int, dy: int) -> void:
 		return
 	if mensagem != "":
 		# com texto de EXAME aberto, cima/baixo ROLAM o texto (antes trocavam de ícone)
+		if dy > 0 and _datilo < mensagem.length():
+			_datilo = mensagem.length()        ## para baixo PULA a máquina de escrever
+			queue_redraw()
+			return
 		if dy != 0:
 			mensagem_linha = clampi(mensagem_linha + dy, 0, maxi(0, _mensagem_linhas() - 2))
 			queue_redraw()
@@ -426,12 +447,19 @@ func _draw() -> void:
 		_janela(Rect2(12, 172, 200, 48), t)
 	for r: Array in MOLDURA:
 		_moldura(r, t)
+	## encaixe: maior retângulo 40:56 que cabe na janela de 47×54 (declarado: cálculo do port, a
+	## partir da janela MEDIDA no atlas — o registro do EXE vazava 3 px)
+	var alt_j: int = JANELA_RETRATO[3]
+	var lar_j := int(round(float(alt_j) * float(RETRATO[2]) / float(RETRATO[3])))
+	var dx_j: int = JANELA_RETRATO[0] + (int(JANELA_RETRATO[2]) - lar_j) / 2
+	var dy_j: int = JANELA_RETRATO[1]
 	if _retratos_hd != null:
 		# o bloco HD cobre o SD (0,192)-(79,247): desconta a origem e multiplica por 4
 		_blit(_retratos_hd, [RETRATO[0], RETRATO[1] - 192, RETRATO[2], RETRATO[3],
-			RETRATO[4], RETRATO[5]], t, Color.WHITE, 0, 4)
+			dx_j, dy_j], t, Color.WHITE, 0, 4, Vector2i(lar_j, alt_j))
 	else:
-		_blit(_retratos, RETRATO, t)
+		_blit(_retratos, [RETRATO[0], RETRATO[1], RETRATO[2], RETRATO[3], dx_j, dy_j],
+			t, Color.WHITE, 0, 1, Vector2i(lar_j, alt_j))
 	# A palavra da condição também é SPRITE do STMOJIU (só EN/RU no pack), então vai como texto em
 	# PT. As cores são as do jogo: FINE verde, CAUTION amarelo/laranja, DANGER vermelho.
 	var cnd := condicao()
@@ -461,7 +489,8 @@ func _moldura(r: Array, t: float, cor := Color.WHITE) -> void:
 		_blit(_chrome, r, t, cor, U_TPAGE_9B)
 
 
-func _blit(tex: Texture2D, r: Array, t: float, cor := Color.WHITE, du := 0, fator := 1) -> void:
+func _blit(tex: Texture2D, r: Array, t: float, cor := Color.WHITE, du := 0, fator := 1,
+		destino_tam := Vector2i.ZERO) -> void:
 	## `fator` = escala da IMAGEM FONTE em relação ao SD. O pack HD do Seamless é **exatamente 4×**
 	## do PS1 em todos os assets conferidos, então o mesmo registro de 12 bytes serve para os dois:
 	## multiplica-se só o retângulo de origem, e o destino (320×240) não muda.
@@ -469,7 +498,11 @@ func _blit(tex: Texture2D, r: Array, t: float, cor := Color.WHITE, du := 0, fato
 		return
 	var origem := Rect2i((int(r[0]) + du) * fator, int(r[1]) * fator,
 		int(r[2]) * fator, int(r[3]) * fator)
-	var destino := Rect2(float(r[4]), float(r[5]), float(r[2]), float(r[3]))
+	## `destino_tam` != 0 desacopla o tamanho do DESTINO do tamanho do recorte — é o que encaixa o
+	## retrato na janela da moldura e o que deixa os dígitos da quantidade 10% menores.
+	var destino := Rect2(float(r[4]), float(r[5]),
+		float(destino_tam.x) if destino_tam.x > 0 else float(r[2]),
+		float(destino_tam.y) if destino_tam.y > 0 else float(r[3]))
 	if t < 1.0:
 		# cortina: encolhe verticalmente em torno do centro da tela
 		var meio := 120.0
@@ -512,12 +545,16 @@ func _desenhar_arquivo(t: float) -> void:
 				draw_texture_rect_region(tv, dv, rv)
 		if idx == sel:
 			draw_rect(Rect2(cx - 1, cy - 1, ARQ_CELULA.x, ARQ_CELULA.y), COR_VERMELHO, false, 1.0)
-	# seta verde de "há mais páginas": na captura do original é um TRIÂNGULO à DIREITA do painel.
-	# Uso o glifo `▶` da própria fonte (código 2 na tabela do EXE), em verde.
-	if docs.size() > ARQ_COLUNAS * ARQ_LINHAS:
-		Texto.desenhar(self, "▶",
-			Vector2i(ARQ_PAINEL[0] + ARQ_PAINEL[2] - 14, ARQ_ORIGEM.y + ARQ_CELULA.y),
-			0, Color8(0, 220, 0))
+	## SETAS VERDES de página, como nas capturas do jogo: `▶` à direita quando há página seguinte e
+	## `◀` (o mesmo glifo ESPELHADO — a fonte não tem o esquerdo) à esquerda quando há anterior.
+	## Ficam na altura da LINHA DO MEIO, fora da grade.
+	var y_seta: int = ARQ_ORIGEM.y + ARQ_CELULA.y + 4
+	if (pag + 1) * ARQ_COLUNAS * ARQ_LINHAS < docs.size():
+		Texto.desenhar_seta(self, Texto.SETA_DIREITA,
+			Vector2i(ARQ_ORIGEM.x + ARQ_COLUNAS * ARQ_CELULA.x + 1, y_seta), COR_SETA)
+	if pag > 0:
+		Texto.desenhar_seta(self, Texto.SETA_DIREITA,
+			Vector2i(ARQ_ORIGEM.x - 15, y_seta), COR_SETA, 1.0, true)
 	# nome do documento selecionado, na faixa de baixo do painel
 	if sel < docs.size():
 		Texto.desenhar(self, String(arquivo.call("nome_do_doc", docs[sel])),
@@ -547,16 +584,24 @@ func _desenhar_mensagem(t: float) -> void:
 		return
 	var caixa := Rect2i(20, 178, 184, 38)
 	if mensagem != "":
-		var linhas := Texto.quebrar(mensagem, caixa.size.x)
+		## MÁQUINA DE ESCREVER: o texto de exame aparece caractere por caractere, e apertar para
+		## baixo pula a animação (`_datilo_pular`). O contador anda em `avancar()`.
+		var visivel := mensagem
+		if _datilo < mensagem.length():
+			visivel = mensagem.substr(0, _datilo)
+		var linhas := Texto.quebrar(visivel, caixa.size.x)
+		var todas := Texto.quebrar(mensagem, caixa.size.x)
 		var y := caixa.position.y
 		for i in range(mensagem_linha, linhas.size()):
 			if y + Texto.CELULA > caixa.position.y + caixa.size.y:
-				# ainda há texto: marca com a seta para baixo, como o jogo faz
-				Texto.desenhar(self, ">", Vector2i(caixa.position.x + caixa.size.x - 8,
-					caixa.position.y + caixa.size.y - 12))
 				break
 			Texto.desenhar(self, linhas[i], Vector2i(caixa.position.x, y))
 			y += Texto.ALTURA_LINHA
+		# ainda há texto abaixo: a SETA PARA BAIXO da fonte (código 0x0B), não um "!"
+		if _datilo >= mensagem.length() and todas.size() - mensagem_linha > 2:
+			Texto.desenhar_seta(self, Texto.SETA_BAIXO,
+				Vector2i(caixa.position.x + caixa.size.x - 10,
+				caixa.position.y + caixa.size.y - 13))
 		return
 	Texto.desenhar(self, _nome_do_item(id), Vector2i(caixa.position.x, caixa.position.y))
 
@@ -603,8 +648,12 @@ func _desenhar_submenu(t: float) -> void:
 		_caixa(Rect2(159.0, float(y), 56.0, 16.0), cor, t)
 		# rótulo em PT com a fonte do jogo (ver SUB_TEXTO_PT); centralizado na placa de 56 px
 		var txt: String = SUB_TEXTO_PT.get(sub_itens[i], sub_itens[i])
-		var lw := Texto.largura(txt)
-		Texto.desenhar(self, txt, Vector2i(159 + (56 - lw) / 2, y + 2))
+		## O rótulo em PT é mais comprido que o do original ("EXAMINAR" contra "CHECK"), então
+		## ENCOLHE para caber nos 56 px da placa em vez de vazar por cima da borda.
+		var esc := Texto.escala_para_caber(txt, 52)
+		var lw := Texto.largura(txt, true, esc)
+		Texto.desenhar(self, txt, Vector2i(159 + (56 - lw) / 2,
+			y + 2 + int((14.0 - 14.0 * esc) / 2.0)), 0, Color.WHITE, esc)
 
 
 func confirmar() -> String:
@@ -637,6 +686,7 @@ func confirmar() -> String:
 				var e := _dado_do_item(idc)
 				mensagem = String(e.get("exam_pt", e.get("exam_en", "")))
 				mensagem_linha = 0
+				_datilo = 0                    ## recomeça a máquina de escrever
 				ultima_acao = "examinou: %s" % mensagem.substr(0, 40)
 		return ultima_acao
 	if selecao_botao == 0:
@@ -764,6 +814,7 @@ func cancelar() -> void:
 	if mensagem != "":
 		mensagem = ""                      ## sai do EXAMINAR e volta para o menu
 		mensagem_linha = 0
+		_datilo = 0
 		queue_redraw()
 		return
 	if combinar_de >= 0:
@@ -899,10 +950,14 @@ func _desenhar_itens(t: float) -> void:
 				destino.position.y = 120.0 + (destino.position.y - 120.0) * t
 				destino.size.y *= t
 			draw_texture_rect(tex, destino, false)
-		var qtd := int(slot.get("qtd", 0))
-		if qtd > 1:
-			var fl := int(slot.get("flags", 0))
-			_desenhar_qtd(qtd, p + QTD_OFFSET, t, 2 + ((fl >> 2) & 3))
+		## QUANTIDADE: o EXE decide pelo **modo** do slot, que são os bits 0-1 do `u16` em `slot+2`
+		## (`0x8006c0a0`: `lbu v0,2(s2); andi 3; sll 8` vira `a3>>8` em `draw_number 0x8006c6d0`,
+		## e lá `0x8006c730` com modo 0 pula direto para o epílogo: **não desenha nada**). É por
+		## isso que a PRENSA não tem número: o loadout novo é `82 fa 0000` — id 0x82, quantidade
+		## 250 no byte 1, mas `flags = 0` → modo 0. A Hand Gun é `03 0f 0100` → modo 1 → decimal.
+		var fl := int(slot.get("flags", 0))
+		if (fl & 3) != 0:
+			_desenhar_qtd(int(slot.get("qtd", 0)), p + QTD_OFFSET, t, 2 + ((fl >> 2) & 3))
 
 
 func _desenhar_qtd(qtd: int, onde: Vector2i, t: float, paleta := 2) -> void:
@@ -916,14 +971,18 @@ func _desenhar_qtd(qtd: int, onde: Vector2i, t: float, paleta := 2) -> void:
 	var tex := _atlas_paleta(paleta)
 	var fat := _fator_paleta(paleta)
 	var s := str(qtd)
+	## 10% MENOR: pedido do usuário — o dígito do jogo é 8×11 e no port, com a escala 4× e o
+	## filtro, ele ficava pesado sobre o ícone. O recorte segue 8×11; só o destino encolhe.
+	var dw := int(round(DIGITO_W * QTD_ESCALA))
+	var dh := int(round(DIGITO_H * QTD_ESCALA))
 	var x := onde.x
 	for k in s.length():
 		var d := s.unicode_at(k) - 48
 		if d < 0 or d > 9:
 			continue
 		_blit(tex, [DIGITO_U0 + d * DIGITO_W, DIGITO_V, DIGITO_W, DIGITO_H, x, onde.y],
-			t, Color.WHITE, 0, fat)
-		x += DIGITO_W
+			t, Color.WHITE, 0, fat, Vector2i(dw, dh))
+		x += dw
 
 
 func _desenhar_cursor(t: float) -> void:

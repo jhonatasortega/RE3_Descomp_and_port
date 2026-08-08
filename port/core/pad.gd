@@ -91,11 +91,23 @@ func poll() -> int:
 	return mask
 
 
+## MOUSE: **botão direito = MIRA, botão esquerdo = TIRO.** No PS1 mirar é segurar R1 (`AIM`) e
+## atirar é o botão de ação enquanto mira, então o de-para é direto: direito → `AIM`,
+## esquerdo → `ACAO`. Fica junto com o teclado (Espaço e E continuam valendo).
+const MOUSEMAP := {
+	MOUSE_BUTTON_RIGHT: AIM,
+	MOUSE_BUTTON_LEFT: ACAO,
+}
+
+
 func _read_live() -> int:
 	var m := 0
 	for tecla: int in KEYMAP:
 		if Input.is_key_pressed(tecla as Key):
 			m |= int(KEYMAP[tecla])
+	for bot: int in MOUSEMAP:
+		if Input.is_mouse_button_pressed(bot as MouseButton):
+			m |= int(MOUSEMAP[bot])
 	return m
 
 

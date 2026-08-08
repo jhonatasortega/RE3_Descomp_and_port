@@ -34,6 +34,7 @@ const ICONE := 32                        ## célula do FILEI (grade 4×8)
 const ICONE_COLUNAS := 4
 const ESCALA := 4
 const COLUNAS_GRADE := 5                 ## a grade de documentos é 5×3 (MenuStatus.ARQ_COLUNAS)
+const LINHAS_GRADE := 3
 ## A página em HD **e em português** é 1024×768 = 4× de 256×**192** (o SD é 256×176: o conjunto PT
 ## foi tipografado de novo numa caixa um pouco mais alta). Desenho no mesmo topo do SD.
 const PAG_PT_W := 256
@@ -50,6 +51,7 @@ var _dados: Dictionary = {}
 var _icones: Texture2D = null
 var _icone_fator := 1                    ## 4 quando o atlas é o HD
 const CEL_VAZIO := 31                    ## última célula da grade 4×8 = o sprite "VAZIO"
+const COR_SETA := Color8(0, 220, 0)      ## verde da seta, como na captura do jogo
 var _state: GameState = null
 
 
@@ -121,15 +123,47 @@ func mover_lista(d: int) -> void:
 
 
 func mover_grade(dx: int, dy: int) -> void:
-	## A grade é 5×3 (`MenuStatus.ARQ_COLUNAS/LINHAS`), então **A/D andam na coluna e W/S na
-	## linha** — é a navegação WSAD que o usuário pediu; antes A/D não faziam nada na grade e só
-	## W/S andavam, um documento por vez.
+	## Grade 5 colunas × 3 linhas (15 por página), como na captura do jogo.
+	##   • **W/S** andam na LINHA, dentro da página;
+	##   • **A/D** andam na COLUNA e, na borda, **VIRAM A PÁGINA** mantendo a linha — é o que a
+	##     captura mostra: seta verde `▶` à direita na página 1 e `◀` à esquerda na página 2.
 	if not aberto or lendo or docs.is_empty():
 		return
-	var passo := dx + dy * COLUNAS_GRADE
-	sel = clampi(sel + passo, 0, docs.size() - 1)
+	var por_pagina := COLUNAS_GRADE * LINHAS_GRADE
+	var pag := sel / por_pagina
+	var idx := sel % por_pagina
+	var col := idx % COLUNAS_GRADE
+	var lin := idx / COLUNAS_GRADE
+	if dy != 0:
+		lin = clampi(lin + dy, 0, LINHAS_GRADE - 1)
+	elif dx > 0:
+		if col < COLUNAS_GRADE - 1:
+			col += 1
+		elif (pag + 1) * por_pagina < docs.size():
+			pag += 1
+			col = 0
+		else:
+			return
+	elif dx < 0:
+		if col > 0:
+			col -= 1
+		elif pag > 0:
+			pag -= 1
+			col = COLUNAS_GRADE - 1
+		else:
+			return
+	sel = clampi(pag * por_pagina + lin * COLUNAS_GRADE + col, 0, docs.size() - 1)
 	pagina = 0
 	queue_redraw()
+
+
+func n_paginas_grade() -> int:
+	var por := COLUNAS_GRADE * LINHAS_GRADE
+	return maxi(1, (docs.size() + por - 1) / por)
+
+
+func pagina_grade() -> int:
+	return sel / (COLUNAS_GRADE * LINHAS_GRADE)
 
 
 func virar_pagina(d: int) -> void:
@@ -241,19 +275,36 @@ func _desenhar_pagina(doc: Dictionary) -> void:
 		if pagina - 1 < tp2.size():
 			tex = AssetIO.texture("FILE/pt/pag_%03d.webp" % int(tp2[pagina - 1]))
 	if tex != null:
-		draw_texture_rect(tex, Rect2(32, 32, PAG_PT_W, PAG_PT_H), false)
-		Texto.desenhar(self, "%d/%d" % [pagina + 1, n], Vector2i(270, 220))
+		## CENTRALIZADA em 320×240: a página PT/HD tem 256×192, então sobra 32 de cada lado e 24
+		## em cima/embaixo. Antes eu desenhava em (32,32), colada no topo.
+		var px := (320 - PAG_PT_W) / 2
+		var py := (240 - PAG_PT_H) / 2
+		draw_texture_rect(tex, Rect2(px, py, PAG_PT_W, PAG_PT_H), false)
+		_setas_pagina(n, px, py, PAG_PT_H)
+		Texto.desenhar(self, "%d/%d" % [pagina + 1, n], Vector2i(270, 224))
 		return
 	tex = AssetIO.texture(rel)
 	if tex == null:
 		Texto.desenhar(self, "pagina ausente", Vector2i(100, 110))
 		return
 	if pagina == 0:
-		draw_texture_rect_region(tex, Rect2(96, 36, CAPA_W, CAPA_H),
-			Rect2i(0, 0, CAPA_W, CAPA_H))
+		draw_texture_rect_region(tex, Rect2((320 - CAPA_W) / 2, (240 - CAPA_H) / 2,
+			CAPA_W, CAPA_H), Rect2i(0, 0, CAPA_W, CAPA_H))
+		_setas_pagina(n, (320 - CAPA_W) / 2, (240 - CAPA_H) / 2, CAPA_H)
 	else:
-		draw_texture_rect(tex, Rect2(32, 32, PAG_W, PAG_H), false)
-	Texto.desenhar(self, "%d/%d" % [pagina + 1, n], Vector2i(270, 220))
+		draw_texture_rect(tex, Rect2((320 - PAG_W) / 2, (240 - PAG_H) / 2, PAG_W, PAG_H), false)
+		_setas_pagina(n, (320 - PAG_W) / 2, (240 - PAG_H) / 2, PAG_H)
+	Texto.desenhar(self, "%d/%d" % [pagina + 1, n], Vector2i(270, 224))
+
+
+func _setas_pagina(n: int, px: int, py: int, alt: int) -> void:
+	## Setas VERDES ao lado da página, como na captura: `▶` (glifo 0x02 da fonte) à direita quando
+	## há próxima e o mesmo glifo ESPELHADO à esquerda quando há anterior — a fonte não tem `◀`.
+	var y := py + alt / 2 - 7
+	if pagina + 1 < n:
+		Texto.desenhar_seta(self, Texto.SETA_DIREITA, Vector2i(px + 264, y), COR_SETA)
+	if pagina > 0:
+		Texto.desenhar_seta(self, Texto.SETA_DIREITA, Vector2i(px - 18, y), COR_SETA, 1.0, true)
 
 
 func _nome_do_doc(doc: Dictionary) -> String:
