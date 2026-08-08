@@ -156,6 +156,9 @@ func _ligar_som() -> void:
 	var sf: Object = g.get("sfx")
 	if au != null:
 		pediu_bgm.connect(func(faixa: String) -> void: au.call("tocar_faixa", faixa))
+		## O boot JÁ emitia `pediu_parar_bgm` ao entrar no filme; eu tinha ligado só o `pediu_bgm`,
+		## e era por isso que a música do menu continuava tocando por cima do vídeo.
+		pediu_parar_bgm.connect(func() -> void: au.call("parar_bgm"))
 	if sf != null:
 		pediu_sfx.connect(func(id: int) -> void: sf.call("tocar_id", 0, id))
 

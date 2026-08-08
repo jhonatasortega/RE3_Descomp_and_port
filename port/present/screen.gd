@@ -479,6 +479,14 @@ func _montar() -> void:
 	## RDT (`off[17]`, provada em `tools/rdt_esp.py`). Fica na mesma altura do brilho de item.
 	esp_sala = EspSala.new()
 	add_child(esp_sala)
+	## ORDEM DE DESENHO: irmãos de `Node2D` desenham na ordem da ÁRVORE, e o mundo 3D vive no
+	## `frame` (`SubViewportContainer`). Os efeitos da sala tinham sido adicionados DEPOIS dele e
+	## por isso o fogo saía na frente da Jill e das colunas (relato: "fogo está na layer errada").
+	## Movendo o nó para antes do `frame`, o 3D passa a desenhar POR CIMA do fogo, que é o certo
+	## para chama de fundo. (O correto completo é usar a oclusão HD por profundidade, como o
+	## cenário faz; isso fica anotado como o passo seguinte.)
+	if frame != null:
+		move_child(esp_sala, frame.get_index())
 	esp = EspBrilho.new()
 	add_child(esp)
 	if not esp.carregar(WORLD_W):
