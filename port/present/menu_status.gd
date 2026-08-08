@@ -743,9 +743,15 @@ func confirmar() -> String:
 		queue_redraw()
 		match escolha:
 			"EQUIP":
+				## EQUIPAR no slot que JÁ está equipado **desequipa** (`inv+0x128 = 0xff`, que é o
+				## "nenhum" do EXE — o desenho do número do EQUIP é gateado por `!= 0xff`).
 				if _state != null:
-					_state.equipped = cursor      ## `inv+0x128` = slot equipado
-				ultima_acao = "equipou o slot %d" % cursor
+					if _state.equipped == cursor:
+						_state.equipped = -1
+						ultima_acao = "desequipou"
+					else:
+						_state.equipped = cursor      ## `inv+0x128` = slot equipado
+						ultima_acao = "equipou o slot %d" % cursor
 			"USE":
 				ultima_acao = _usar()
 			"COMBINE":

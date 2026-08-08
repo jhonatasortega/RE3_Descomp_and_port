@@ -43,7 +43,10 @@ const CROP_H := 720                        ## altura do recorte 16:9 (perde 240 
 ## peguei um ponto que o resolver aceita nas 4 direções (99 pontos livres; ver
 ## `port/dev/diag_spawn_r10d.gd`). Não é a posição do jogo — essa vem da cinemática de abertura,
 ## que não foi implementada — e está declarada como escolha.
-@export var actor_ps1 := Vector3i(11560, 0, -16528)
+## Spawn de teste em **(9404, 0, -13317)**, na área da câmera 1 — ponto a que o usuário chegou
+## ANDANDO, portanto chão válido. O anterior (11560, -16528) caía sobre o entulho da direita, que
+## é área proibida e ainda sem colisão resolvida (as formas 2/3 do motor seguem aproximadas).
+@export var actor_ps1 := Vector3i(9404, 0, -13317)
 @export var actor_anim := "arm02"          ## idle ARMADO (em pé com a arma)
 ## Malha de arma a anexar no punho. **Vazio de propósito**: ver a nota em `_montar_arma`.
 @export var weapon_model := ""
@@ -62,6 +65,9 @@ var menu: MenuStatus
 var menu_arquivo: MenuArquivo
 var _mouse_antes := false               ## borda do botão esquerdo (clique = toque no menu)
 var laser: MeshInstance3D               ## mira LASER (só no modo fácil)
+var _arma_atual := -1                   ## item cuja malha está na mão
+var _scroll_cima := false
+var _scroll_baixo := false
 var cam3d: Camera3D
 var sun: DirectionalLight3D
 var room: RoomData
@@ -169,6 +175,14 @@ func _on_tick(_frame: int) -> void:
 			return
 	if menu_arquivo != null and menu_arquivo.aberto:
 		menu.queue_redraw()               ## a moldura desenha a grade de documentos
+		var rol := _scroll()
+		if rol != 0:
+			if menu_arquivo.lendo:
+				menu_arquivo.virar_pagina(rol)     ## roda do mouse vira a página
+			else:
+				menu_arquivo.mover_grade(0, rol)
+			_atualizar_hud()
+			return
 		if pad.just_pressed(Pad.ACAO):
 			menu_arquivo.confirmar()
 		elif pad.just_pressed(Pad.PAUSA) or pad.just_pressed(Pad.MENU):
@@ -199,6 +213,12 @@ func _on_tick(_frame: int) -> void:
 		_atualizar_hud()
 		return
 	if menu != null and menu.aberto:
+		var rol2 := _scroll()
+		if rol2 != 0:
+			menu.mover_cursor(0, rol2)             ## roda rola o texto de EXAMINAR / anda no menu
+			menu.avancar()
+			_atualizar_hud()
+			return
 		if pad.just_pressed(Pad.MENU):
 			menu.alternar()                    ## I alterna
 		elif pad.just_pressed(Pad.PAUSA):
@@ -240,6 +260,9 @@ func _on_tick(_frame: int) -> void:
 		mostrar_camera(mundo.camera)
 	if esp != null:
 		esp.avancar(cam3d)                     ## o cintilar do item anda no tick de 30 Hz
+	var gs2: Node = get_node_or_null("/root/Game")
+	if gs2 != null and gs2.get("state") != null:
+		_trocar_arma_na_mao(int(gs2.state.equipped_item_id()))
 	_atualizar_laser()                         ## mira laser (modo fácil)
 	_atualizar_hud()
 
@@ -290,6 +313,36 @@ func _montar_ator() -> void:
 	print("[screen] ator %s em PS1%s (godot %s) altura=%.2f un, anim=%s (%d clipes)" % [
 		actor_model, actor_ps1, actor.position, aabb.size.y, actor_anim,
 		actor_anim_player.get_animation_list().size() if actor_anim_player else 0])
+
+
+func arma_da_mao(item_id: int) -> String:
+	## Malha da arma do item equipado, ou "" se não houver.
+	## ── DE-PARA MEDIDO (`port/dev/diag_armas.gd`, AABB em unidades PS1) ──
+	## O número do `.PLW` é o **`item_id` da arma, em decimal**: `W01` 517×106×27 = faca (comprida,
+	## fina, chata), `W02`/`W03` 163×370 = as duas pistolas (bate com o timing do EXE: 12 quadros
+	## para w1 **e** w2), `W04` 135×**990** = escopeta, `W06..W09` 301×835 idênticas = os quatro
+	## lança-granadas (itens `0x06..0x09`), `W10` = lança-rockets (item `0x0a` = **10** decimal, e
+	## não "0A" — é o que fixa a base). `W00` não tem malha: é a arma pintada na pele.
+	if item_id <= 0 or Itens.categoria(item_id) != Itens.CAT_ARMA:
+		return ""
+	var rel := "PLD/PL00W%02d_WPN.glb" % item_id
+	return rel if AssetIO.exists(rel) else ""
+
+
+func _trocar_arma_na_mao(item_id: int) -> void:
+	## (Re)anexa a malha quando o item equipado muda. Sem isto a Jill andava de mão vazia mesmo com
+	## a Hand Gun equipada — o `weapon_model` era fixo e vinha vazio.
+	if _arma_atual == item_id:
+		return
+	_arma_atual = item_id
+	var esq0 := _achar_skeleton(actor_mesh)
+	if esq0 != null:
+		var antigo := esq0.get_node_or_null("WeaponAttach")
+		if antigo != null:
+			antigo.free()
+	weapon_model = arma_da_mao(item_id)
+	if weapon_model != "":
+		_anexar_arma()
 
 
 func _anexar_arma() -> void:
@@ -632,6 +685,21 @@ func _atualizar_laser() -> void:
 	laser.position = origem + dir * 0.5
 	laser.scale = Vector3(1.0, 1.0, comp)
 	laser.look_at(destino, Vector3.UP)
+
+
+func _scroll() -> int:
+	## Roda do mouse: **+1 desce/avança, -1 sobe/volta**. Pedido do usuário para o texto de exame e
+	## para a página do documento. É lido por borda, como o clique.
+	var cima := Input.is_mouse_button_pressed(MOUSE_BUTTON_WHEEL_UP)
+	var baixo := Input.is_mouse_button_pressed(MOUSE_BUTTON_WHEEL_DOWN)
+	var d := 0
+	if baixo and not _scroll_baixo:
+		d = 1
+	elif cima and not _scroll_cima:
+		d = -1
+	_scroll_cima = cima
+	_scroll_baixo = baixo
+	return d
 
 
 func _clique() -> bool:
