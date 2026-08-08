@@ -50,6 +50,40 @@ Arquivos soltos que o Classic REbirth carrega por cima do `Rofs*.dat`:
 - Os **441 WAV** casam em contagem com os 441 `.ogg` PT-BR já no projeto
   (`assets/VOICE/ptbr/`) — mesma origem, mas aqui em **WAV sem recompressão**: melhor fonte
   para reencodar (P6-06).
+
+> **⚠ CORREÇÃO — os 441 NÃO são todos dublados.** Medido por correlação de envelope RMS
+> contra o inglês retail do `Rofs14.dat` (calibração: idêntico = 1,0000; mesma tomada
+> recodificada = 0,96–0,99; tomada diferente = < 0,90):
+>
+> | Lote | Nº | Formato | Veredito |
+> |---|---:|---|---|
+> | mtime **2025** | **370** | PCM 32000 Hz (a maioria estéreo 32-bit) | **outra gravação** (corr < 0,80) → dublado |
+> | mtime **2021** | **71** | PCM 37800 Hz (taxa do XA do PS1) | **INGLÊS** (corr ≥ 0,95) — só reamostrado pelo Seamless HD |
+>
+> Ou seja `tools/audio_gog.py` está gerando `assets/VOICE/ptbr/` com **71 arquivos em
+> inglês misturados**. Não é bug de conversão — é o que existe no pacote; o rótulo `ptbr/`
+> é que fica impreciso para esses 71.
+>
+> **Que os 370 estejam em português é INFERÊNCIA**, não medida: os 441 WAV **não têm nenhum
+> metadado de idioma** (zero chunks `LIST`/`INFO`/`bext`/`iXML`). O que está provado é só
+> "é outra gravação, não a inglesa". A procedência (`mod_BH3_Portuguese`) é o que sustenta
+> "PT-BR". Fechar isso exige ouvir.
+>
+> **Narração:** `DATA_A/SOUND/MAIN07.wav` = **epílogo, dublado** (corr 0,4797 contra o EN).
+> `MAIN06.wav` = **prólogo, NÃO dublado** (mtime 2022 = lote Seamless HD) — o texto foi
+> traduzido, o áudio não. Casamento faixa↔evento provado por duração: `epilogue.xml` soma
+> **1431 quadros = 47,700 s a 30 fps** e `MAIN07` mede **47,729 s** (erro 0,06 %); em 1132
+> WAV medidos, só `MAIN06`/`MAIN07` ficam a menos de 1,5 s desse alvo.
+>
+> **Marcação de tempo dos XML:** `{clear NN}` / `{timed NN}` com **`NN` em QUADROS a
+> 30 fps** (provado pela conta acima); `{scroll N}` não é tempo. Os XML são UTF-8 **com
+> BOM** e usam `ä`/`ö` no lugar de `ã`/`õ` (remapeamento da fonte): `destruiçäo`, `operaçäo`.
+>
+> **Nome das vozes (PROVADO):** `m<id-de-sala><letra-de-cena><NNN>.wav` — **35 dos 37**
+> prefixos batem 1:1 com uma sala real (`m101→R101`, `m11a→R11A`, …), conferido contra os
+> 129 `mod_BH3_Portuguese/xml/rdt/R###.xml`. Os 2 restantes (`s000`, `s001`) não são sala.
+>
+> Detalhe e comandos de reprodução: [`../decomp/notes/exe_audio.md`](../decomp/notes/exe_audio.md) §8.
 - Os **107 `.BGM`** são a trilha sequenciada na versão PC (o projeto decodificou a do PS1 —
   ver [`audio_video.md`](audio_video.md) §7). Serve como fonte alternativa/de conferência.
 - **`.SLD` = formato NÃO decodificado** (P6-12). Cabeçalho de `R100.SLD`:
@@ -67,6 +101,23 @@ Arquivos soltos que o Classic REbirth carrega por cima do `Rofs*.dat`:
 Ou seja: os `.mp4` da instalação vêm **deste pacote** — é a fonte HD **e** PT-BR do P6-05.
 Não há trilha de áudio EN nos `.mp4`; se o port quiser FMV em inglês, a fonte é o `.dat`
 (PC) ou o `.STR` do PS1 (320×160, já convertido para 14 `.ogv`).
+
+> **⚠ DUAS CORREÇÕES** (medido com o `ffprobe` de `tools/ffmpeg` + correlação de envelope):
+>
+> 1. **"16 `.dat` = FMV original do PC, não upscalado" está errado.** **14 dos 16 `.dat` já
+>    são h264 1280×960 em AVI** (muxer `Lavf58.76.100` = Seamless HD). Só `roopne.dat` e
+>    `roop_nee.dat` seguem MPEG-1 320×160 originais (bit-idênticos entre si). A conclusão
+>    prática do doc continua válida — o `.dat` **é** a fonte de áudio EN, e isso ficou
+>    **provado**: `roopne.dat` (MPEG-1 original) × `roop.mp4` (HD) = corr **0,9788**, ou seja
+>    o Seamless HD trocou o vídeo e **manteve** o áudio.
+> 2. **Nem todos os 14 `.mp4` são dublados.** `ins03` (0,9817), `ins05` (0,9908), `ins09`
+>    (0,9735) e `roop` (0,9597) têm o **mesmo áudio** do `.dat` → **não dublados**. Os outros
+>    10 divergem (`opn` 0,8806 · `enda` 0,8537 · `endb` 0,8919 · `ins01` 0,8795 · `ins02`
+>    0,8383 · `ins04` 0,9373 limítrofe · `ins06` 0,7640 · `ins07` 0,8903 · `ins08` 0,8863 ·
+>    `snl` 0,4601). O padrão é coerente com dublagem: só as cenas **com diálogo** mudam.
+>
+> As tags `language=eng`/`und` dos `.mp4` são **default do muxer** e **não** valem como
+> prova de idioma.
 
 ## 4. Consequência para o port
 

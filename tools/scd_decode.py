@@ -179,8 +179,17 @@ OPCODE_SEM = {
  0x4b:("camera/pos accumulate","1B: handler 0x80054628; le obj+0x158..; soma em 0x800e0150; epilogo 0x800546ac PC+=1"), 0x4c:("?","4B"), 0x4d:("?","4B"),
  0x4e:("?","6B"), 0x4f:("?","1B"), 0x50:("? (0x800549c4)","2B"), 0x51:("? (0x800549c4)","1B"),
  0x52:("?","2B"), 0x53:("? (0x8002a938)","3B"), 0x54:("?","4B"), 0x55:("som? (0x80034124)","8B"),
- 0x56:("?","8B"), 0x57:("som/SE (0x80038678)","6B"), 0x58:("som/SE (0x80038704)","6B"),
- 0x59:("som/SE (0x8003879c)","8B"), 0x5a:("?","2B"), 0x5b:("? (0x8002fd30)","6B"),
+ 0x56:("?","8B"),
+ # 0x57/0x58/0x59 NAO sao som (rotulo antigo "som/SE" estava ERRADO -- ver
+ # docs/decomp/notes/exe_audio.md secao "Correcoes"). Sao as duas filas de VIBRACAO do
+ # DualShock: 0x800de648 = motor pequeno (on/off), 0x800de798 = motor grande (nivel 0..255
+ # com rampa linear). O tick 0x800389a0 gera nivel = acumulador>>7 e o maximo dos 32 slots
+ # vai para os 2 bytes em 0x800c79c8, entregues a PadSetAct pelo stub 0x80091710
+ # (a1=0x800c79c8, a2=2). O som de verdade entra por 0x800746c0.
+ 0x57:("rumble motor pequeno (0x80038678)","6B: dur=u16@+2, atraso=u16@+4"),
+ 0x58:("rumble motor grande, nivel fixo (0x80038704)","6B: dur=u16@+2, nivel=u8@+1, atraso=u16@+4"),
+ 0x59:("rumble motor grande, rampa (0x8003879c)","8B: dur=u16@+4, ini=u8@+2, fim=u8@+3, atraso=u16@+6"),
+ 0x5a:("?","2B"), 0x5b:("? (0x8002fd30)","6B"),
  0x5c:("? (0x80048974)","2B"), 0x5d:("?","1B"), 0x5e:("message/janela (largura)","0x80028e4c; ret 320; 3B"),
  0x5f:("item check","0x8006cc8c; 2B"),
  0x60:("char/model spawn","handler 0x80016334; class@+2->char+0x4a, model@+1, pos; 22B (indexa MODEL_TBL 0x800ba728)"),

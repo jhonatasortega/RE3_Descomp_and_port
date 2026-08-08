@@ -138,8 +138,21 @@ dentro do arco da mira** (auto-aim clássico do RE3). Outros chamadores: `0x8001
 - **Recuo/tremor de tela:** `0x80048308` (acumula em `gamestruct+0x7860/+0x2118/+0x211a`; NÃO é dano).
 - **Ponto de saída do cano:** `0x80018d34` calcula, a partir do esqueleto (anim `0xc8`/frame `0xc9` + EDD/EMR),
   o ponto 3D da mão/arma → escreve `player+0x124/0x126/0x128` (ponto) e `player+0xc0/0xc2/0xc4` (offset de mira).
-- Fim do tiro: toca SFX (`0x800776b0`, seleciona seco/tiro/vazio por flags da arma em `(player+0xe4)&0x200/0x400`)
-  e transiciona (`sw 0x60501/0x80501,4` = volta pra ready/idle).
+- Fim do tiro: chama `0x800776b0` e transiciona (`sw 0x60501/0x80501,4` = volta pra ready/idle).
+  > **⚠ CORREÇÃO (ver [`exe_audio.md`](exe_audio.md) §6.4):** a afirmação antiga — *"seleciona
+  > seco/tiro/vazio por flags da arma em `(player+0xe4) & 0x200/0x400`"* — é **NÃO PROVADA**:
+  > em `0x800776b0..0x80077b84` **não existe nenhum** `andi` com `0x200`/`0x400` nem leitura
+  > de `+0xe4`. O que a rotina faz: `0x8001b484` (spawn de efeito/modelo, tabela
+  > `0x800ba728`) **10×**, `0x8003879c` (**rampa de VIBRAÇÃO**, não som) **8×**, e **um**
+  > pedido de SE em `0x80077b50` com `a0 = s5 | 0x10200` → **`cat = 2` = banco da SALA**,
+  > `idx = s5 ∈ {0x17,0x18,0x1a,0x1b,0x2d, (retorno de 0x80077b84)&0x7f}`. Compatível com
+  > **impacto/ricochete na sala**, não com o estouro da arma.
+  >
+  > O **estouro** é um SE de `cat 0` (banco `C_` do jogador), **id 11**, pedido em
+  > `0x8003ad6c` (`lui a0,1; ori a0,a0,0xb` → `a0 = 0x1000b`, `a1 = player+0x34`) e também em
+  > `0x8003cf10`. O nome "tiro" segue **DECLARADO** (o call site é provado; o par id→ação não
+  > foi confirmado por ouvido). Sinal a favor: `C_00`/`C_01`, os bancos de **menu**, são os
+  > únicos que **não** definem o id 11.
 
 ### 2.2 Como o disparo vira HIT — ✅ RESOLVIDO (corrige o "negativo" da 2ª passada)
 > **A conclusão antiga estava ERRADA.** O tiro **APLICA** dano ao inimigo, e a rotina foi isolada.

@@ -44,15 +44,26 @@ func _ready() -> void:
 	voice_player = AudioStreamPlayer.new()
 	voice_player.name = "Voice"
 	add_child(voice_player)
+	carregar_mapa()
+
+
+func carregar_mapa() -> bool:
+	## Lê `data/bgm_map.json`. Separado do `_ready` porque o harness de teste usa o `Audio`
+	## sem cena (testes são RefCounted) — sem isto o mapa ficava vazio e `faixa_para_sala`
+	## devolvia "" silenciosamente, escondendo regressão do de-para sala->faixa.
+	if not _mapa.is_empty():
+		return true
 	var m: Variant = AssetIO.json("bgm_map.json")
 	if m is Dictionary:
 		_mapa = m
-	else:
-		push_warning("Audio: data/bgm_map.json ausente — a trilha vai cair no default")
+		return true
+	push_warning("Audio: data/bgm_map.json ausente — a trilha vai cair no default")
+	return false
 
 
 func faixa_para_sala(room_id: String) -> String:
 	## Escolhe a faixa: override por sala > área do stage > default do mapa.
+	carregar_mapa()
 	if _mapa.is_empty():
 		return ""
 	var over: Variant = _mapa.get("room_override")

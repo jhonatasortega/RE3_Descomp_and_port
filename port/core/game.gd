@@ -31,6 +31,8 @@ func _ready() -> void:
 	add_child(clock)
 	audio = Audio.new()
 	add_child(audio)
+	sfx = Sfx.new()
+	add_child(sfx)
 	clock.ticked.connect(_on_tick)
 	print("[Game] pronto — %d Hz, ângulo de %d unidades, tabela sin/cos do EXE: %s"
 		% [Clock.HZ, PS1Math.FULL_CIRCLE, "sim" if PS1Math.table_from_exe() else "calculada"])

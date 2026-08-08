@@ -145,11 +145,29 @@ começa com `u32` + a string ASCII `"DIEDEMO.TIM"` (offset 4) e código a partir
 código. É: tabela de dispatch + dados (texto/descritores/rótulos) + código MIPS.
 
 ### 8.2 Funções de UI COMPARTILHADAS no EXE — assinaturas PROVADAS
+
+> **⚠ CORREÇÃO (ver [`exe_audio.md`](exe_audio.md) §6.2):** as três primeiras linhas desta
+> tabela — `0x800746c0` / `0x80074770` / `0x800749a0` — estavam **erradas**. Não é o pipeline
+> de sprite da GPU: é o **motor de EFEITO SONORO**. A cadeia termina em
+> `SpuSetVoiceAttr` (`0x8007f768`, `mask=3`) e `SpuSetKey` (`0x8007eda8`, que escreve KON em
+> `+0x188/+0x18a` do bloco do SPU), e `0x800749a0` chama `0x80075b90` = **volume/pan** (pan
+> de centro `0x40`, divisão por 63) — não há geometria nesse caminho. O `a0` é um **id de
+> SE** (`(b2<<16)|(cat<<8)|idx`), não um sprite_id; `a1` é um ponteiro de posição 3D (e por
+> isso é `0` nos menus, que são 2D). `menu_comandos.md:66` e `menu_mapa.md:657/916`, que
+> diziam "SFX", estavam **certos**.
+>
+> O que enganou: `0x800e0610` é um **contexto de sistema compartilhado**, não só de som —
+> os campos de áudio são `+0x7d4`/`+0xad4` (anel de pedidos), `+0x14`/`+0x18`/`+0x54`
+> (bancos VAB) e `+0xb5c` (status das 24 vozes do SPU); outros campos do mesmo bloco (ex.:
+> `+0xb1c/+0xb20/+0xb24`, ver `menu_pc_sys.md:446`) pertencem a outro subsistema.
+>
+> As linhas ficam abaixo **com a leitura antiga marcada**, para o registro do erro.
+
 | Endereço EXE | Assinatura / papel | Prova |
 |---|---|---|
-| `0x800746c0` | **draw_sprite/enqueue_prim**(`a0`=**sprite_id**, `a1`=ptr template 16B, `a2`→prim+0x1a, `a3`→prim+0x18=camada/OT) | desmontagem EXE (file 0x64ec0): copia `a1[0..15]`→prim+8..0x14; **empacota o id de `a0`** em `prim+0x1c`(hword=`id&0xff`), `prim+0x1f`(byte=`id>>8`=**PÁGINA**), `prim+0x1e`(byte=`id>>16`); avança `*(0x800e10e4)` +32B. **Nos overlays de menu `a1=0` SEMPRE** (SELECT 0x1240/0x281c…) → geometria resolvida depois |
-| `0x80074770` | **resolve_sprite**(`a0`=prim): lê `prim+0x1f`(page)/`+0x1c`(index), indexa o registro `0x800e0610` → descritor → chama compositor | desmontagem EXE: `lbu a0,0x1f(s2); lhu v1,0x1c(s2); v0=page<<2+0x800e0610; lw; s0=+index<<2` |
-| `0x800749a0` | **compose_geom**(`a0`=prim, `a2`=descritor): **monta a primitiva GPU final (u,v,w,h)** encadeando descritor→struct clut/tpage (`0x800e0610+fp*8`)→tabela VRAM por-tile (32B, byte6=v) | desmontagem EXE 0x800749a0+ |
+| `0x800746c0` | ~~draw_sprite/enqueue_prim~~ → **`SE_pede`**(`a0`=**id de SE**, `a1`=ptr 16B de posição, `a2`→rec+0x1a, `a3`→rec+0x18) | desmontagem EXE (file 0x64ec0): copia `a1[0..15]`→rec+8..0x14; empacota `a0` em `rec+0x1c`(hword=`id&0xff`=**idx**), `rec+0x1f`(byte=`id>>8`=**cat/banco VAB**), `rec+0x1e`(byte=`id>>16`); avança o anel `*(0x800e10e4)` +32B. `a1=0` nos menus porque **som de UI não tem posição 3D** |
+| `0x80074770` | ~~resolve_sprite~~ → **resolve o descritor de SE**(`a0`=rec): `desc = *( *(0x800e0610 + cat*4) + idx*4 )`; **`-1` = id sem som, descarta** | desmontagem EXE: `lbu a0,0x1f(s2); lhu v1,0x1c(s2); v0=cat<<2+0x800e0610; lw; s0=+idx<<2`; depois `busca_banco` (`0x800750e4`) e `jal 0x800749a0` |
+| `0x800749a0` | ~~compose_geom~~ → **aloca voz do SPU + volume/pan/pitch**(`a0`=rec, `a2`=descritor) | chama `0x80075b90` (vol/pan) em `0x80074bcc`; usa o array de status de voz `0x800e116c` que vem de `SpuGetAllKeysStatus` |
 | `0x80089114` | **blit/env de tela**; em SELECT/JILL_SEL = **BG full-screen** (`a0`=cx=160, `a1`=cy=120, `a2`=src, `a3`=fb) | sítios de chamada (SELECT 0x40c, JILL_SEL 0x288). Uso genérico noutros (DIEDEMO passa ptr de primitiva) |
 | `0x80078930` | **flag_test**(`a0`=ptr bitfield, `a1`=bit) → `(a0[bit>>5] & (0x80000000>>(bit&31)))` | desmontagem EXE: `srl v1,a1,5; sll v1,2; addu a0; andi a1,0x1f; lui 0x8000; lw; srlv; and`. **⚠ CORREÇÃO:** NÃO é `draw_string` — as chamadas antes rotuladas "draw_string" no `draw_seq` são **testes de flag** (ex.: JILL_SEL testa bits 0..4 de `0x800d1f30`=progresso p/ decidir quais linhas mostrar, e só então chama o helper de texto real `0x800788dc`) |
 | `0x800788dc` | **helper de texto/medida** (desenho de glifos real) | telas de texto |

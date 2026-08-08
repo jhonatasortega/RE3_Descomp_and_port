@@ -6,7 +6,11 @@
 > - **Ferramenta:** jPSXdec v2.0, [`tools/re3_sound.py`](../../tools/re3_sound.py), [`re3_sfx.py`](../../tools/re3_sfx.py), [`bgm2midi.py`](../../tools/bgm2midi.py)
 > - **Decompilado:** **100%** vídeo/vozes · **100%** RE do `.BGM` (SEQ+VAB) · **80%** SFX
 > - **Feito:** 13 FMV → AVI; 104 vozes XA → WAV; RE do `.BGM` (SoundFont do VAB real); trilha completa via GOG (62 OGG).
-> - **Falta:** tabela de regiões `.VH` do SFX (corte/pitch fino) e mapa nome→amostra; ligar áudio no protótipo (Fase C do [`../decomp/PLANO_ACAO.md`](../decomp/PLANO_ACAO.md)). Uso no Godot em [../godot_audio.md](../godot_audio.md).
+> - **Falta:** de-para **sala → faixa de BGM** (ver [`../decomp/notes/exe_audio.md`](../decomp/notes/exe_audio.md) §7).
+> - **FECHADO desde então:** a tabela de regiões `.VH` (corte/pitch) em [`../decomp/notes/sfx.md`](../decomp/notes/sfx.md),
+>   e o **de-para `id de SE` → amostra** em [`../decomp/notes/exe_audio.md`](../decomp/notes/exe_audio.md) —
+>   o mapa nome→amostra **não** é heurístico: sai da tabela gravada no início de cada `.VH`/`.SND`.
+>   Uso no Godot: [`../godot_audio.md`](../godot_audio.md) (protótipo) e `port/core/sfx.gd` (port).
 
 > Extração de **todo o áudio streaming (XA) e vídeo (STR/FMV)** do disco
 > `rom/Resident Evil 3 - Nemesis.bin` (NTSC-U, raw MODE2/2352) usando **jPSXdec v2.0**.
@@ -362,6 +366,18 @@ amostras individuais direto do `.VB`:
   `pBAV` nem tabela clássica de tamanhos VAG, ainda não decodificada). A **afinação por
   região** do `.VH` também não é aplicada → pode haver leve desvio de pitch. A identificação
   "índice → porta/tiro/passo" **exige validação por ouvido** (ver `docs/godot_audio.md`).
+
+> **Atualização — esta limitação foi resolvida em duas etapas:**
+> 1. Corte exato + pitch por tom: [`../decomp/notes/sfx.md`](../decomp/notes/sfx.md) (tabela VAG do `.VH`);
+>    a extração passou de 298 amostras com corte grosseiro para **267 com fronteira exata**.
+> 2. **De-para `id de SE` → amostra:** [`../decomp/notes/exe_audio.md`](../decomp/notes/exe_audio.md).
+>    A tabela que liga id → tom → `vag` está nos **primeiros bytes do próprio `.VH`/`.SND`**
+>    (`N = hdr/4` entradas de u32, `0xffffffff` = id vazio; `hdr` achado pelo magic
+>    `0x0001eeee` em `hdr+0x10`). Os **5 sons de menu** (mover/cancelar/confirmar/inválido/
+>    abrir) ficaram com confiança **ALTA** e são exatamente os WAV `_00`..`_04` de `C_00` —
+>    o mesmo "núcleo global" que o `sfx_map.json` já tinha achado por hash de PCM.
+>    Gerar: `NOSTALGIA_OUT=port python tools/exe_audio.py`.
+>    As ações de **jogo** (porta/passo/item/recarga) seguem **sem nome provado**.
 
 ### 9.3 Formato tocável confirmado no Godot
 

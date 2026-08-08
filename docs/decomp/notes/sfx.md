@@ -189,6 +189,27 @@ contador de 32 bits do SPU + tabela de rates; seria estimativa, não prova).
 
 ## 8. Opcodes de som do SCD — layout + estatísticas + achado NEGATIVO honesto
 
+> ## ⚠️ ESTA SEÇÃO ESTÁ ERRADA — corrigida em [`exe_audio.md`](exe_audio.md)
+>
+> Duas correções, ambas provadas por disassembly (ver `exe_audio.md §6`):
+>
+> 1. **Os opcodes `0x57`/`0x58`/`0x59` NÃO são som — são a VIBRAÇÃO do controle.**
+>    `0x80038678`/`0x80038704`/`0x8003879c` alimentam duas filas de motor do DualShock
+>    (`0x800de648` = motor pequeno on/off, `0x800de798` = motor grande com rampa linear).
+>    O slot de 10 B é `{+0 ativo, +1 nível, +2 atraso, +4 duração, +6 passo,
+>    +8 acumulador<<7}`, o tick é `0x800389a0` (`nível = acumulador >> 7`) e o resultado sai
+>    nos 2 bytes de `0x800c79c8`, entregues ao controle por **`PadSetAct`** (stub
+>    `0x80091710`, chamado com `a1 = 0x800c79c8`, `a2 = 2`). O que denuncia: `0x8003879c`
+>    calcula `passo = ((fim-ini) << 7) / dur` — dividir pelo "id" não faria sentido.
+>    Logo a estatística de §8.2 ("1528 disparos de SE") é de **eventos de vibração**.
+> 2. **O achado negativo de §8.3 está superado.** O de-para `id → tom → vag` É estático:
+>    mora na **tabela no início do próprio `.VH`/`.SND`** (offset 0, `N = hdr/4` entradas
+>    de u32, `0xffffffff` = vazio). O pedido de som de verdade entra por **`0x800746c0`**.
+>    Ver `exe_audio.md §4`. O único resíduo de runtime é *qual banco* está carregado.
+>
+> O que segue nesta seção continua útil como registro do layout dos opcodes (os tamanhos e
+> os operandos estão certos) — só a **semântica "som"** é que era errada.
+
 > Fonte: disassembly (capstone via `tools/exe_parse.py`) dos handlers da jump-table
 > `0x8009e0f8` + varredura das **169 salas** (`tools/scd_decode.py`). Handlers de som:
 > `0x55`→`0x80054bc0`, `0x56`→`0x80054c28`, `0x57`→`0x80054c58`, `0x58`→`0x80054ca4`,
