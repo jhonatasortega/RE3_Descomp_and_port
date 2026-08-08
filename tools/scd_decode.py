@@ -148,9 +148,16 @@ OPCODE_SEM = {
  0x04:("evt_exec (thread start)","chama 0x80052478(a0=byte+1, arg+3); 4B"),
  0x05:("?","adv2"), 0x06:("if_begin/block","push (PC+4+u16@+2) na pilha de loop obj+0x140; 4B"),
  0x07:("else/endif","pop 0x140; PC += u16@+2"), 0x08:("end-block","pop 0x140"),
- 0x09:("?","adv1"), 0x0a:("evt_yield?","adv3, ret2"), 0x0b:("?","adv1"), 0x0c:("?","adv1, ret2"),
- 0x0d:("for (begin)","6B; push frame de loop"), 0x0e:("while/for-var (begin)","5B; peek var@+5; salta na saida"),
- 0x0f:("?","adv2"), 0x10:("ewhile/while","chama 0x80053550; 4B"), 0x11:("break/loop-exit","restaura PC de obj+0x20"),
+ # 0x09/0x0a sao o PAR de SLEEP (round cena R10D): o 0x09 empilha o contador com o u16 que
+ # esta em PC+2 -- que e o operando do 0x0a seguinte -- e anda 1; o 0x0a decrementa e só
+ # anda 3 quando chega a zero. Volta 2 nos dois casos => `09 | 0a NN NN` = espera NN quadros.
+ 0x09:("sleep_init (empilha u16@PC+2)","0x8005304c: contador em obj+0xa0+depth*8+n*2; adv1"),
+ 0x0a:("sleeping (espera NN quadros)","0x80053094: --contador; PC+=3 só no zero; ret2 sempre"),
+ 0x0b:("?","adv1"), 0x0c:("?","adv1, ret2"),
+ 0x0d:("for (begin)","0x80053184: 6B; count=u16@+4 (0 => salta PC+6+s16@+2); corpo [PC+6, PC+6+len)"), 0x0e:("while/for-var (begin)","5B; peek var@+5; salta na saida"),
+ 0x0f:("next (fim do for)","0x800532e8: --contador; volta ao inicio ou PC+=2 e desempilha; ret1"),
+ 0x10:("while (begin)","0x80053364: 4B; cond_len=byte@+1 avaliada por 0x80053550; falso => PC+4+u16@+2"),
+ 0x11:("endwhile (volta ao while)","0x80053420: PC = inicio guardado em obj+0x20 e desempilha"),
  0x12:("?","adv4"), 0x13:("ewhile2","chama 0x80053550; 2B"),
  0x14:("switch","4B: 14 var(u8) count(u16); case-table @+4 (handler 0x80053638)"),
  0x15:("case","6B (entrada da case-table)"), 0x16:("esac/end-switch","2B (marca t4=0x16 no scan)"),
@@ -158,7 +165,8 @@ OPCODE_SEM = {
  0x19:("gosub (call func id@+1)","2B; PC=func_offset[id]; ret salvo em obj+0x144"),
  0x1a:("loop-back/next","restaura PC de obj+0x144"), 0x1b:("next-case","salta pela tabela switch obj+0x60"),
  0x1c:("?","adv1"), 0x1d:("?","adv4"), 0x1e:("?","adv4"), 0x1f:("?","adv3"),
- 0x20:("? (0x80053a54)","6B"), 0x21:("? (0x80053a54)","4B"), 0x22:("?","adv2"), 0x23:("nop (=h0x00)","adv1"),
+ 0x20:("var op= imediato","0x800539b8: u16@+2 = (op no byte BAIXO, indice de var no ALTO); val=s16@+4; tabela de ops 0x80010900"),
+ 0x21:("var op= var","0x80053a00 -> 0x80053a54; 4B"), 0x22:("?","adv2"), 0x23:("nop (=h0x00)","adv1"),
  0x24:("event/msg state check","1B: handler 0x80058cd0; le global 0x800d1f94; epilogo 0x80058dac PC+=1; ret1"),
  0x25:("boss/Nemesis event","0x80058c70; struct 0x800e01c0; 4B (ver exe_ai.md)"),
  0x26:("? boss (0x80048308)","6B"), 0x27:("?","adv1"), 0x28:("?","adv1"), 0x29:("? (0x800181cc)","8B"),
@@ -172,12 +180,19 @@ OPCODE_SEM = {
  0x3b:("entity-spawn/reset (gs+0x2120)","3B: handler 0x80057f84; le byte@+1/+2; monta struct 0x194; epilogo 0x80058604 PC+=3; ret1"),
  0x3c:("weapon/inv check","1B: handler 0x80057cf8; le player+0x46 (arma); 0x8006cc8c; epilogo 0x80057db0 PC+=1"), 0x3d:("?","2B"),
  0x3e:("item check","0x8006cc8c/0x8006cd68; 2B"), 0x3f:("?","3B"),
- 0x40:("calc/set var","0x80053e10; 4B"), 0x41:("calc/set var","0x80053e10; 3B"),
- 0x42:("calc/set var","0x80053fac; 3B"), 0x43:("calc/set var","0x80053fac; 6B"),
+ # 0x40/0x41/0x42 = MEMBRO da entidade de trabalho (obj+0x154, escolhida pelo 0x47).
+ # member_set = tabela 0x80010950 (43 entradas, dispatch 0x80053e10); member_get =
+ # tabela 0x80010a00 (43 entradas, dispatch 0x80053fac). Ver docs/decomp/notes/cena_r10d.md.
+ 0x40:("member_set imediato","0x80053b74: membro=byte@+1, valor=s16@+2; 4B"),
+ 0x41:("member_set por var","0x80053bc0: membro=byte@+1, valor=*(s16*)(0x800d1f46+byte@+2*2); 3B"),
+ 0x42:("member_get para var","0x80053c20: var[byte@+1] = membro byte@+2; 3B"),
+ 0x43:("calc/set var","0x80053fac; 6B"),
  0x44:("calc","0x800541f0/0x80053a54; 6B"), 0x45:("calc","0x800541f0/0x80053a54; 4B"),
- 0x46:("? (0x8002a35c)","11B"), 0x47:("?","3B"), 0x48:("?","4B"), 0x49:("?","1B"), 0x4a:("?","1B"),
+ 0x46:("fade","0x80054384 -> 0x8002a35c: abr=byte@+3, c0=+6|+5<<8|+4<<16, c1=+9|+8<<8|+7<<16, T=byte@+0xa; 11B"),
+ 0x47:("work_set (escolhe obj+0x154)","0x8005441c: tabela 0x80010b60 por byte@+1-1; byte@+2 = s8; zera obj+0x158..0x16c; 3B"), 0x48:("?","4B"), 0x49:("?","1B"), 0x4a:("?","1B"),
  0x4b:("camera/pos accumulate","1B: handler 0x80054628; le obj+0x158..; soma em 0x800e0150; epilogo 0x800546ac PC+=1"), 0x4c:("?","4B"), 0x4d:("?","4B"),
- 0x4e:("?","6B"), 0x4f:("?","1B"), 0x50:("? (0x800549c4)","2B"), 0x51:("? (0x800549c4)","1B"),
+ 0x4e:("?","6B"), 0x4f:("?","1B"), 0x50:("cut_chg (troca de camera)","0x800548c8 -> 0x800549c4: cam=byte@+1&0x7f -> gs+0x7842; gs+0x77f4 |= 0x80|0x400000; 2B"),
+ 0x51:("cut_old (volta a camera anterior)","0x80054960: le 0x800e0175; apaga o bit 0x80 de gs+0x77f4; 1B"),
  0x52:("?","2B"), 0x53:("? (0x8002a938)","3B"), 0x54:("?","4B"), 0x55:("som? (0x80034124)","8B"),
  0x56:("?","8B"),
  # 0x57/0x58/0x59 NAO sao som (rotulo antigo "som/SE" estava ERRADO -- ver
@@ -196,7 +211,11 @@ OPCODE_SEM = {
  0x61:("aot_set/entidade 32B","sce type@+2; sce==1 => DOOR (dest +0x16/+0x17)"),
  0x62:("aot_set/entidade 40B","sce type@+2; sce==1 => DOOR_4P (dest +0x1e/+0x1f)"),
  0x63:("sce_aot_set (trigger AABB)","20B"), 0x64:("sce_aot_set_4p (quad)","28B"),
- 0x65:("aot_reset","10B"), 0x66:("aot?","2B"),
+ 0x65:("aot_reset","10B"),
+ # 0x66 = sce_aot_exec: DISPARA o SCE de um AOT ja registrado, na hora. E o mecanismo de
+ # PORTA ROTEIRIZADA (com sce==1 chama o produtor 0x80050d28) -- 120 sitios no jogo.
+ # CORRIGE door_handler.md ("nao ha warp por opcode de script").
+ 0x66:("sce_aot_exec (dispara AOT id@+1)","0x80055d7c: aot=gs+0x2158[id]; jalr *(0x8009e0bc + aot[0]*4) com a0=aot+0xc (ou +0x14 se aot[1]&0x80); 2B"),
  # 0x67 NAO e porta (rotulo antigo "door_aot_set"): e o AOT de ITEM de 2 pontos, o mesmo
  # payload do 0x68 com base em +14. Handlers 0x800574f4 (22B) e 0x800576c4 (30B). Ver ARD.md
  # secao 3.9 -- sao 330 itens no jogo (316 do 0x67 + 14 do 0x68), nao 14.
@@ -221,10 +240,13 @@ OPCODE_SEM = {
  # posicao e a rotacao da malha do item de chao -- o slot em +1 e o mesmo `om` do AOT de item
  # e o mesmo indice do diretorio de modelos offset_table[10]. Ver ARD.md secao 3.9.
  0x7f:("om_set (objeto 3D de cenario)","handler 0x80056510; 40B; pos s16@+16 rot s16@+22"),
- 0x80:("?","4B"), 0x81:("?","8B"), 0x82:("?","10B"), 0x83:("som? (0x80034124)","1B"), 0x84:("?","4B"),
+ 0x80:("anim/acao do work","0x80056dc0: w+4=(byte@+1<<8)|4 (acao 4 = roteirizada), w+0xc8=byte@+2 = SEQ do EDD, w+0x144=byte@+3; 4B"),
+ 0x81:("ir ate (x,z)","0x80056e5c: rotina=byte@+2, w+0x146=byte@+3 = BIT do banco 4 aceso na chegada (0x800169f0 -> 0x800788dc(0x800d1fc0, w+0x146)), w+0xd4=u16@+4, w+0xd6=u16@+6; 8B"),
+ 0x82:("?","10B"), 0x83:("som? (0x80034124)","1B"), 0x84:("?","4B"),
  0x85:("?","2B"), 0x86:("?","1B"), 0x87:("?","1B"), 0x88:("?","4B"), 0x89:("?","2B"),
  0x8a:("som? (0x80034124)","1B"), 0x8b:("?","1B"), 0x8c:("?","1B"), 0x8d:("?","1B"),
- 0x8e:("?","4B"), 0x8f:("? (0x800261ac)","2B"),
+ 0x8e:("?","4B"),
+ 0x8f:("liga a entidade n","0x800589fc: e=gs+0x265c[byte@+1+2]; e+0=1; e+4=0; e+0xd2=0; 2B"),
 }
 
 def rdt_of(data):

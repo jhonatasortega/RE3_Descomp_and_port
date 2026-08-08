@@ -5,6 +5,16 @@ extends RefCounted
 ## Este arquivo existe porque `port/actors/player.gd` não é meu: aqui fica a máquina de estados
 ## e o gatilho, prontos para o `player.gd` chamar. A lista do que engatar lá está no fim.
 ##
+## ⭐ **ATUALIZAÇÃO (round das cenas do R10D) — a §5 continua certa, e o dono também.**
+## A Jill REALMENTE sobe na lixeira do R10D, mas **não por aqui**: é a **função 11** do script
+## (a cinemática de saída) que faz isso com o opcode `0x80` (`0x80056dc0`), gravando o índice de
+## sequência DIRETO em `player+0xc8` com `player+4 = (rotina<<8) | 4` — **ação 4, roteirizada**.
+## E as sequências que ela toca são **as MESMAS 6 e 7 que esta classe provou** (`19 0f` →
+## func 15 → `80 00 07 00`; thread 17 → `80 00 06 00`), com a subida em si escrita à mão
+## (`player+0x34 += 70` e `player+0x3c += 40` por 10 quadros). Ou seja: as duas coisas convivem —
+## **nenhum objeto do R10D é escalável** (§5, segue verdade e segue testada) **e** o subir existe,
+## como coreografia de cena. Ver `docs/decomp/notes/cena_r10d.md` §6 e `port/script_vm/cena.gd`.
+##
 ## ══════════════════ 1. O EVENTO DO R10D **NÃO** É O "SUBIR" ══════════════════
 ## O R10D tem exatamente um AOT: `0x63` na **função 5** do `R10D.scd`, offset `0x0122`:
 ##
@@ -25,7 +35,8 @@ extends RefCounted
 ##
 ## A **função 11** (offset 1570 do bytecode, 250 B) é uma CENA: `65 aot_reset`, `4d` flag set,
 ## `19 0d/0e/0f/16..19/1a/20..25` (gosubs), `0a` yields, `55/56` som, `46` câmera, `40` var,
-## `04 ff 19 xx` (novas threads), `10/11` while/break e `01` no fim. É cutscene, não o subir.
+## `04 ff 19 xx` (novas threads), `10/11` while/break e `01` no fim. É cutscene — e ⚠ **o subir
+## está DENTRO dela** (ver a ATUALIZAÇÃO no topo): não é a rotina 9, é o opcode `0x80`.
 ## Somado ao que o chamador já apurou (a caixa `x[-8585..-5285] z[-15000..-11300]` fica a OESTE
 ## da captura em `x=-3678, z=-12960`), fica **PROVADO que o AOT do R10D não é o gatilho**.
 ##

@@ -1077,3 +1077,38 @@ BOOT_FASE=inicio_para_preto BOOT_TICKS=90 godot --path port --rendering-driver o
 
 godot --path port --headless --audio-driver Dummy --script res://dev/run_tests.gd -- boot
 ```
+
+---
+
+## 12. ✅ FECHADO: as duas cinemáticas do `R10D` (§8.7, §9.2, §9-15, §9-16)
+
+> Doc próprio: [`cena_r10d.md`](cena_r10d.md). Código: `port/script_vm/cena.gd` + os opcodes de
+> cena em `port/script_vm/vm.gd`. Teste: `port/dev/tests/test_cena.gd` (108 asserts).
+
+Rodando a VM de sala com **tempo** (sleep, threads, câmera, fade, ator), as 5 candidatas de
+§8.7 colapsaram em duas, e as duas são as que o dono descreveu:
+
+| item deste doc | resposta |
+|---|---|
+| §8.7 "qual das 5 é a primeira cutscene" | **função 7**, thread aberta pela função 5 no init da sala (`04 ff 19 07`). Termina em `cut_chg 0` — a câmera em que o port já nasce. **260 quadros ≈ 8,7 s**: câmeras 11 → 12 → 10 (60 quadros cada) → 0, com o relâmpago da função 40 (dois `0x46` aditivos, T=4 e T=16) |
+| §9-15 "a cutscene depois do vídeo do menu não identificada" | é essa mesma — **função 7**. Ela roda no `load` do `R10D`, logo depois do `opn`, sem `filme_prepara` a mais. Confirma a leitura de §9-15 de que "se existir, é cena de MOTOR" |
+| §9-16 "`R10D_2`" | **não existe e não precisa existir**: as DUAS cenas moram no mesmo SCD. A segunda é a **função 11**, aberta pelo AOT `sce 5` (caixa `x[-8585..-5285] z[-15000..-11300]`, payload `evt_exec(0xff, 11)`). **834 quadros ≈ 27,8 s**: câmeras 4 → 5 → 4 → 6 → 7 → 8 → 9, 8 threads de ator, fade `abr=2` T=48 e a porta |
+| §9.2 "a cinemática de motor não está no port" | **está**, em `Cena`. Falta o engate em `world.gd`/`player.gd` (que não são meus) — as 3 linhas estão em `cena_r10d.md` §6.2 |
+
+**E o achado que mudou a prioridade:** a função 11 **é a única saída da sala**. O `R10D` declara
+uma porta com caixa `(0,0,0,0)` — intocável — e é o script que a dispara, pelo opcode **`0x66`
+= `sce_aot_exec`** (`0x80055d7c`), que chama `*(0x8009e0bc + sce*4)` = o produtor de porta
+`0x80050d28`. Isso **corrige** `door_handler.md` ("não há warp por opcode de script") e explica
+as 6 portas que aquela auditoria rotulou "box ZERO (scripted/cutscene)": são exatamente as 6
+disparadas por `0x66`. Destino: **`R101`**.
+
+O port ganhou, com o handler do EXE citado em cada um: `0x09`/`0x0a` (sleep), `0x0d`/`0x0f`
+(for), `0x10`/`0x11` (while), `0x47` (work_set), `0x40`/`0x41`/`0x42`/`0x20` (membro e var, com
+as duas tabelas de 43 membros `0x80010950`/`0x80010a00`), `0x50`/`0x51` (cut_chg/cut_old),
+`0x46` (fade — o **mesmo** `0x8002a35c` do §1.2 deste doc), `0x66`, `0x80`/`0x81`/`0x8f` (ator)
+e `0x03`/`0x04` (thread).
+
+**Continua em aberto** (detalhe em `cena_r10d.md` §7): a velocidade do `0x81` (tabela por classe
+não decodificada — a `Cena` usa o `VEL_ANDAR = 78` do port e marca como declarado); a chegada da
+porta roteirizada, que vem `(0,0,0)` no dado e precisa do grupo do RVD; e a ordem do escalonador
+entre threads criadas no mesmo quadro.

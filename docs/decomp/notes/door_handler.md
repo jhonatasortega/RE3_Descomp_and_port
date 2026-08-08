@@ -204,3 +204,64 @@ room-loader `0x800493ec` (chamado só do cluster do door_handler: `0x800247cc`,`
 tabela fileid `0x8009dfd0` · descriptor `*(0x800cc88c)` (gs+0x2154) · current_stage
 `0x800d1f76` · current_room `0x800d1f78` · flag-troca `0x800c7960` (STOREs: `0x80050fa0`,
 `0x800510f4` [sce1], `0x80051d04` [sce13], reset `0x80023470`).
+
+---
+
+## ⚠ CORREÇÃO (round das cenas do `R10D`) — existe warp por opcode de script: `0x66`
+
+> Detalhe completo em [`cena_r10d.md`](cena_r10d.md) §4. Aqui só a correção e a prova.
+
+O achado 2 da auditoria acima diz: *"**Não há outro mecanismo de troca de sala** […] o
+room-loader `0x800493ec` só é chamado pelo cluster do door_handler […] **não há warp por opcode
+de script**"*. As duas primeiras frases seguem certas; **a terceira não**. O script não chama o
+room-loader — ele chama o **produtor** que o aciona, pelo opcode **`0x66`**:
+
+```
+handler 0x80055d7c  (jump-table do SCD 0x8009e0f8, entrada 0x66; 2 B)
+  aot = *(u32*)(gs + 0x2158 + (byte@+1)*4)          ; o AOT que o 0x61/0x63/0x67 registrou
+  *(u32*)0x800decb0 = aot
+  a0  = (aot[1] & 0x80) ? aot + 0x14 : aot + 0x0c   ; MESMO path da VM per-frame
+  gs+0x2140 = (obj+0x154 == 1) ? gs+0x248c : obj+0x154
+  jalr *(0x8009e0bc + aot[0]*4)                     ; aot[0] = SCE type -> sce 1 = 0x80050d28
+  PC += 2
+```
+
+Isto é: **`0x66` = `sce_aot_exec(id)`** — dispara o SCE de um AOT já registrado, na hora, sem
+o jogador tocar a caixa. Com `sce ∈ {1,13}` é uma troca de sala pela cadeia de sempre
+(`gs+0x2154` → `0x800248e4` → `0x800493ec`).
+
+**A prova não é uma sala isolada.** Varredura das 169: **120 opcodes `0x66`**, todos apontando
+para um AOT declarado na mesma sala. E os que apontam para `sce ∈ {1,13}` são **exatamente as
+6 arestas que a tabela das 17 mão-única acima teve de rotular "scripted/cutscene/box ZERO"
+sem saber o mecanismo**:
+
+| sítio do `0x66` | AOT | linha da tabela das 17 mão-única |
+|---|---|---|
+| `R10D` f11 | 0 | `R10D→R101` `placeholder_unused` — "box+arrival ZERADOS (único no jogo)" |
+| `R215` f18/20/21/23 | 3 | `R215→R303`/`R305` `story_progression_gate` — "box ZERO (cutscene)" |
+| `R30D` f39 | 0 | `R30D→R310` `transient_variant_scripted` — "sai por box ZERO (scripted)" |
+| `R50D` f20/f82 | 1 | `R50D→R50F` `endgame_boss_scripted` — "box ZERO (cutscene)" |
+| `R50F` f7 | 0 | `R50F→R50E` `endgame_ending_scripted` |
+| `R510` f34 | 1 | `R510→R504` `one_way_fall` — "arrival ZERADO (spawn scripted)" |
+
+Consequências para este doc:
+
+1. **`R10D→R101` não é `placeholder_unused`.** É a porta da **cinemática de saída** do `R10D`
+   (função 11 do script) e é a **única** saída da sala — sem ela o jogo fica preso na primeira
+   sala. O motivo de mão-única muda para `scripted_cutscene_exit`.
+2. **Caixa zerada deixa de ser anomalia.** Em `R10D`/`R30D`/`R50D`/`R50F` a caixa é (0,0,0,0)
+   porque o jogador **não deve** poder tocá-la; em `R215`/`R510` a mesma porta é tocável **e**
+   disparável pelo script (uso duplo).
+3. **A chegada zerada continua em aberto.** `R10D→R101` chega em `(0,0,0)` e `(0,0,0)` não é
+   ponto válido em `R101` (as outras duas portas de entrada chegam em `(-18808,-7200,-11475)` e
+   `(-4434,-3600,-27933)`). Nem `R101` nem `R504` posicionam o player por `0x40` membro
+   `0x09/0x0a/0x0b`. O candidato é `descriptor+0xb` = **grupo do RVD** (`gs+0x2495`) — **não
+   medido**. O port marca `chegada_zerada` e não inventa coordenada.
+4. **O `0x66` não é só porta.** Dos 120, a maioria aponta para `sce 2` (item), `sce 4`
+   (mensagem), `sce 5` (evento), `sce 10`/`11`/`12` — o opcode é genérico ("execute este AOT
+   agora"), e a troca de sala é só o caso `sce ∈ {1,13}`.
+
+**Onde está no port:** `port/script_vm/vm.gd` (opcode `0x66` em `Modo.CENA`) e
+`port/script_vm/cena.gd` (`aot_exec()`, que emite o pedido de troca). Teste:
+`port/dev/tests/test_cena.gd` grupo 5 — a correlação da tabela acima é conferida dentro do port,
+nas 6 salas.
