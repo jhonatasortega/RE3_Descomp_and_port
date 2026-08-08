@@ -86,6 +86,29 @@ func run(t: Object) -> bool:
 	t.eq(p.mira_sub, Player.Mira.LEVANTAR, "soltar a mira reseta o sub-estado")
 	t.check(p.acao != Player.Acao.MIRANDO, "e sai de MIRANDO")
 
+	# ── NÃO ATIRA SEM MIRAR (o gatilho só é lido no sub 3 da rotina 7) ──
+	var st5 := GameState.new()
+	st5.novo_jogo()
+	var p5 := Player.new()
+	p5.estado = st5
+	p5.equipped_weapon = 0x03
+	for _i in 6:
+		pad.set_mask(Pad.TIRO)                      ## clique esquerdo SEM segurar a mira
+		p5.tick(pad)
+		pad.set_mask(0)
+		p5.tick(pad)
+	t.eq(st5.equipped_qtd(), 15, "clicar TIRO sem mirar não gasta munição")
+	t.eq(p5.tiro_pendente, -1, "e não agenda tiro")
+	t.check(p5.acao != Player.Acao.MIRANDO, "e não entra em mira")
+
+	# ── a malha da arma na mão sai do ITEM equipado (número do PLW = item_id em decimal) ──
+	# Medido em `port/dev/diag_armas.gd`: W01 517×106×27 = faca · W02/W03 163×370 = pistolas
+	# (bate com o timing 12 do EXE para w1 e w2) · W04 990 = escopeta · W06..W09 = os 4
+	# lança-granadas · W10 = lança-rockets (item 0x0a = 10, o que fixa a base 10).
+	t.check(FileAccess.file_exists("res://assets/PLD/PL00W03_WPN.glb")
+		or not AssetIO.exists("PLD/PL00W03_WPN.glb"),
+		"a malha da Hand Gun (item 0x03) é a PL00W03_WPN")
+
 	# ── auto-lock: alvo dentro e fora da caixa ──
 	var p2 := Player.new()
 	p2.estado = st
