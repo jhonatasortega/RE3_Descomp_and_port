@@ -718,6 +718,19 @@ Saída: `assets/ESP/sala/<SALA>/hd/t{tipo}_A{a}_B{b}_v{var}_{px}x{px}.png` (px =
 mapa `port/data/esp_hd_map.json` com NCC, RMS, IoU de alfa e o NCC do primeiro reprovado —
 ou seja, a folga fica registrada par por par. `esp_sala.gd` prefere o HD e cai no SD sozinho.
 
+**Cobertura medida nas 156 salas com ESP** (`python tools/esp_decode.py hd`, sem argumento):
+
+| medida | valor |
+|---|---|
+| salas com quadro em HD | **71** (as outras 85 têm banco mas nenhum `0x70` que desenhe) |
+| pares (banco, variante) casados | **154** · **1386 PNG** recortados |
+| NCC do par escolhido | mínimo **0,963** · mediana **0,9975** |
+| NCC do primeiro REPROVADO | mediana **0,642** · máximo **0,948** |
+| pares com folga < 0,03 entre casado e reprovado | **0** |
+| RMS de cor (0..255) | mínimo 1,4 · mediana 5,3 · máximo 13,0 |
+| empatados na forma (mesma página, outra CLUT) | até **29** — é a etapa 2 que decide |
+| bancos **SEM** par HD | **2** (`0x16` de `R212`, melhor NCC 0,519; `0x2c`, 0,133) — ficam em SD |
+
 > Cuidado com as variantes por data do pack (o conjunto de janeiro/2025 é RUSSO e o de junho é
 > PT-BR): aqui **não se aplica**, porque efeito não tem texto. O critério de idioma
 > (`tools/memo_pt.py`) vale para `memo`/`misc`/UI.
