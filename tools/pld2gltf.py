@@ -934,6 +934,13 @@ def write_glb(path, P, N, UV, J, W, faces, emr, atlas_w, atlas_h, atlas_rgb, ani
             a_time = len(accessors) - 1
             samplers = []; channels = []
             for b in range(nb):
+                # clip["rot"][b] == None -> este clipe NAO anima este osso (clipe
+                # PARCIAL: os bancos 1/2 do .PLW cobrem so um SUBCONJUNTO do
+                # esqueleto de 15). Sem canal, o osso mantem o valor de quem
+                # estiver tocando por baixo -> overlay por SUBSTITUICAO do
+                # subconjunto. Ver docs/decomp/notes/plw.md sec.9.
+                if clip["rot"][b] is None:
+                    continue
                 quats = b"".join(struct.pack("<4f", *q) for q in clip["rot"][b])
                 vq = add_view(quats)
                 accessors.append({"bufferView": vq, "componentType": 5126,
@@ -942,16 +949,18 @@ def write_glb(path, P, N, UV, J, W, faces, emr, atlas_w, atlas_h, atlas_rgb, ani
                                  "interpolation": "LINEAR"})
                 channels.append({"sampler": len(samplers) - 1,
                                  "target": {"node": b, "path": "rotation"}})
-            # translacao da raiz (root motion)
-            root_b = [j for j in range(nb) if parent[j] < 0][0]
-            tr = b"".join(struct.pack("<3f", *t) for t in clip["roottr"])
-            vtr = add_view(tr)
-            accessors.append({"bufferView": vtr, "componentType": 5126,
-                              "count": npose, "type": "VEC3"})
-            samplers.append({"input": a_time, "output": len(accessors) - 1,
-                             "interpolation": "LINEAR"})
-            channels.append({"sampler": len(samplers) - 1,
-                             "target": {"node": root_b, "path": "translation"}})
+            # translacao da raiz (root motion) — omitida nos clipes PARCIAIS, que
+            # nao devem disputar a posicao do quadril com o clipe de base.
+            if clip.get("roottr"):
+                root_b = [j for j in range(nb) if parent[j] < 0][0]
+                tr = b"".join(struct.pack("<3f", *t) for t in clip["roottr"])
+                vtr = add_view(tr)
+                accessors.append({"bufferView": vtr, "componentType": 5126,
+                                  "count": npose, "type": "VEC3"})
+                samplers.append({"input": a_time, "output": len(accessors) - 1,
+                                 "interpolation": "LINEAR"})
+                channels.append({"sampler": len(samplers) - 1,
+                                 "target": {"node": root_b, "path": "translation"}})
             animations.append({"name": clip["name"], "samplers": samplers, "channels": channels})
 
     # nodes: 0..nb-1 = ossos ; nb = malha
@@ -1079,12 +1088,231 @@ def _is_edd_start(d, off):
 
 
 def _is_emr_hdr(d, off):
+    """Header EMR = {u16 hierOff, u16 poolOff, u16 nBones, u16 frameSize}.
+
+    MEDIDO (nao inventado): PL00.PLD blk1 = [100, 176, 15, 76] e `parse_poses`
+    sempre usou POOL = emr+176 -> o campo 1 e' o OFFSET DO POOL de poses.
+    Confirmado nos 3 bancos do PL00W00.PLW: [100,8,15,76] / [52,88,7,40] /
+    [64,108,9,52], e o layout previsto
+        hierOff = align4(8 + nb*6)                (header + relpos)
+        poolOff = align4(hierOff + nb*4 + nb-1)   (+ tabela de filhos)
+    bate EXATO nos bancos parciais (52/88 p/ nb=7; 64/108 p/ nb=9) e no PLD
+    (100/176 p/ nb=15). Ver docs/decomp/notes/plw.md sec.9.
+
+    Retorna (poolOff, nBones, frameSize)."""
     if off + 8 > len(d):
         return None
-    kf = u16(d, off + 2); nb = u16(d, off + 4); fsz = u16(d, off + 6)
-    if 1 <= nb <= 64 and 8 <= fsz <= 256 and 4 <= kf <= 4096:
-        return (kf, nb, fsz)
+    pool = u16(d, off + 2); nb = u16(d, off + 4); fsz = u16(d, off + 6)
+    if 1 <= nb <= 64 and 8 <= fsz <= 256 and 4 <= pool <= 4096:
+        return (pool, nb, fsz)
     return None
+
+
+# ----------------------------------------------------------------------------
+# BANCOS PARCIAIS do .PLW — overlay de MIRA/TIRO
+# ----------------------------------------------------------------------------
+# Cada .PLW tem 3 bancos EDD+EMR (ver docs/decomp/notes/plw.md sec.5/sec.9):
+#   banco0  nb=15 fsz=76  poolOff=8    -> corpo inteiro; SEM esqueleto proprio
+#                                         (o pool comeca no byte 8: 8+399*76 =
+#                                         30332 = tamanho exato do bloco) e por
+#                                         isso reusa o esqueleto do .PLD.
+#   banco1  nb=7  fsz=40  poolOff=88   -> parcial INFERIOR (raiz + 2 PERNAS)
+#   banco2  nb=9  fsz=52  poolOff=108  -> parcial SUPERIOR (raiz + cabeca +
+#                                         2 BRACOS + pivo da pelve) = a MIRA
+# Os bancos 1 e 2 trazem relpos + hierarquia PROPRIOS, e e' dai que sai o
+# de-para de osso (casamento por relpos EXATO + cadeia de pais).
+DEPARA_PARCIAL = {                       # nb do banco -> ossos do esqueleto de 15
+    7: (0, 9, 10, 11, 12, 13, 14),       # raiz + perna-D (9,10,11) + perna-E (12,13,14)
+    9: (0, 1, 2, 3, 4, 5, 6, 7, 8),      # raiz + cabeca + braco-D + braco-E + pelve
+}
+
+
+def parse_emr_parcial(d, off):
+    """Esqueleto de um banco PARCIAL (relpos + hierarquia proprios).
+    Devolve None se poolOff <= 8 (banco SEM esqueleto, caso do banco0)."""
+    h = _is_emr_hdr(d, off)
+    if not h:
+        return None
+    pool, nb, fsz = h
+    hier = u16(d, off)
+    if pool <= 8 or hier + nb * 4 > pool:
+        return None                                   # sem esqueleto proprio
+    relpos = [(s16(d, off + 8 + i * 6), s16(d, off + 8 + i * 6 + 2),
+               s16(d, off + 8 + i * 6 + 4)) for i in range(nb)]
+    hb = off + hier
+    parent = [-1] * nb
+    children = [[] for _ in range(nb)]
+    for i in range(nb):
+        cnt = u16(d, hb + i * 4); coff = u16(d, hb + i * 4 + 2)
+        if cnt > nb or hb + coff + cnt > off + pool:
+            return None                               # hierarquia implausivel
+        for k in range(cnt):
+            c = d[hb + coff + k]
+            if not (0 <= c < nb):
+                return None
+            parent[c] = i
+            children[i].append(c)
+    return dict(nb=nb, pool_off=pool, frame_size=fsz, hier_off=hier,
+                relpos=relpos, parent=parent, children=children)
+
+
+def mapa_ossos_parcial(sub, base_relpos, base_parent):
+    """DE-PARA de osso: banco parcial -> esqueleto de 15 ossos do .PLD.
+
+    Metodo (100% medicao, sem chute):
+      1) cada osso NAO-raiz do parcial casa por **relpos INTEIRO EXATO** com um
+         unico osso do esqueleto de 15 (a raiz casa com a raiz — o relpos da raiz
+         e' o deslocamento GLOBAL do modelo, que o `parse_emr` descarta);
+      2) a CADEIA DE PAIS tem de ser consistente: subindo do osso mapeado ate o
+         pai mapeado, so e' permitido pular ossos de comprimento ZERO
+         (relpos == (0,0,0)) que NAO estejam no subconjunto — no rig do player e'
+         o osso 8 (pivo da pelve), colapsado na raiz pelo banco das pernas.
+    Retorna (mapa, motivo) — mapa=None se qualquer passo falhar.
+    """
+    nb = sub["nb"]
+    raizes = [j for j in range(len(base_parent)) if base_parent[j] < 0]
+    if not raizes:
+        return None, "esqueleto base sem raiz"
+    mapa = []
+    for i, rp in enumerate(sub["relpos"]):
+        if sub["parent"][i] < 0:
+            mapa.append(raizes[0]); continue
+        hits = [j for j, bp in enumerate(base_relpos) if bp == rp]
+        if len(hits) != 1:
+            return None, "osso %d relpos=%s casa com %s (esperado 1)" % (i, rp, hits)
+        mapa.append(hits[0])
+    if len(set(mapa)) != nb:
+        return None, "de-para nao injetivo: %s" % (mapa,)
+    for i in range(nb):
+        p = sub["parent"][i]
+        if p < 0:
+            continue
+        cur = base_parent[mapa[i]]
+        while cur >= 0 and cur != mapa[p]:
+            if base_relpos[cur] != (0, 0, 0) or cur in mapa:
+                return None, "cadeia de pais quebrada em %d->%d" % (mapa[i], mapa[p])
+            cur = base_parent[cur]
+        if cur != mapa[p]:
+            return None, "osso %d: sem cadeia %d->%d" % (i, mapa[i], mapa[p])
+    return tuple(mapa), "relpos exato + cadeia de pais"
+
+
+def _relpos_de_pld(pld_path):
+    """(relpos, parent) do esqueleto de um .PLD, ou None."""
+    try:
+        dp = open(pld_path, "rb").read()
+        po, ps = parse_container(dp)
+        pr = classify(dp, po, ps)
+        eo, ee = ps[pr["emr"]]
+        e = parse_emr(dp, eo, ee)
+        return e["relpos"], e["parent"]
+    except Exception:
+        return None
+
+
+def build_partial_clips(plw_path, emr, nb_alvo=9, prefix="mira"):
+    """Overlay de MIRA/TIRO: exporta as sequencias do banco PARCIAL do .PLW
+    (default nb=9 = SUPERIOR: raiz + cabeca + 2 bracos + pelve) como clipes que
+    animam SO os ossos do de-para — o resto do esqueleto fica livre para o clipe
+    de base (locomocao) -> overlay por SUBSTITUICAO do subconjunto.
+
+    MEDIDO (PL00W00.PLW, ver docs/decomp/notes/plw.md sec.9): o punho direito
+    (osso 4) sai do repouso y=+297 (PS1: y+ = para BAIXO) e sobe para y=-598 na
+    seq0 (levantar a arma, -895 unidades); as seqs 2/4/6 sao TRES alturas de mira
+    mantidas (-598 / -1027 / -115) e a seq7 (32 quadros) oscila em torno da mira
+    media = TIRO + recuo. Casa com a rotina 7 do EXE (`0x8003a7d8`), que escreve
+    `player+0xc8` = 13 (levantar) e 14/15/16 por `aim_tier` — ver
+    docs/decomp/notes/exe_combat.md sec.1.3/1.6.
+
+    ⚠️ `nb_alvo=7` (banco INFERIOR / pernas) NAO e' confiavel e por isso NAO entra no
+    `convert()`: o header declara frameSize=40 mas o passo real do pool e' 32 (medido:
+    a translacao de raiz so fica suave com passo 32 e casa com a do banco2 +-1 em 102
+    poses; o 4o halfword e' exatamente 8x o do banco2). Com 32-8=24 bytes NAO cabem os
+    7*3 angulos de 12 bits (252 bits) e nenhuma varredura de layout deu pernas
+    plausiveis. Ver docs/decomp/notes/plw.md sec.9.6 (NAO PROVADO).
+
+    Retorna [] se o de-para nao puder ser PROVADO (nunca chuta)."""
+    if not os.path.exists(plw_path) or os.path.getsize(plw_path) < 64:
+        return []
+    d = open(plw_path, "rb").read()
+    do = u32(d, 0)
+    ents = [u32(d, do + i * 4) for i in range(max(0, (len(d) - do) // 4))]
+    if not ents:
+        return []
+    lim = sorted(set(ents + [do]))
+    escolhido = None
+    for i in range(len(ents) - 1):
+        if not _is_edd_start(d, ents[i]):
+            continue
+        sub = parse_emr_parcial(d, ents[i + 1])
+        if sub and sub["nb"] == nb_alvo:
+            escolhido = (ents[i], ents[i + 1], sub,
+                         min([b for b in lim if b > ents[i + 1]], default=do))
+            break
+    if escolhido is None:
+        return []
+    edd, emr_off, sub, emr_end = escolhido
+
+    # ---- de-para de osso (provado, com fallback para outro .PLD de player) ----
+    mapa, motivo = mapa_ossos_parcial(sub, emr["relpos"], emr["parent"])
+    if mapa is None:
+        # Os 21 .PLW de PL0A carregam as PROPORCOES do rig de PL08/PL09 (relpos
+        # diferentes do PL0A.PLD). O de-para (indices) e' o mesmo; so o esqueleto
+        # de referencia muda. Casamos contra os outros .PLD de player — segue
+        # sendo casamento EXATO, sem chute.
+        import glob as _g
+        for cand in sorted(_g.glob(os.path.join(os.path.dirname(plw_path), "PL??.PLD"))):
+            rp = _relpos_de_pld(cand)
+            if not rp or len(rp[0]) != len(emr["relpos"]):
+                continue
+            mapa, motivo = mapa_ossos_parcial(sub, rp[0], rp[1])
+            if mapa is not None:
+                motivo += " (referencia %s)" % os.path.basename(cand)
+                break
+    if mapa is None:
+        return []
+    if DEPARA_PARCIAL.get(nb_alvo) and tuple(mapa) != DEPARA_PARCIAL[nb_alvo]:
+        return []                                     # divergiu do de-para provado
+
+    # ---- pool de poses ----
+    pool = emr_off + sub["pool_off"]
+    fsz = sub["frame_size"]
+    npose = (emr_end - pool) // fsz
+    nseq = _edd_nseq(d, edd)
+    nb = sub["nb"]
+
+    def read_pose(k):
+        o = pool + k * fsz
+        return [_euler_to_quat_gltf(_get12(d, o + 8, b * 3),
+                                    _get12(d, o + 8, b * 3 + 1),
+                                    _get12(d, o + 8, b * 3 + 2)) for b in range(nb)]
+
+    nb_base = emr["nb"]
+    clips = []
+    FPS = 30.0
+    for s in range(nseq):
+        nf = u16(d, edd + s * 8); fo = u16(d, edd + s * 8 + 2); ps = u32(d, edd + s * 8 + 4)
+        if nf < 1:
+            continue
+        idxs = [ps + (u16(d, edd + fo + k * 2) & 0xFF) for k in range(nf)]
+        if any(pi < 0 or pi >= npose for pi in idxs):
+            continue
+        rot = [None] * nb_base
+        for j in mapa:
+            rot[j] = []
+        for pi in idxs:
+            quats = read_pose(pi)
+            for b in range(nb):
+                j = mapa[b]
+                q = quats[b]
+                if rot[j]:                            # continuidade de hemisferio
+                    p = rot[j][-1]
+                    if q[0]*p[0] + q[1]*p[1] + q[2]*p[2] + q[3]*p[3] < 0:
+                        q = (-q[0], -q[1], -q[2], -q[3])
+                rot[j].append(q)
+        clips.append(dict(name="%s%02d" % (prefix, s), times=[k / FPS for k in range(nf)],
+                          rot=rot, roottr=None, ossos=tuple(mapa), motivo=motivo))
+    return clips
 
 
 def build_armed_clips(plw_path, emr, prefix="arm"):
@@ -1374,6 +1602,12 @@ def convert(path, out_glb, preview=None, with_anim=True, hd_atlas=None):
             _armed = build_armed_clips(_plw, emr)
             if _armed:
                 clips = (clips or []) + _armed
+            # Overlay de MIRA/TIRO = banco PARCIAL SUPERIOR (nb=9) do mesmo PLW.
+            # Anima SO os ossos 0..8 (raiz+cabeca+bracos+pelve); as pernas ficam
+            # com o clipe de base. Prefixo "mira". Ver plw.md sec.9.
+            _mira = build_partial_clips(_plw, emr, nb_alvo=9, prefix="mira")
+            if _mira:
+                clips = (clips or []) + _mira
     taw, tah, trgb = hd_atlas if hd_atlas else (aw, ah, atlas)
     info = write_glb(out_glb, P, N, UV, J, W, faces, emr, taw, tah, trgb, anim_clips=clips)
     info["roles"] = roles

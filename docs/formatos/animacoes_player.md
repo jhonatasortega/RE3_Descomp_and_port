@@ -7,9 +7,20 @@
 > - **Decompilado:** **100%** (`anim_player`) · `plw` fechado no lado decomp (ver [plw.md](../decomp/notes/plw.md))
 > - **Feito:** as 22 seqs do PLD medidas/renderizadas; **locomoção real = banco0 do PLW** extraída e ligada (clipes `armNN`).
 > - **Multi-banco RESOLVIDO:** cada `.PLW` tem **3 bancos** — bank0 (15 ossos, 76 B/pose, 18 seqs = corpo
->   inteiro/locomoção armada; é o dos `armNN`), bank1 (7 ossos, 40 B, 8 seqs) e bank2 (9 ossos, 52 B, 8 seqs)
->   = overlays parciais (mira/gesto). Os 3 slots armados do EXE (`player+0xf4/0xf8/0x100`) mapeiam nesses 3 bancos.
->   Validação `find_anim_banks.py --validate-all`: 84/84 PLW com banco + malha. Ver [plw.md §5](../decomp/notes/plw.md).
+>   inteiro/locomoção armada; é o dos `armNN`), bank1 (7 ossos, 8 seqs) e bank2 (9 ossos, 52 B, 8 seqs)
+>   = overlays parciais. Validação `find_anim_banks.py --validate-all`: 84/84 PLW com banco + malha.
+>   Ver [plw.md §5](../decomp/notes/plw.md).
+> - ✅ **OVERLAY DE MIRA/TIRO extraído** (ver [plw.md §9](../decomp/notes/plw.md)): o **bank2** é a
+>   mira. De-para de osso **provado** (`relpos` inteiro exato + cadeia de pais, igual nos 84 `.PLW`):
+>   bank2 → ossos **`0..8`** (raiz + cabeça + 2 braços + pelve = **SUPERIOR**);
+>   bank1 → ossos **`0,9,10,11,12,13,14`** (raiz + 2 pernas = **INFERIOR**).
+>   Exportado como **`mira00..mira07`** no `<PERSONAGEM>.glb` (`pld2gltf.py::build_partial_clips`);
+>   teste em [`port/dev/tests/test_anim_mira.gd`](../../port/dev/tests/test_anim_mira.gd), foto em
+>   [`port/dev/shot_mira_overlay.gd`](../../port/dev/shot_mira_overlay.gd).
+> - ⚠️ **CORREÇÃO:** a linha antiga *"os 3 slots armados do EXE (`player+0xf4/0xf8/0x100`) mapeiam
+>   nesses 3 bancos"* é **NÃO PROVADA** — a rotina de equipar arma (`0x80043be4`) preenche **só**
+>   `+0xf0/+0xf4` com o banco0 do `.PLW`. Detalhe e os outros 3 pontos abertos em
+>   [plw.md §9.6](../decomp/notes/plw.md).
 > - **Osso de anexo da arma:** `bone4` (punho direito), world-rest `(-32, 297, -435)` PS1 — dado de decomp; ligar no controller é vínculo.
 > - **Falta (vínculo/gameplay, não decomp):** validar mira + "subir em item"; fixar o índice de tier por captura de save-state (ver [exe.md §4-B0/4-B.5](exe.md)).
 
@@ -42,9 +53,32 @@ As 22 abaixo são o set **DESARMADO/base** + ações sempre-válidas (dano, pega
 | 9 | `arm09` | **RÉ** | ~68/f |
 
 O `pld2gltf.py` (`build_armed_clips`) extrai o banco0 do PLW e o aplica ao esqueleto do PLD
-(mesmos 15 ossos). O `PL00.glb` agora tem 40 clipes: `anim00..21` (base) + `arm00..17`
-(armado). O controller usa os `armNN` pra locomoção. Cada arma tem seu PLW → o andar muda
+(mesmos 15 ossos). O controller usa os `armNN` pra locomoção. Cada arma tem seu PLW → o andar muda
 por arma equipada.
+
+### Overlay de MIRA/TIRO (`PL00W00.PLW` banco2) — clipes `miraNN`
+
+`build_partial_clips` extrai o **banco2** (parcial SUPERIOR, 9 ossos) e o retargeta para os ossos
+`0..8` do esqueleto de 15. O `PL00.glb` passa a ter **48 clipes**: `anim00..21` + `arm00..17` +
+`mira00..07`. Cada `miraNN` tem trilha de rotação **só** para `bone00..bone08` e **nenhuma**
+translação de raiz → aplicar = **substituir** os ossos do subconjunto sobre o clipe de locomoção
+(as pernas seguem no `armNN`). Alturas do punho direito medidas por FK (PS1, repouso `y=+297`,
+`y` menor = mais alto):
+
+| clipe | quadros | punho `y` | papel | EXE (`player+0xc8`) |
+|---|---:|---:|---|---|
+| `mira00` | 10 | +291 → **−598** | **LEVANTAR a arma** | 13 (rotina 7 sub0) |
+| `mira01` | 20 | → −598 | rampa p/ mira média | — |
+| `mira02` | **1** | **−598** | **HOLD mira MÉDIA** | 14 (`aim_tier` 0) |
+| `mira03` | 20 | → −1027 | rampa p/ mira alta | — |
+| `mira04` | **1** | **−1027** | **HOLD mira ALTA** | 15/19 (declarado) |
+| `mira05` | 20 | → −115 | rampa p/ mira baixa | — |
+| `mira06` | **1** | **−115** | **HOLD mira BAIXA** | 16/20 (declarado) |
+| `mira07` | 32 | −591 (−716..−362) | **TIRO + recuo** | rotina 7 sub3 |
+
+Controle: o `arm02` (parada/mira de corpo inteiro) mantém o punho em `y ≈ +270` — **na altura do
+quadril**. O braço **só levanta** no banco2. O casamento índice-a-índice de `0xc8` (13..20) com a
+seq do banco é **DECLARADO**, não provado ([plw.md §9.6](../decomp/notes/plw.md)).
 
 ---
 

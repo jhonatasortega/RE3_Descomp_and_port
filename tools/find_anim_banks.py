@@ -55,12 +55,19 @@ def container_dir(b):
 
 
 def is_emr(b, off):
-    """header EMR: u16 hierOff, u16 kfOff, u16 nBones(1..64), u16 frameSize."""
+    """header EMR: u16 hierOff, u16 **poolOff**, u16 nBones(1..64), u16 frameSize.
+
+    CORRECAO (ver docs/decomp/notes/plw.md §9.1): o campo 1 e' o offset do POOL DE
+    POSES relativo ao inicio da secao (nao um "kfOff" vago). Layout previsto que
+    bate exato nos 3 bancos: hierOff = align4(8 + nb*6) e
+    poolOff = align4(hierOff + nb*4 + nb-1). No banco0 do .PLW o poolOff e' **8**
+    -> o banco NAO tem esqueleto proprio (reusa o do .PLD).
+    """
     if off + 8 > len(b):
         return None
-    kf = u16(b, off + 2); nb = u16(b, off + 4); fsz = u16(b, off + 6)
-    if 1 <= nb <= 64 and 8 <= fsz <= 256 and 4 <= kf <= 4096:
-        return (kf, nb, fsz)
+    pool = u16(b, off + 2); nb = u16(b, off + 4); fsz = u16(b, off + 6)
+    if 1 <= nb <= 64 and 8 <= fsz <= 256 and 4 <= pool <= 4096:
+        return (pool, nb, fsz)
     return None
 
 
@@ -200,17 +207,30 @@ def validate_all():
     d = open(os.path.join(ROOT, "PL00W00.PLW"), "rb").read()
     _, banks = all_banks(d)
     print("\n  PL00W00: %d bancos de animacao:" % len(banks))
+    # CORRECAO (docs/decomp/notes/plw.md §9.3): o parcial de 7 ossos e' o INFERIOR
+    # (raiz + 2 pernas), o de 9 e' o SUPERIOR (raiz + cabeca + 2 bracos + pelve) e
+    # e' ele que carrega a MIRA. De-para provado por relpos exato + cadeia de pais.
     role = {15: "corpo inteiro (locomocao armada: seq0=andar seq1=correr seq2=mira seq9=re)",
-            7: "parcial superior (7 ossos; overlay de mira/gesto)",
-            9: "parcial (9 ossos; overlay)"}
+            7: "parcial INFERIOR -> ossos 0,9,10,11,12,13,14 (raiz + 2 PERNAS)",
+            9: "parcial SUPERIOR -> ossos 0..8 (raiz+cabeca+2 BRACOS+pelve) = a MIRA"}
     for bi, bk in enumerate(banks):
         print("    bank%d nBones=%2d frameSize=%d nseq=%d npose=%d  %s" % (
             bi, bk["nb"], bk["fsz"], bk["nseq"], bk["npose"], role.get(bk["nb"], "")))
-    # OSSO DE ANEXO da arma (punho direito = bone4) do PLD base
+    # esqueleto base (PL00.PLD) — referencia do de-para e do osso de anexo
     dp = open(os.path.join(ROOT, "PL00.PLD"), "rb").read()
     offs, sec = P.parse_container(dp); roles = P.classify(dp, offs, sec)
     eo, ee = sec[roles["emr"]]
     emr = P.parse_emr(dp, eo, ee)
+    # DE-PARA de osso dos bancos parciais, recalculado AGORA a partir dos bytes
+    # (nao e' constante hardcoded: `mapa_ossos_parcial` casa relpos + hierarquia).
+    print("\n  DE-PARA de osso dos bancos parciais (recalculado dos bytes):")
+    for bk in banks:
+        sub = P.parse_emr_parcial(d, bk["emr"])
+        if not sub:
+            print("    nb=%-2d sem esqueleto proprio (poolOff<=8) -> usa o do .PLD" % bk["nb"])
+            continue
+        mapa, motivo = P.mapa_ossos_parcial(sub, emr["relpos"], emr["parent"])
+        print("    nb=%-2d -> %s   [%s]" % (bk["nb"], mapa, motivo))
     w4 = emr["world"][4]; w7 = emr["world"][7]
     print("\n  OSSO DE ANEXO DA ARMA (dado p/ o controller):")
     print("    bone4 = PUNHO DIREITO (parent chain 0->2->3->4) - Jill segura a arma na destra")
