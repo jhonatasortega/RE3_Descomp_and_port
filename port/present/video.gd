@@ -183,10 +183,10 @@ func _process(_delta: float) -> void:
 		queue_redraw()
 
 
-func _draw() -> void:
-	if not _tocando:
-		return
-	var linhas := linhas_atuais()
+static func desenhar_legenda(onde: CanvasItem, linhas: Array) -> void:
+	## Desenha um bloco de legenda no rodapé do espaço 320×240. Estático porque o PRÓLOGO
+	## (`present/prologo.gd`) usa a mesma legenda — e a marcação do mod, hoje, é dele:
+	## `prologue.xml` legenda a narração do prólogo, não o `opn.mp4` (ver o cabeçalho).
 	if linhas.is_empty():
 		return
 	var largura_max := TELA.x - 2 * LEGENDA_MARGEM_X
@@ -199,6 +199,12 @@ func _draw() -> void:
 	var y := LEGENDA_Y - (finais.size() - 1) * Texto.ALTURA_LINHA
 	for l: String in finais:
 		var x := (TELA.x - Texto.largura(l)) / 2
-		Texto.desenhar(self, l, Vector2i(x + 1, y + 1), 0, COR_SOMBRA)
-		Texto.desenhar(self, l, Vector2i(x, y), 0, COR_LEGENDA)
+		Texto.desenhar(onde, l, Vector2i(x + 1, y + 1), 0, COR_SOMBRA)
+		Texto.desenhar(onde, l, Vector2i(x, y), 0, COR_LEGENDA)
 		y += Texto.ALTURA_LINHA
+
+
+func _draw() -> void:
+	if not _tocando:
+		return
+	desenhar_legenda(self, linhas_atuais())

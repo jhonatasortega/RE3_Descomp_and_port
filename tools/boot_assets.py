@@ -469,6 +469,14 @@ def prologo(rel_assets=None):
     ops, total = decodificar_prologo(dados)
     xa = [o for o in ops if o["op"] == 0x0B]
     esperas = [o["espera_quadros"] for o in ops if o["op"] == 0x04]
+    # a espera que vem DEPOIS de cada trecho de XA = quanto cada trecho de narracao dura
+    dur_xa, esperando = [], False
+    for o in ops:
+        if o["op"] == 0x0B:
+            esperando = True
+        elif o["op"] == 0x04 and esperando:
+            dur_xa.append(o["espera_quadros"])
+            esperando = False
     return dict(
         ok=True,
         overlay="BIN/OPENING.BIN (overlay 5, base 0x801c2000)",
@@ -487,7 +495,8 @@ def prologo(rel_assets=None):
         segundos_total=round(total / (30000.0 / 1001.0), 3),
         esperas=esperas,
         trechos_xa=len(xa),
-        soma_esperas_xa=sum(esperas[:len(xa)]) if xa else 0,
+        quadros_por_trecho_xa=dur_xa,
+        soma_esperas_xa=sum(dur_xa),
         imagens={
             "0": dict(tim="ETC/OPENING1.DAT TIM[0]", hd="prologo0",
                       mostra="logo da Umbrella sobre uma rua de Raccoon City"),

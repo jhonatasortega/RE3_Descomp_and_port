@@ -3,7 +3,8 @@ extends Node2D
 ## FLUXO DE ABERTURA do RE3, do primeiro quadro até cair na sala inicial.
 ##
 ##     aviso legal  ->  logo CAPCOM  ->  FILME DE ATRAÇÃO (roop)  ->  TÍTULO (navegável)
-##     ->  dificuldade  ->  INIT_TBL.DAT  ->  FMV de abertura (opn)  ->  jogo (R10D)
+##     ->  dificuldade  ->  INIT_TBL.DAT  ->  VINHETA (prólogo narrado)
+##     ->  FMV de abertura (opn)  ->  jogo (R10D)
 ##
 ## ── O REPRODUTOR DE FMV: achado desta rodada ──
 ## O RE3 do PS1 **não tem MDEC no EXE nem nos 17 overlays** (varri `0x1f801820`/`0x1f801824`
@@ -68,6 +69,12 @@ extends Node2D
 ##   por 5 ticks (`0x80194b08` sub 1). Qual desenha primeiro está na Ordering Table, que eu
 ##   **não li**. Desenho SUB e depois ADD, o que dá "preto -> clarão branco de 5 ticks ->
 ##   preto -> fade-in de 60 ticks". A DURAÇÃO é medida; a aparência do clarão é minha leitura.
+## • **A VINHETA (prólogo).** `0x801960d8` cria a tarefa do `OPENING.BIN` (overlay 5) e só um
+##   tick depois `0x801960e8` chama `filme_prepara(0)` — por isso o passo `prologo` vem ANTES
+##   do `fmv`. Quem toca é `present/prologo.gd`, interpretando o script de 80 bytes que mora no
+##   fim de `ETC/OPENING1.DAT` (13 opcodes, tabela de handlers `0x801c2f70`). Detalhe e provas
+##   em `docs/decomp/notes/boot_ptbr_hd.md` §11. **DECLARADO:** a ordem prólogo → filme vem da
+##   ordem das chamadas + do relato do dono; não medi o escalonador entre as duas tarefas.
 ## • **Pular.** Medido só para o logo CAPCOM: `0x8019432c` testa `0x800cc834 & 0x800`. O
 ##   aviso legal NÃO tem leitura de pad no caminho do `entry` (§2), e o sítio do FMV não foi
 ##   medido. `pulo_livre` (ligado) é afordância do port: qualquer botão pula a etapa.
@@ -117,6 +124,10 @@ enum Blend { NENHUM, ADITIVO, SUBTRATIVO }
 signal fase_mudou(nome: String)
 signal pediu_bgm(faixa: String)                ## "main38" — o engate do som fica com o Audio
 signal pediu_parar_bgm()                       ## silêncio ao entrar no filme (ver cabeçalho)
+## Narração do PRÓLOGO (`main06`). Separada do `pediu_bgm` por um motivo prático: ela **não
+## pode entrar em laço** — tem 46,57 s e o prólogo dura 55,56 s, então em laço ela recomeçaria
+## nos últimos 9 s. O `Audio.tocar_faixa` repete por padrão.
+signal pediu_narracao(faixa: String)
 signal pediu_sfx(id: int)
 signal terminou()                              ## acabou a abertura; o jogo pode entrar
 
@@ -124,6 +135,8 @@ signal terminou()                              ## acabou a abertura; o jogo pode
 @export var entrar_no_jogo := true
 ## Toca os FMV (atração e abertura). Desligar dá o caminho curto título -> jogo.
 @export var tocar_fmv := true
+## Toca a VINHETA (o prólogo narrado) entre a dificuldade e o FMV de abertura.
+@export var tocar_vinheta := true
 ## Qualquer botão pula a etapa corrente (afordância do port; ver o cabeçalho).
 @export var pulo_livre := true
 
@@ -138,6 +151,7 @@ var depois_do_filme := ""
 
 var titulo: Titulo
 var video: VideoFmv
+var prologo: Prologo
 var _d: Dictionary = {}
 var _fundos: Dictionary = {}                   ## nome -> Texture2D
 var _add: ColorRect
@@ -165,6 +179,8 @@ func _ligar_som() -> void:
 		## O boot JÁ emitia `pediu_parar_bgm` ao entrar no filme; eu tinha ligado só o `pediu_bgm`,
 		## e era por isso que a música do menu continuava tocando por cima do vídeo.
 		pediu_parar_bgm.connect(func() -> void: au.call("parar_bgm"))
+		pediu_narracao.connect(func(faixa: String) -> void:
+			au.call("tocar_faixa", faixa, false))      ## loop = false: ver o sinal
 	if sf != null:
 		## ⚠ **BANCO EXPLÍCITO `C_01`** (correção desta rodada; o dono: "som do menu principal
 		## errado"). `tocar_id(0, id)` sem banco cai no `banco_padrao` do `re3_se.json`, que é
@@ -247,6 +263,13 @@ static func construir_passos(d: Dictionary) -> Array[Dictionary]:
 			"blend": Blend.SUBTRATIVO, "c0": Color.WHITE, "c1": Color.BLACK},
 		# ── TITLE.BIN estado 3 (0x80195564): o menu. Sem duração fixa. ──
 		{"nome": "menu", "ticks": 0, "fundo": "titulo", "blend": Blend.NENHUM},
+		# ── a VINHETA (prólogo) — `0x801960d8 load_overlay_task(1, ovl 5 = OPENING)` ──
+		# Vem DEPOIS da dificuldade + `INIT_TBL` e ANTES do FMV: no original a tarefa do
+		# OPENING é criada em `0x801960d8` e só um tick depois (`0x801960e0` yield) o TITLE
+		# chama `filme_prepara(0)` em `0x801960e8`. Quem toca o prólogo é
+		# `present/prologo.gd`, que interpreta o script de 80 bytes de `ETC/OPENING1.DAT`.
+		# Sem duração fixa aqui: quem sai deste passo é o fim do script (1665 quadros).
+		{"nome": "prologo", "ticks": 0, "fundo": "", "blend": Blend.NENHUM},
 		{"nome": "fmv", "ticks": 0, "fundo": "", "blend": Blend.NENHUM},
 		{"nome": "jogo", "ticks": 0, "fundo": "", "blend": Blend.NENHUM},
 	]
@@ -269,6 +292,15 @@ func _montar() -> void:
 	video.visible = false
 	add_child(video)
 	video.terminou.connect(_on_fmv_terminou)
+
+	# A VINHETA narrada (o prólogo do OPENING.BIN). O script dela vem do arquivo do usuário,
+	# decodificado por `tools/boot_assets.py` — ver `present/prologo.gd`.
+	prologo = Prologo.new()
+	prologo.name = "Prologo"
+	prologo.visible = false
+	add_child(prologo)
+	prologo.terminou.connect(_on_prologo_terminou)
+	prologo.pediu_narracao.connect(func(faixa: String) -> void: pediu_narracao.emit(faixa))
 
 	# Os dois slots de fade. `BLEND_MODE_ADD`/`SUB` são as MESMAS operações do `abr` do PS1.
 	_sub = _rect_fade(Blend.SUBTRATIVO)
@@ -302,6 +334,7 @@ func _aplicar_passo() -> void:
 	var p: Dictionary = passos[passo]
 	titulo.visible = String(p.get("fundo", "")) == "titulo"
 	video.visible = em_filme()
+	prologo.visible = passo_atual() == "prologo"
 	queue_redraw()
 	fase_mudou.emit(passo_atual())
 	print("[boot] %-18s %4d ticks (%.2f s)" % [passo_atual(), int(p.get("ticks", 0)),
@@ -315,6 +348,14 @@ func _aplicar_passo() -> void:
 		"menu":
 			titulo.fase = Titulo.Fase.MENU
 			titulo.ticks = 0
+		"prologo":
+			# A vinheta: `0x801960d8 load_overlay_task(1, ovl 5 = OPENING)`, criada ANTES de
+			# `filme_prepara(0)` (que só vem em `0x801960e8`, um tick depois). A narração
+			# (`main06`) é pedida pelo próprio `Prologo` no 1º trecho de XA do script.
+			pediu_parar_bgm.emit()
+			prologo.comecar()
+			if not tocar_vinheta or prologo.total <= 0:
+				_ir_para_passo("fmv")
 		"fmv":
 			# `0x801960e8` filme_prepara(0) -> registro 0 = ZMOVIE/OPN.STR (`opn`).
 			_tocar_filme("opn", "jogo")
@@ -371,6 +412,9 @@ func pular() -> void:
 			_ir_para_passo("filme_atracao")
 		"filme_atracao", "fmv":
 			video.pular()
+		"prologo":
+			# `0x801c2120` testa `0x800cc834 & 0x900`: o prólogo é pulável no original
+			prologo.pular()
 		"titulo_espera", "titulo_flash", "titulo_fade_in":
 			_ir_para_passo("menu")
 
@@ -613,6 +657,13 @@ func _on_expirou() -> void:
 	titulo.fase = Titulo.Fase.ENTRADA
 	titulo.ticks = 0
 	_ir_para_passo("filme_atracao")
+
+
+func _on_prologo_terminou() -> void:
+	## O script do prólogo acabou (ou foi pulado): segue para o FMV de abertura, que é o que o
+	## TITLE faz em `0x801960e8` depois de criar a tarefa do OPENING.
+	if passo_atual() == "prologo":
+		_ir_para_passo("fmv")
 
 
 func _on_fmv_terminou() -> void:

@@ -21,9 +21,101 @@ func run(t: Object) -> bool:
 	_fluxo_inteiro(t)
 	_titulo(t)
 	_mouse(t)
+	_prologo(t)
 	_legendas(t)
 	_video(t)
 	return true
+
+
+# ────────────────────── a VINHETA: o script do prólogo (OPENING.BIN) ──────────────────────
+
+func _prologo(t: Object) -> void:
+	## O prólogo é a "vinheta" que faltava entre a dificuldade e o FMV. Ele NÃO é vídeo: é um
+	## script de 80 bytes no fim de `ETC/OPENING1.DAT`, interpretado por `OPENING.BIN`
+	## (overlay 5, base 0x801c2000, 13 handlers em 0x801c2f70). Este grupo protege a
+	## decodificação do script e as três medidas que atribuem a narração e a legenda a ele.
+	t.group("prólogo (OPENING.BIN)")
+	var raw: Variant = JSON.parse_string(
+		FileAccess.get_file_as_string("res://data/boot_flow.json"))
+	if not (raw is Dictionary):
+		return
+	var d: Dictionary = raw
+	if not t.check(d.has("prologo"), "boot_flow.json traz o script do prólogo"):
+		return
+	var p: Dictionary = d["prologo"]
+	if not t.check(bool(p.get("ok", false)), "ETC/OPENING1.DAT encontrado e decodificado"):
+		return
+	t.eq(int(p["script_offset"]), 0x4B02A,
+		"o script está no offset 0x4b02a (= 0x8014b02a − 0x80100000, de 0x801c21a0)")
+	t.eq(int(p["script_bytes"]), 80, "e tem 80 bytes")
+	t.eq(int(p["arquivo_bytes"]), 0x4B07A, "OPENING1.DAT tem 0x4b07a bytes (2 TIM + o script)")
+	t.eq((p["opcodes"] as Dictionary).size(), 13,
+		"13 opcodes = as 13 entradas da tabela de handlers 0x801c2f70")
+	t.eq(int(p["quadros_total"]), 1665, "o prólogo dura 1665 quadros de 29,97 Hz")
+	t.near(float(p["segundos_total"]), 55.556, 0.01, "= 55,56 s")
+	# ── as três medidas que dizem de quem é a narração e a legenda ──
+	t.eq(int(p["trechos_xa"]), 4, "o script toca 4 trechos de XA (op 0x0b, args 0..3)")
+	var dur_xa: Array[int] = []
+	for x: float in (p["quadros_por_trecho_xa"] as Array):
+		dur_xa.append(int(x))
+	t.eq(dur_xa, [260, 215, 600, 320],
+		"e cada trecho dura o que a espera seguinte diz (op 3 + op 4)")
+	t.eq(int(p["soma_esperas_xa"]), 1395, "somando 1395 quadros = 46,55 s a 29,97 Hz")
+	var rl: Variant = JSON.parse_string(
+		FileAccess.get_file_as_string("res://data/legendas_fmv.json"))
+	if rl is Dictionary:
+		var pv: Variant = ((rl as Dictionary)["videos"] as Dictionary).get("prologo")
+		if t.check(pv is Dictionary, "as legendas do prologue.xml estão sob a chave `prologo`"):
+			t.eq(int((pv as Dictionary)["blocos"]), int(p["trechos_xa"]),
+				"4 blocos <Text> para 4 trechos de XA — o que casa a legenda com o prólogo")
+			var q := int((pv as Dictionary)["quadros_total"])
+			t.check(absf(float(q - int(p["soma_esperas_xa"]))) / float(q) < 0.02,
+				"1414 quadros de marcação contra 1395 de espera: 1,4 %% (obtido %d)" % q)
+	t.eq(String((p["narracao"] as Dictionary)["faixa"]), "main06",
+		"a narração é a main06 (46,567 s por ffprobe contra 46,55 s do script)")
+	t.eq((p["imagens"] as Dictionary).size(), 2,
+		"2 imagens de tela cheia (OPENING1.DAT TIM[0] e TIM[1]), que o op 6 instala")
+	t.check((p["nao_decodificado"] as Array).size() >= 3,
+		"e o que NÃO foi decodificado está registrado (as 3 rotinas de panorâmica, "
+		+ "as 9 fotos de OPENING0 e os campos do op 0x0b)")
+
+	# ── a máquina: o `Prologo` roda o script e termina no quadro 1665 ──
+	var pr := Prologo.new()
+	pr.carregar()                                   ## fora da árvore o `_ready` não roda
+	pr.comecar()
+	t.eq(pr.total, 1665, "o Prologo leu o total de quadros do JSON")
+	t.eq(pr.imagem, -1, "no começo não há imagem: o script só instala a 1ª no quadro 350")
+	var fim := [0]
+	pr.terminou.connect(func() -> void: fim[0] += 1)
+	var narr: Array[String] = []
+	pr.pediu_narracao.connect(func(f: String) -> void: narr.append(f))
+	pr.avancar(2 * 30)                              ## quadro 30: o 1º trecho de XA
+	t.eq(narr, ["main06"], "no quadro 30 o prólogo pede a narração (op 0x0b, trecho 0)")
+	pr.avancar(2 * 320)                             ## quadro 350: op 6 arg 0
+	t.eq(pr.imagem, 0, "no quadro 350 entra a imagem 0 (Umbrella sobre a rua)")
+	# ⚠ no quadro 350 a legenda está EM BRANCO de propósito, e isso é mais uma coincidência
+	# que sustenta a atribuição: a cue 4 do prologue.xml é uma pausa de 45 quadros em
+	# 284..329, e o script faz justamente aí o fade-out + espera entre o XA 0 e o XA 1
+	# (quadros 290..350). O texto volta logo depois.
+	t.check(pr.linhas_atuais().is_empty(),
+		"e a legenda está na pausa entre os blocos 0 e 1 (a cue 4 é branca, 284..329)")
+	pr.avancar(2 * 50)                              ## quadro 400 -> relógio da legenda 370
+	t.check(not pr.linhas_atuais().is_empty(),
+		"no quadro 400 o texto do bloco 1 está na tela (%s)" % str(pr.linhas_atuais()))
+	pr.avancar(2 * 885)                             ## quadro 1285: op 6 arg 1
+	t.eq(pr.imagem, 1, "no quadro 1285 entra a imagem 1 (Jill no apartamento)")
+	t.eq(fim[0], 0, "e o prólogo ainda não acabou")
+	pr.avancar(2 * 380)                             ## quadro 1665
+	t.eq(fim[0], 1, "no quadro 1665 o script chega ao fim (op 5 + op 2) e o prólogo encerra")
+	var pr2 := Prologo.new()
+	pr2.carregar()
+	pr2.comecar()
+	var fim2 := [0]
+	pr2.terminou.connect(func() -> void: fim2[0] += 1)
+	pr2.pular()
+	t.eq(fim2[0], 1, "pular encerra na hora (0x801c2120 testa 0x800cc834 & 0x900)")
+	pr.free()
+	pr2.free()
 
 
 # ────────────────────── mouse e toque na tela de título ──────────────────────
@@ -448,8 +540,15 @@ func _passos(t: Object) -> void:
 	t.eq(nomes, ["aviso_fade_in", "aviso_exibicao", "aviso_fade_out",
 			"capcom_para_branco", "capcom_entra_logo", "capcom_exibicao",
 			"capcom_sai_logo", "capcom_para_preto", "filme_atracao",
-			"titulo_espera", "titulo_flash", "titulo_fade_in", "menu", "fmv", "jogo"],
+			"titulo_espera", "titulo_flash", "titulo_fade_in", "menu", "prologo",
+			"fmv", "jogo"],
 		"a sequência é a tabela de switch 0x80194004 + o corpo do WARNING")
+	# a VINHETA entra entre o menu e o FMV: `0x801960d8` cria a tarefa do OPENING e só
+	# `0x801960e8` (um tick depois) chama filme_prepara(0)
+	t.eq(nomes.find("prologo"), nomes.find("menu") + 1,
+		"prologo vem logo depois do menu (0x801960d8 load_overlay_task(1, ovl 5))")
+	t.eq(nomes.find("fmv"), nomes.find("prologo") + 1,
+		"e antes do fmv (0x801960e8 filme_prepara(0))")
 	# o filme de atração entra ENTRE o logo CAPCOM e a entrada do título (0x801943a4)
 	t.eq(nomes.find("filme_atracao"), nomes.find("capcom_para_preto") + 1,
 		"filme_atracao vem logo depois de capcom_para_preto (fim do handler 0)")
@@ -580,15 +679,17 @@ func _legendas(t: Object) -> void:
 	for k: String in ["clear", "timed", "scroll", "snd", "cut", "string", "color", "branch"]:
 		t.check(dirs.has(k), "diretiva provada: {%s N}" % k)
 
-	var opn: Dictionary = (d["videos"] as Dictionary)["opn"]
-	t.eq(int(opn["blocos"]), 4, "prologue.xml tem 4 blocos <Text>")
+	# ⚠ ALVO CORRIGIDO nesta rodada: `prologue.xml` legenda o PRÓLOGO (a vinheta narrada do
+	# OPENING.BIN), não o `opn.mp4`. As três medidas que fecham isso estão no grupo
+	# "prólogo (OPENING.BIN)" e em `tools/legendas_fmv.py`.
+	t.check(not (d["videos"] as Dictionary).has("opn"),
+		"prologue.xml NÃO é mais atribuído ao opn.mp4 (90,6 s e dublado)")
+	var opn: Dictionary = (d["videos"] as Dictionary)["prologo"]
+	t.eq(int(opn["blocos"]), 4, "prologue.xml tem 4 blocos <Text> (= os 4 trechos de XA)")
 	t.eq(int(opn["quadros_total"]), 1414, "prólogo: 1414 quadros de marcação")
 	t.near(float(opn["segundos_total"]), 47.18, 0.05, "prólogo: 47,18 s a 29,97 fps")
-	# a conta que sustenta a leitura da semântica: tem de CABER no vídeo
 	t.check(bool(opn["cabe_no_video"]),
-		"a soma dos {clear}/{timed} cabe nos 90,62 s de opn.mp4")
-	t.check(float(opn["segundos_total"]) < float(opn["duracao_mp4"]),
-		"47,18 s de narração dentro de 90,62 s de vídeo")
+		"a soma dos {clear}/{timed} cabe nos 55,56 s do script do prólogo")
 
 	var cues: Array = opn["legendas"]
 	t.eq(cues.size(), 17, "17 cues no prólogo (incluindo as 5 pausas em branco)")
@@ -635,8 +736,8 @@ func _video(t: Object) -> void:
 	t.group("VideoFmv")
 	var v := VideoFmv.new()
 	t.check(v.carregar_dados(), "VideoFmv lê data/legendas_fmv.json")
-	var cues := v.legendas_de("opn")
-	t.eq(cues.size(), 17, "17 cues para o opn")
+	var cues := v.legendas_de("prologo")
+	t.eq(cues.size(), 17, "17 cues para o prólogo")
 	# busca por tempo: a 1ª cue é a pausa [0, 1,134); a 2ª é a 1ª frase
 	t.eq(VideoFmv.cue_em(cues, 0.0), 0, "t=0,0 s cai na cue 0 (branca)")
 	t.eq(VideoFmv.linhas_de(cues, VideoFmv.cue_em(cues, 0.5)).size(), 0,

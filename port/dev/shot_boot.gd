@@ -16,11 +16,12 @@ extends SceneTree
 ## Variáveis:
 ##     BOOT_FASE     passo a capturar: aviso_exibicao | capcom_exibicao | capcom_entra_logo |
 ##                   filme_atracao | titulo_flash | titulo_fade_in | menu | dificuldade |
-##                   fmv | jogo   (default: menu)
+##                   prologo | fmv | jogo   (default: menu)
 ##     BOOT_CURSOR   cursor do menu (0 NEW GAME · 1 LOAD GAME · 2 GAME CONFIG)
 ##     BOOT_TICKS    ticks a avançar DENTRO do passo (para pegar o meio de um fade)
 ##     BOOT_OUT      PNG de saída (default res://_boot_<fase>.png)
 ##     BOOT_FMV_T    com BOOT_FASE=fmv: segundo do vídeo a capturar (testa a legenda)
+##     BOOT_QUADRO   com BOOT_FASE=prologo: quadro (29,97 Hz) do script da vinheta
 ##     BOOT_ENTRAR   1 = deixa o boot TROCAR para game.tscn no fim (prova "cai no jogo";
 ##                   com BOOT_FASE=jogo a captura sai já dentro da sala inicial)
 
@@ -42,7 +43,15 @@ func _initialize() -> void:
 
 
 func _armar() -> void:
-	if _fase == "dificuldade":
+	if _fase == "prologo":
+		# a VINHETA: entra no passo e avança até o quadro pedido (BOOT_QUADRO, 29,97 Hz)
+		_cena.call("_ir_para_passo", "prologo")
+		var q := int(_env("BOOT_QUADRO", "400"))
+		var pr: Object = _cena.get("prologo")
+		pr.call("avancar", 2 * q)
+		print("[boot-shot] prologo quadro=%d imagem=%d legenda=%s"
+			% [q, int(pr.get("imagem")), str(pr.call("linhas_atuais"))])
+	elif _fase == "dificuldade":
 		_cena.call("_ir_para_passo", "menu")
 		var tt: Object = _cena.get("titulo")
 		tt.set("fase", Titulo.Fase.DIFICULDADE)

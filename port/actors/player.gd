@@ -535,8 +535,12 @@ func _resolver_tiro() -> void:
 	var st := _estado()
 	if st != null:
 		st.gastar_municao_equipada(1)
-	## SOM DO TIRO: `cat 0 / id 11`, pedido em `0x8003ad6c` (de-para provado em
-	## `docs/decomp/notes/exe_audio.md`). O tocador é o `Game.sfx`; o player só diz QUANDO.
+	## SOM DO TIRO. **Correção**: eu havia escrito `cat 0 / id 11`; o estouro da arma é
+	## **`cat 1 / id 0`, do banco `A_{w}` da arma equipada** — provado por dois caminhos
+	## independentes (a tabela de 20 funções por arma `0x8009ced8..0x8009cf24` pede `cat 1 / idx 0`
+	## em TODAS as entradas, logo depois do hitscan; e `A_01`, o banco da FACA, é o único dos 20
+	## que não define o id 0). Ver `docs/decomp/notes/exe_audio.md`. Quem resolve o banco é o
+	## `Sfx`/`world`; o player só diz QUANDO.
 	if sfx != null:
 		sfx.tiro()
 	var de := pos

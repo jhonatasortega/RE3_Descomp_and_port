@@ -13,10 +13,17 @@
 > [`tools/title_sprites.py`](../../../tools/title_sprites.py), que já existiam.
 >
 > **Código:** `port/present/boot.gd`, `port/present/titulo.gd`, `port/present/video.gd`,
-> `port/scenes/boot.tscn`. **Teste:** `port/dev/tests/test_boot.gd` (201 asserts).
+> `port/present/prologo.gd`, `port/scenes/boot.tscn`.
+> **Teste:** `port/dev/tests/test_boot.gd` (267 asserts).
 > **Sondas:** `port/dev/diag_video.gd`, `port/dev/shot_boot.gd`.
 >
-> **§7 e §8 são desta rodada:** a **tabela de filmes `0x8009ca64`** (o reprodutor de FMV do
+> **§10 e §11 são da rodada mais recente:** o BUG do clique na dificuldade, o alinhamento pelo
+> `title_mapping.xml`, o banco de SE do som do menu e — o maior — a **VINHETA**: o prólogo do
+> `OPENING.BIN` é um **interpretador de 13 opcodes** rodando um **script de 80 bytes que mora
+> no fim de `ETC/OPENING1.DAT`**. Com ele a linha do tempo do prólogo ficou medida, e a legenda
+> `prologue.xml` mudou de dono (era do `opn.mp4`).
+>
+> **§7 e §8 são da rodada anterior:** a **tabela de filmes `0x8009ca64`** (o reprodutor de FMV do
 > RE3 é uma tarefa do EXE, não um overlay) e as **sete correções** que o dono apontou depois
 > de jogar a abertura — inclusive o vídeo que faltava antes do menu.
 
@@ -27,8 +34,14 @@
 ```
 aviso legal (5,01 s)  ->  logo CAPCOM (4,00 s)  ->  FILME DE ATRAÇÃO roop (15,4 s)
    ->  TÍTULO navegável  ->  dificuldade  ->  ETC/INIT_TBL.DAT
-   ->  FMV opn (90,6 s, legenda PT-BR)  ->  R10D
+   ->  VINHETA: prólogo narrado (55,56 s, legenda PT-BR)  ->  FMV opn (90,6 s)  ->  R10D
 ```
+
+> **⚠ A VINHETA é NOVA (§11)** e é o item "falta a vinheta do jogo antes do próximo vídeo".
+> `0x801960d8` cria a tarefa do `OPENING.BIN` (overlay 5) e só um tick depois, em
+> `0x801960e8`, o TITLE chama `filme_prepara(0)` — por isso o prólogo vem ANTES do `opn`.
+> **A legenda `prologue.xml` mudou de dono:** era desenhada sobre o `opn.ogv` e agora é do
+> prólogo, com três medidas independentes sustentando a troca (§11.3).
 
 > **⚠ O `filme roop` é NOVO nesta rodada** e é o "vídeo que faltava antes do menu".
 > `0x801943a4` chama `filme_prepara(0xc)` no FIM do handler 0 do `TITLE.BIN` — depois do
@@ -137,6 +150,12 @@ que caem exatamente sobre "MODO DIFICIL" e "MODO FACIL" na imagem.
 `diff_HARD_MODE` (80,193) e `diff_EASY_MODE` (180,193) de `0x801945e4`. Duas fontes
 independentes, mesmo número.
 
+> **⚠ CORREÇÃO (§10.2): esses `x` são da CÉLULA, não da tinta.** O port desenhava a TINTA em
+> `x=80` e este parágrafo dizia que isso "batia" com o `title_mapping.xml` — comparação
+> errada. A célula `heavy mode` tem 62 px e a tinta dela começa 6 px adiante, então o pacote
+> PT-BR põe a tinta em **86**, não em 80. O port está 6 px à esquerda desde a rodada
+> passada; agora `tools/boot_assets.py` LÊ o XML e usa `x + tinta_x`.
+
 ### 3.1 De-para item do PS1 → recorte HD PT-BR
 
 `w` é a **caixa de tinta medida** no próprio atlas (`python tools/boot_assets.py --medir`), não
@@ -233,6 +252,13 @@ Três coisas sustentam a leitura:
    **90,624 s** de `opn.mp4` (medido por `ffprobe`). A 59,94 fps daria 23,6 s e sobrariam 67 s
    de vídeo sem legenda. Epílogo = 1431 quadros = 47,75 s contra 62,66 s de `enda.mp4`.
 
+> **⚠ ALVO CORRIGIDO E IMPLEMENTADO (§11.3).** A conta acima ("cabe no `opn.mp4`") ficou
+> obsoleta: `prologue.xml` legenda o **PRÓLOGO**, não o `opn`. O que fecha isso é o script do
+> prólogo (§11): **4 blocos `<Text>` contra 4 trechos de narração**, **1414 quadros de
+> marcação contra 1395 de espera (1,4 %)** e **a soma dos trechos = 46,55 s contra 46,567 s
+> de `main06.ogg`**. `tools/legendas_fmv.py` agora grava as cues sob a chave `prologo` e
+> `present/prologo.gd` as desenha; o `opn.ogv` toca sem legenda (ele é **dublado**).
+
 **EM ABERTO:** o instante ABSOLUTO de cada bloco. Não há timestamp nos arquivos; a única leitura
 disponível é **sequencial**, e é o que o port usa. `{snd}`, `{cut}`, `{string}`, `{color}` e
 `{branch}` **não aparecem** nestes dois arquivos e **não** foram decodificados.
@@ -300,9 +326,12 @@ não verificado por audição. FMV em inglês exigiria o `.dat` do PC ou o `.STR
 | `tools/video_ogv.py` | mp4 → ogv com o ffmpeg do projeto; `--listar` inventaria |
 | `port/present/boot.gd` | a máquina de passos, os dois slots de fade, o pulo, o `INIT_TBL`, a saída para o jogo |
 | `port/present/titulo.gd` | menu navegável (3 itens + dificuldade), pulso, desenho HD/PT |
-| `port/present/video.gd` | `VideoStreamPlayer` + legenda sincronizada |
+| `port/present/video.gd` | `VideoStreamPlayer` + legenda sincronizada (a legenda agora é do prólogo) |
+| `port/present/prologo.gd` | a VINHETA: interpreta o script de `OPENING1.DAT` (§11) |
+| `port/dev/diag_clique_titulo.gd` | sonda do mouse no título (hover + um clique), pelo evento |
+| `port/dev/diag_som_boot.gd` | sonda do som: qual WAV/`.ogg` o `Sfx`/`Audio` escolheu |
 | `port/scenes/boot.tscn` | a cena |
-| `port/dev/tests/test_boot.gd` | 131 asserts |
+| `port/dev/tests/test_boot.gd` | 267 asserts |
 | `port/dev/shot_boot.gd` | screenshot por fase (validação visual) |
 | `port/dev/diag_video.gd` | sonda do `.ogv` fora do `.pck` |
 
@@ -541,13 +570,23 @@ epílogo que a versão de PC guarda como WAV e o PS1 toca por XA. Fecha com o
 (`localizacao_ptbr.md` §3): o pacote legendou justamente o que ficou em inglês.
 
 ➜ **`prologue.xml` legenda o PRÓLOGO (slideshow + narração `main06`), não o `opn.mp4`.**
-Isto **não** foi mexido no código nesta rodada (não estava entre os sete pedidos e mudaria
-o comportamento visível sem o dono pedir): fica como engate, com os números aqui.
+**✅ FEITO na rodada seguinte (§11):** o slideshow foi implementado, a legenda mudou de dono e
+a atribuição deixou de ser "casamento por duração" — virou medida, porque o SCRIPT do prólogo
+tem exatamente 4 trechos de narração para os 4 blocos do XML.
 
 **Por que não implementei o slideshow:** faltam a linha do tempo e o movimento. O
 despachante é `0x801c2084` sobre `*(u8*)0x8014b02a` (um byte dentro do próprio
 `OPENING1.DAT` carregado) com 4 estados em `0x801c2f70`, e as fotos são **panoramizadas**.
 Sem medir isso, qualquer duração e qualquer pan seriam invenção.
+
+> **⚠ DUAS CORREÇÕES a este parágrafo, e a linha do tempo agora está MEDIDA (§11).**
+> 1. `0x801c2f70` tem **13** entradas, não 4: é a tabela de handlers de um **interpretador de
+>    opcodes**, e `*(u8*)0x8014b02a` não é "um estado" — é o **PC de um script de 80 bytes**
+>    que mora no fim de `ETC/OPENING1.DAT`.
+> 2. Decodificado o script, a linha do tempo inteira (1665 quadros = 55,56 s), os fades, as
+>    duas imagens e os 4 trechos de narração são medidos. O que continua não decodificado é
+>    só a **panorâmica** (as 3 rotinas por quadro do `op 7`) e **qual das 9 fotos de
+>    `OPENING0.DAT`** entra em cada instante — 11,7 s dos 55,6 s.
 
 ### 8.7 A cutscene in-game de R10D — **INVESTIGADA: não é FMV**
 
@@ -586,14 +625,16 @@ func 18 (94)**. Nomear qual delas é "a primeira cutscene" exigiria rodar a VM �
 9. **A demo de atração (`PDEMO00/01/02.DAT`) não existe no port.** ⚠ **Corrigido o texto
    anterior**, que dizia "o original ALTERNA demo jogável e FMV no timeout": o timeout vai
    **só** para a demo (§8.4). O port repete o filme de atração — declarado.
-9.1 **O prólogo (slideshow do `OPENING.BIN`) não está no port** (§8.6): faltam a linha do
-   tempo (`0x801c2084` sobre `*(u8*)0x8014b02a`, 4 estados em `0x801c2f70`) e o movimento de
-   panorâmica das fotos.
+9.1 ~~**O prólogo (slideshow do `OPENING.BIN`) não está no port**~~ — **✅ FEITO (§11)**: o
+   script de 80 bytes foi decodificado e o prólogo é o passo `prologo` do `boot.gd`. Continua
+   em aberto **só a panorâmica**: as 3 rotinas por quadro do `op 7` (`0x801c2488`,
+   `0x801c2618`, `0x801c2788`) e qual das 9 fotos de `OPENING0.DAT` entra em cada instante —
+   11,7 s dos 55,6 s do prólogo ficam preto com legenda.
 9.2 **A cinemática de motor de `R10D` não está no port** (§8.7): 5 funções candidatas, mas
    qual é a cutscene exige rodar a VM de script.
-9.3 **`prologue.xml` está desenhado sobre o `opn.ogv` e não deveria** (§8.6). A evidência
-   numérica aponta `MAIN06`; a troca ficou como engate para não mudar comportamento visível
-   sem o dono pedir.
+9.3 ~~**`prologue.xml` está desenhado sobre o `opn.ogv`**~~ — **✅ FEITO (§11.3)**: a legenda
+   é do prólogo, e a atribuição virou medida (4 blocos ↔ 4 trechos de narração; 1414 contra
+   1395 quadros; 46,55 s contra os 46,567 s de `main06.ogg`).
 9.4 **Campos `+0x06`, `+0x08` e `+0x10`** do registro de filme (§7) — não decodificados. E o
    `+0x04 = 945` do registro 13 é leitura ("laço longo"), não medição.
 10. **Cursor inicial = 1 (`LOAD GAME`)** segue como o binário diz (`0x801945b4`) e segue
@@ -602,3 +643,255 @@ func 18 (94)**. Nomear qual delas é "a primeira cutscene" exigiria rodar a VM �
     "RESULT", "SAIR", "EXTRAS", "OS MERCENARIOS", "EPILOGOS", "ESCOLHA A ROUPA") já estão no
     JSON, mas o **ramo do bit `0x80` não foi implementado** — e quem SETA esse bit continua
     desconhecido (§10.3 de `menu_titulo.md`).
+12. **A PANORÂMICA do prólogo** (§11.4): as 3 rotinas por quadro e a escolha das 9 fotos de
+    `OPENING0.DAT`. É o único pedaço da vinheta que o port não mostra.
+13. **Precedência entre a tarefa do OPENING e a do filme** (§11.4): `0x801960d8` cria uma e
+    `0x801960e8` prepara a outra, e as duas usam `0x80100000`. A ORDEM na tela (prólogo antes
+    do filme) veio do relato do dono + da ordem das chamadas, **não de medição do escalonador**.
+14. **Os campos do `op 0x0b`** do script do prólogo: a tabela `0x801c2f68` (offsets u16) e a
+    estrutura `0x801c2f3c` — é onde deve estar o de-para trecho → posição no XA.
+15. **A "cutscene depois do vídeo do menu"** que o dono pediu continua **não identificada**.
+    O que está medido do caminho pós-`opn` é: `0x801960f0` espera o bit `0x10000`, faz um fade
+    (`0x8002a35c`) e chama `0x8006d0d8`; nenhum `filme_prepara` a mais e nenhum opcode `0x7a`
+    em `R10D` (§7.2). Se ela existir, é cena de MOTOR, como a de §8.7.
+16. **`R10D_2`** (§8.7): o dono afirma que `R10D` tem 2 cutscenes e que a primeira roda em
+    `R10D_2`. Não existe arquivo com esse nome em nenhum `STAGE*` (só `R10D.ARD/.BIN/.BSS`) e
+    o `.ARD` traz **um** SCD com 49 funções. Continua **informação do usuário, não medida** —
+    e as 5 funções candidatas por tamanho/mistura de opcodes seguem listadas em §8.7.
+
+---
+
+## 10. ⚠ O DONO JOGOU DE NOVO: mouse, som e alinhamento
+
+### 10.1 BUG: escolher a dificuldade com o MOUSE não iniciava o vídeo — **CORRIGIDO**
+
+Foi o item que mais incomodou, e não era onde parecia. Comecei descartando as suspeitas por
+medição, não por leitura de código:
+
+| suspeita | como testei | resultado |
+|---|---|---|
+| a rota do sinal (clique → `escolheu_novo_jogo` → passo `fmv`) | `port/dev/diag_clique_titulo.gd` empurrando evento de mouse de verdade | **funcionava** — o filme disparava |
+| a caixa de acerto estar fora do rótulo | render de `BOOT_FASE=dificuldade` + medição da tinta no PNG | a tinta desenhada e a caixa **coincidem por construção** (as duas usam `x_tela`/`tinta_w`) |
+| a posição do ponteiro | ida-e-volta viewport → `to_local` na sonda com janela | caía **dentro** da caixa |
+
+O que estava errado eram **duas coisas de comportamento**:
+
+1. **A regra era de DOIS cliques** (1º destaca, 2º confirma — a regra do inventário, pensada
+   para toque). A tela de dificuldade abre com o cursor em `MODO DIFICIL` (`0x80195d04`),
+   então quem clicava em `MODO FACIL` via **só o rótulo acender**: escolheu a dificuldade e
+   nada aconteceu. Agora **um clique seleciona E confirma** (`Titulo.clicar`), no menu e na
+   dificuldade.
+2. **O alvo era a caixa de TINTA** — 55×19 no espaço 320×240, e "CONFIG" tem 28 px de tinta.
+   Agora `Titulo.caixa_de_clique` reparte a LINHA INTEIRA entre os itens (cada um vale até o
+   meio-caminho do vizinho, com 8 px de sobra nas pontas e em Y): nenhum pixel morto.
+   **Afordância do port, declarada** — o PS1 não tem ponteiro, não há o que copiar.
+
+Além disso o clique deixou de ser lido por **polling** (`Input.is_mouse_button_pressed` uma
+vez por quadro, em `_ler_pad`) e passou a vir do **evento** (`Boot._input`). Três ganhos:
+solta-e-aperta no mesmo quadro não se perde mais; a posição vem do próprio evento, sem
+consultar o ponteiro do sistema; e `InputEventScreenTouch` (celular) entra pelo mesmo caminho.
+O 2º aperto de um duplo clique é **ignorado** de propósito — com um clique confirmando, ele
+cairia na tela seguinte e escolheria a dificuldade sem o dono ver a tela.
+
+**HOVER (pedido novo):** `Titulo.pairar(p)` destaca o item sob o ponteiro **sem confirmar**,
+com o SFX 4 de cursor e reiniciando o timeout do atrator — o mesmo que o binário faz quando o
+cursor anda (`0x801956f4`). O gatilho é o `InputEventMouseMotion`, então a regra "só quando o
+ponteiro moveu" (que no menu do jogo precisa do `pad.mouse_dx/dy`) aqui sai de graça: mouse
+parado não gera evento e não prende o cursor de quem joga no teclado.
+
+### 10.2 Itens do menu descentralizados — o menu já estava certo; a DIFICULDADE não
+
+Medi no render, não no código. `port/dev/_boot_menu.png`, faixa `y=770..828`, tinta acima do
+fundo:
+
+| rótulo | tinta medida no PNG (320) | vão até o próximo |
+|---|---|---:|
+| COMEÇAR JOGO | 68,75 … 120,75 | **30,25** |
+| CARREG. JOGO | 151,00 … 202,50 | **30,25** |
+| CONFIG | 232,75 … 259,75 | — |
+
+Vãos **iguais** e a linha ocupando 68,75…259,75, que é a faixa das âncoras do `SPRT`
+(`0x801945e4`: 68 e 200+60 = 260). Margem 68,75 à esquerda e 60,25 à direita — a assimetria é
+**do original** (68 e 60). Nada a corrigir aqui.
+
+O erro estava na **tela de dificuldade e no copyright**, e apareceu quando li o
+`title_mapping.xml` INTEIRO em vez de só as células:
+
+```
+<Map x="80"  y="193" w="62" h="13" u="192" v="128"/> <!-- heavy mode -->
+<Map x="180" y="193" w="56" h="13" u="128" v="128"/> <!-- light mode -->
+<Map x="60"  y="217" w="226" h="8" u="0"   v="120"/> <!-- regular (copyright) -->
+```
+
+O `x,y` é de onde vai a **CÉLULA**, e a tinta dentro dela começa em `tinta_x` (6, 6 e 18):
+
+| rótulo | o port desenhava | o pacote manda | erro |
+|---|---:|---:|---:|
+| MODO DIFICIL | 80 | **86** | 6 px |
+| MODO FACIL | 189 | **186** | 3 px |
+| copyright (y) | 213 | **217** | 4 px |
+
+E o `y=217` do copyright não é arbitrário: **213 + (16 − 8)/2**, isto é a linha PT de 8 px
+CENTRADA no bloco de duas linhas (16 px) que o PS1 usa. Duas fontes, mesmo número — é o que
+autoriza usar o XML como posição, e não como palpite.
+
+`tools/boot_assets.py` agora **lê o arquivo** (`ler_title_mapping`), **confere** que
+`u,v,w,h` do XML batem com a célula gravada no de-para (bate em **6 de 6**) e usa `x + tinta_x`
+para a dificuldade e para o copyright. Para os 3 itens do menu o XML **não serve**: os `x` dele
+(8, 88, 158, 231, 282) são da linha de **cinco** itens da versão de PC (`original game`,
+`arrange game`, `load game`, `special`, `configuration`), tela que o PS1 não tem — ali continua
+valendo a regra de vãos iguais entre as âncoras medidas (declarada).
+
+### 10.3 Som do menu — o banco estava certo no doc e ERRADO no código
+
+O de-para já estava provado em [`exe_audio.md`](exe_audio.md) §5.1 (4 mover, 5 cancelar,
+6 confirmar; amostras `C_00_02/03/04`) e o banco medido é o **`C_01`** (§8.2). Só que o
+`boot.gd` chamava `Sfx.tocar_id(0, id)` **sem o banco**, e `Sfx._banco_de(0)` devolve
+`_banco_area` se uma sala já tiver sido carregada, senão o `banco_padrao` do JSON, que é
+`C_00`. Sondei com `port/dev/diag_som_boot.gd`:
+
+```
+[som] banco de area (cat 0) no boot, vazio = cai no padrao C_00:
+[som] mover cursor  -> SE = C_00/C_00_02.wav      (antes)
+[som] mover cursor  -> SE = C_01/C_01_02.wav      (depois)
+```
+
+Agora o banco vai explícito. **Ressalva honesta mantida:** conferi com `cmp` que os 5 WAV de
+UI de `C_01` são **byte-idênticos** aos de `C_00`, então o som audível não mudou — o que mudou
+é o port passar a tocar o banco que o binário carrega, em qualquer ordem de cena.
+
+**A BGM é a `main38`, e agora com uma terceira fonte.** Além do índice de arquivo (`0x121` =
+`SOUND/MAIN38.BGM`, lido em `0x801944dc`) e da chamada que toca a sequência
+(`0x800782f4(0, 0x38, …)`), a instalação de PC tem `SOUND/MAIN38.WAV` — o **mesmo número no
+mesmo lugar** — que `tools/audio_gog.py` converte para `BGM/gog/main38.ogg`, **20,25 s**
+(ffprobe), duração de tema de tela de título. O que continua sem verificação é o **ouvido**.
+
+**Engate que sobrou (não é meu arquivo):** os descritores de SE trazem `tom_vol` — 55 para o
+id 4 (cursor), 85 para o 5 e 90 para o 6, de 127 — e `core/sfx.gd` toca tudo no mesmo volume.
+Se o som de menu ainda soar forte, é isso: falta o `tom_vol` no `tocar_id`.
+
+---
+
+## 11. A VINHETA: o prólogo é um SCRIPT, e o script está dentro do arquivo de imagem
+
+`BIN/OPENING.BIN` (overlay 5, base **0x801c2000**, 4756 B) **não é tocador de nada**: é um
+**interpretador de 13 opcodes**. O programa que ele roda são **80 bytes no fim de
+`ETC/OPENING1.DAT`** — o arquivo de imagem.
+
+```
+0x801c2024  entry -> 0x801c2160 (init) -> laço do despachante
+0x801c21a0  lui v1,0x8014 ; ori v1,0xb02a          -> PC = 0x8014b02a
+0x801c21b8  sw  v1, 0x244(ctx = 0x801c3048)
+0x801c2084  v0 = *(u8*)PC ; v0 <<= 2 ; jalr *(0x801c2f70 + v0)   <- despachante
+0x801c21e4  cd_read_file(0x3d = OPENING0.DAT, 0x80100000) ; 9 TIM -> VRAM (0x800784e0)
+            cd_read_file(0x3e = OPENING1.DAT, 0x80100000)
+```
+
+`OPENING1.DAT` é lido em `0x80100000`, logo `0x8014b02a` é o **offset `0x4b02a`** do arquivo,
+que tem `0x4b07a` bytes: os 80 bytes finais. O arquivo é **2 TIM de 320×240 16 bpp**
+(`0x0` e `0x25814`, blocos de 153 612 B = 12 + 320·240·2) e o script vem depois. Os 80 bytes,
+lidos do disco do usuário por `tools/boot_assets.py`:
+
+```
+0c 01 07 00 0a 00 03 04 1e 00 08 3c 0b 00 03 04 04 01 09 3c 03 04 3c 00
+06 00 08 3c 0b 01 03 04 d7 00 09 3c 03 04 3c 00 0c 02 07 01 08 3c 0b 02
+03 04 58 02 09 3c 03 04 3c 00 0c 01 06 01 08 3c 0b 03 03 04 40 01 09 3c
+03 04 3c 00 05 02 01 00
+```
+
+### 11.1 Os 13 opcodes (cada um com o handler que o prova)
+
+| op | nome | bytes | handler | o que faz |
+|---:|---|---:|---|---|
+| `00` | nop | 1 | `0x801c2b38` | PC += 1; devolve 1 |
+| `01` | fim | 2 | `0x801c2b50` | devolve 0 |
+| `02` | encerra | 1 | `0x801c2b68` | devolve 2 → o laço sai (`0x801c20b4`) |
+| `03` | timer | 1 | `0x801c2b80` | `ctx+0x248` = u16 em PC+2, **DOBRADO se o divisor de quadro `*(u8*)0x800d442c` == 1** |
+| `04` | espera | 3 | `0x801c2bd4` | decrementa `ctx+0x248` e devolve 0 até zerar; então PC += 3 |
+| `05` | espera_som | 1 | `0x801c2c04` | segura enquanto `0x800d1f2c & 0x20` ou `!(0x800dbb58 & 0x80)` |
+| `06` | imagem | 2 | `0x801c2c4c` | copia `0x25814` B (uma imagem inteira) de `*(0x801c2f0c + arg*4)` para `0x8019c000` |
+| `07` | rotina de desenho | 2 | `0x801c2cbc` | `ctx+4 = arg` → escolhe `0x801c2488` / `0x801c2618` / `0x801c2788` |
+| `08` | fade-in | 2 | `0x801c2d0c` | `0x8002a35c(abr=2, 0xffffff→0x000000, T = arg)` |
+| `09` | fade-out | 2 | `0x801c2d8c` | `0x8002a35c(abr=2, 0x000000→0xffffff, T = arg)` |
+| `0a` | pede recurso | 2 | `0x801c2e0c` | `0x80011df4(3, arg + 0x13)` e liga `0x800d1f2c & 0x20` |
+| `0b` | narração (XA) | 2 | `0x801c2e70` | `0x8002fd30(0x00b90022, 0x3000, 0x801c2f3c + *(u16*)(0x801c2f68 + arg*2), 0)` |
+| `0c` | divisor de quadro | 2 | `0x801c2ee0` | `*(u8*)0x800d442c = arg` (1 = 59,94 Hz, 2 = 29,97) |
+
+**A unidade é quadro de 29,97 Hz.** O `op 3` dobra o valor quando o divisor vale 1
+(`0x801c2b9c`: `lh` + `sll 1`) e o `op 0x0c` troca o divisor entre 1 e 2 no meio do prólogo —
+as duas coisas juntas dizem que o autor escreveu tudo em quadros de 30 Hz e o motor converte
+para ticks de vsync. No port, 1 quadro = **2 ticks** do `boot.gd`.
+
+### 11.2 A linha do tempo (1665 quadros = 55,56 s)
+
+| quadro | script | na tela |
+|---:|---|---|
+| 0 | `0c 01` `07 00` `0a 00` espera 30 | preto |
+| 30 | fade-in 60, **narração 0**, espera 260 | fotos de `OPENING0` com panorâmica (**não decodificado**) |
+| 290 | fade-out 60, espera 60 | — |
+| 350 | **`06 00`**, fade-in 60, **narração 1**, espera 215 | Umbrella sobre a rua de Raccoon City |
+| 565 | fade-out 60, espera 60 | — |
+| 625 | `0c 02` `07 01`, fade-in 60, **narração 2**, espera 600 | mesma imagem, outra rotina de desenho |
+| 1225 | fade-out 60, espera 60 | — |
+| 1285 | `0c 01` **`06 01`**, fade-in 60, **narração 3**, espera 320 | Jill carregando a arma no apartamento |
+| 1605 | fade-out 60, espera 60 | — |
+| 1665 | `05 02` `01 00` | espera o som acabar e ENCERRA |
+
+As duas imagens do `op 6` são `OPENING1.DAT` TIM[0] e TIM[1]. Decodifiquei os dois TIM e
+comparei a olho com os HD de §8.6: **TIM[0] = `bgd/B6306D2E.webp`** (a rua com a Umbrella) e
+**TIM[1] = `bgd/CB8189B6.webp`** (a Jill), na mesma ordem. É essa a contrapartida em HD que o
+port desenha (`assets/BOOT/prologo0.webp` e `prologo1.webp`).
+
+### 11.3 A narração e a legenda: três medidas, e a legenda muda de dono
+
+Os **4** trechos de `op 0x0b` duram o que a espera seguinte diz: **260, 215, 600 e 320**
+quadros = **1395** = **46,55 s** a 29,97 Hz.
+
+| medida | valor | contra | diferença |
+|---|---:|---|---:|
+| soma dos 4 trechos de narração | 1395 quadros (46,55 s) | `BGM/gog/main06.ogg` = 46,567 s (ffprobe) | **0,03 %** |
+| blocos `<Text>` de `prologue.xml` | 4 | trechos de `op 0x0b` | **igual** |
+| quadros de marcação de `prologue.xml` | 1414 | 1395 de espera | **1,4 %** |
+| pausa em branco do XML (cue 4) | 284…329 | fade-out + espera do script (290…350) | cai no mesmo lugar |
+
+➜ **`prologue.xml` legenda o prólogo.** O `opn.mp4` tem 90,62 s e é **dublado** em PT-BR
+(`localizacao_ptbr.md` §3): o pacote legendou justamente o que ficou em inglês, que é a
+narração `main06`. `tools/legendas_fmv.py` grava as cues sob a chave **`prologo`**, e o
+`opn.ogv` passa a tocar **sem** legenda.
+
+### 11.4 O que o port faz, e o que é escolha declarada
+
+`port/present/prologo.gd` interpreta o script vindo de `boot_flow.json.prologo` (nenhum número
+digitado à mão: `tools/boot_assets.py` lê os 80 bytes do arquivo do usuário), desenha as duas
+imagens em HD, roda os fades com o mesmo `ColorRect` + `BLEND_MODE_SUB` que reproduz o `abr=2`
+do PS1, pede a narração no 1º trecho e desenha a legenda com a fonte do jogo. É pulável, o que
+é **medido**: `0x801c2120` testa `*(u16*)0x800cc834 & 0x900`.
+
+Três coisas são **declaradas**, e nenhuma é invenção de número:
+
+1. **Os primeiros 11,7 s ficam sem foto.** As 9 fotos de `OPENING0.DAT` vão para a VRAM no
+   init (`0x801c2224`, `0x801c225c`) e são desenhadas **com panorâmica** pelas três rotinas
+   por quadro que o `op 7` escolhe (`0x801c2488`, `0x801c2618`, `0x801c2788`) — que eu **não
+   decodifiquei**. Qual foto entra em cada instante também não. Em vez de inventar foto e
+   movimento, o port deixa preto com a legenda até o `op 6` (quadro 350). São 11,7 s de 55,6.
+2. **A narração toca corrida.** O original toca 4 trechos com 60 quadros de fade entre eles;
+   o `Audio` do port não tem busca, então a `main06` toca de uma vez a partir do 1º trecho. A
+   legenda usa o **relógio da narração** (não o do script), então texto e voz ficam casados; o
+   que desanda em relação ao original é a troca de foto, que segue o script.
+3. **A ordem prólogo → filme.** `0x801960d8` cria a tarefa do OPENING e `0x801960e8` chama
+   `filme_prepara(0)` um tick depois; o TITLE então espera **o filme** (`0x801960f0`, bit
+   `0x10000`) e não a tarefa do prólogo. Como os dois usam `0x80100000` como buffer, eles não
+   podem estar no ar ao mesmo tempo — e o dono descreve a vinheta ANTES do vídeo. O port faz
+   prólogo e depois filme. **Não medi o mecanismo de precedência entre as duas tarefas.**
+
+### 11.5 Como conferir
+
+```bash
+NOSTALGIA_OUT=port python tools/boot_assets.py            # copia prologo0/1 + decodifica o script
+NOSTALGIA_OUT=port python tools/legendas_fmv.py --mostrar  # a legenda agora e' do `prologo`
+BOOT_FASE=prologo BOOT_QUADRO=1350 godot --path port --rendering-driver opengl3 \
+    --script res://dev/shot_boot.gd      # captura a vinheta no quadro pedido
+godot --path port --headless --audio-driver Dummy --script res://dev/diag_som_boot.gd
+godot --path port --rendering-driver opengl3 --audio-driver Dummy \
+    --script res://dev/diag_clique_titulo.gd   # hover + um clique, pelo evento de verdade
+```

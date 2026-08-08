@@ -49,5 +49,11 @@ func _process(_delta: float) -> bool:
 	print("[som] cancelar      -> SE = %s" % sf.call("ultimo_tocado"))
 	_cena.call("_ir_para_passo", "filme_atracao")
 	print("[som] entrou no filme -> BGM = '%s' (vazia = parou)" % au.call("faixa_atual"))
+	## a VINHETA: entrar no passo PARA a BGM e, no quadro 30, o script pede a narracao
+	_cena.call("_ir_para_passo", "prologo")
+	print("[som] entrou na vinheta -> BGM = '%s'" % au.call("faixa_atual"))
+	var pr: Object = _cena.get("prologo")
+	pr.call("avancar", 2 * 30)
+	print("[som] vinheta quadro 30 -> BGM = %s (a narracao main06, sem laco)" % au.call("faixa_atual"))
 	quit(0)
 	return true
