@@ -65,6 +65,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import shutil
 import struct
@@ -86,6 +87,10 @@ CORTE_MTIME = 1748000000                       # 2025-05-23
 #: (`0x80195564`: `ctx[0x0f] += 4 ; ctx[0x0e] = (s8)tab[ctx[0x0f]]/3 - 0x80`).
 SIN_TAB = 0x80098828
 SIN_N = 256
+
+#: Tick de tarefa = 1 retraço vertical NTSC (o divisor `*(u8*)0x800d442c` vale 1).
+#: É a unidade de `TEMPOS`; serve para converter a duração de um som em ticks.
+TAXA_TICK = 60000.0 / 1001.0
 
 # ─────────────────────────────── assets HD em PT-BR ───────────────────────────────
 #: nome no port -> (subpasta do hires, hash, o que a imagem mostra)
@@ -128,6 +133,15 @@ TEMPOS = [
     ("titulo_fade_in",  60, "0x80194b08 sub2: fade(0xffffff->0x000000, T=0x3c) abr=2"),
     # menu
     ("atrator_timeout", 900, "0x8019454c *(u16*)(ctx+0x16) = 0x384 (reiniciado a cada cursor)"),
+    # TITLE.BIN sub 1 (0x80195c68) — a TRANSICAO de "escolhi a dificuldade" ate o filme.
+    # Depois de gravar o bit 0x100 (0x80195db8/0x80195dcc) o codigo sacode o controle, pede
+    # a VINHETA (0x80195e70, ver VINHETA_TITULO) e roda TRES fades em fila, esperando cada
+    # um acabar (0x8002a6bc) antes do proximo. Assinatura de 0x8002a35c calibrada em dois
+    # sitios de abr conhecido: (slot, ?, ?, ABR, c0@sp+0x10, c1@sp+0x14, T@sp+0x18) —
+    # 0x80185480 tem a3=2 e o doc diz abr=2; 0x80194248 tem a3=1 e o doc diz abr=1.
+    ("inicio_clarao_in",   4,   "0x80195e9c fade(0x000000->0xffffff, T=4) abr=1"),
+    ("inicio_clarao_out",  12,  "0x80195eec fade(0xffffff->0x000000, T=0xc) abr=1"),
+    ("inicio_para_preto",  180, "0x80195f3c fade(0x000000->0xffffff, T=0xb4) abr=2"),
 ]
 
 #: Bits de `*(u32*)0x800cc858` que o fluxo usa (§3.8 da nota).
@@ -250,6 +264,69 @@ SOM_TITULO = dict(
     sfx={"cursor": 4, "cancelar": 5, "confirmar": 6, "invalido": 7, "abrir": 9},
 )
 
+# ─────────── a VINHETA: o que toca entre a DIFICULDADE e o filme (MEDIDO) ───────────
+#
+# O dono do repo: "no menu, depois de selecionar o modo, deveria tocar o som do
+# 'Resident Evil' e depois ir para o video". Nao e' BGM nem XA: e' um **SE**.
+#
+# SITIO, dentro do sub 1 do TITLE.BIN (`0x80195c68` = a tela de dificuldade), logo depois
+# de `0x80195db8`/`0x80195dcc` gravarem/limparem o bit 0x100 (EASY) de `0x800cc858`:
+#
+#     0x80195e2c  bnez  (0x800cc858 & 0x10000000)  -> pula o bloco inteiro
+#     0x80195e38  jal 0x80038678(7, 0)             vibracao do motor pequeno
+#     0x80195e48  jal 0x80038704(9, 0xff, 0)       vibracao do motor grande
+#     0x80195e5c  jal 0x8003879c(4, 0xff, 60, 10)  rampa de vibracao
+#     0x80195e70  jal 0x800746c0(a0 = 0, 0, 0, 0)  <<< SE_pede: cat 0, id 0
+#
+# e SO DEPOIS vem a transicao (os 3 fades de TEMPOS), `0x80196068` (INIT_TBL),
+# `0x801960d8` (overlay 5 = OPENING, o prologo) e `0x801960e8` (`filme_prepara(0)` = o
+# `opn`). Ou seja: dificuldade -> VINHETA -> prologo -> filme, nessa ordem.
+#
+# `a0 = 0` e' `move $a0, $zero` (0x80195e64), o que o `--calls` do overlay_parse nao
+# recupera por back-walk de imediato — foi lido na desmontagem.
+#
+# O MESMO trio de vibracao + `SE_pede(0)` aparece em exatamente outros dois sitios do
+# TITLE, e em nenhum outro: `0x80195a08` (sub 2, que carrega o MEM_CARD) e `0x80196c34`
+# (sub 11). E' o "beat de apresentacao" do overlay, nao um blip de UI.
+#
+# `cat 0` na tela de titulo e' o banco **C_01** (`0x801944c0`, ver SOM_TITULO). No C_01 o
+# id 0 e' de longe o maior ativo do banco, e e' ESTEREO:
+#
+#   • descritor `0x03e005e0` -> **(byte0 >> 6) + 1 = 4 VOZES**. MEDIDO em `0x80074c84`
+#     (`lbu v1,0(s6) ; srl v1,6 ; addiu v1,1` e' o limite do laco que comeca em
+#     `0x80074a74`), e cada volta usa o tom `(byte1 >> 4) + i` (`0x80074ab4`:
+#     `lbu v0,1(s6) ; srl v0,4 ; addu v0,s2,v0`). Isso RESOLVE o "byte0 bits 6-7 NAO
+#     PROVADO" de exe_audio.md §4.1: e' o numero de vozes menos 1.
+#   • os tons 0..3 do C_01 tem pan **0 / 127 / 0 / 127** e apontam os VAGs **7 e 8** —
+#     sao os UNICOS tons do banco fora do centro (todos os outros tem pan = 64). Par
+#     estereo, tocado em dobro.
+#   • os VAGs 7 e 8 ocupam **79,0 % do `C_01.VB`** (2 x 81 264 de 205 616 B).
+#   • 30 392 Hz, 142 212 amostras => **4,679 s**, contra 0,08..0,86 s dos blips de UI.
+#   • o `C_0B` (banco de titulo do Mercenaries) tem o MESMO descritor no id 0 apontando
+#     uma amostra DIFERENTE (44 100 Hz, 4,21 s, 83 % do banco) — jingle por modo. Os ids
+#     4/5/6/7 (os blips) sao byte-identicos em 13 dos 14 bancos `C_`; este nao e'.
+#
+# O que eu **NAO** posso afirmar: que a voz diga "Resident Evil". Nao ha etiqueta no dado
+# e eu nao ouco. Confira de ouvido:
+#     tools/ffmpeg/.../ffplay.exe port/assets/SOUND/SFX/C_01/C_01_05.wav
+VINHETA_TITULO = dict(
+    cat=0, id_se=0, banco="C_01", banco_mercenaries="C_0B",
+    sitio="0x80195e70 0x800746c0(a0 = 0) no sub 1 (0x80195c68), depois do bit 0x100",
+    sitio_a0="0x80195e64 move $a0, $zero (imediato nao recuperavel por back-walk)",
+    sitios_irmaos=["0x80195a08 (sub 2, MEM_CARD)", "0x80196c34 (sub 11)"],
+    vibracao=["0x80038678(7, 0)", "0x80038704(9, 0xff, 0)", "0x8003879c(4, 0xff, 60, 10)"],
+    porta="0x80195e2c: o bloco inteiro e' pulado quando 0x800cc858 & 0x10000000",
+    sitio_vozes="0x80074c84 (byte0 >> 6) + 1 ; tom = (byte1 >> 4) + i em 0x80074ab4",
+    ordem="dificuldade -> VINHETA (0x80195e70) -> 3 fades -> INIT_TBL (0x80196068) -> "
+          "OPENING/prologo (0x801960d8) -> filme opn (0x801960e8)",
+    nao_esperado="MEDIDO: a transicao dura 4+12+180 = 196 ticks = 3,27 s e o som tem "
+                 "4,679 s — o original NAO espera o SE acabar; o rabo dele soa por cima "
+                 "do inicio do prologo (as vozes do SPU sobrevivem ao load do overlay).",
+    idioma="NAO VERIFICADO POR AUDICAO: que a voz diga 'Resident Evil' e' o relato do "
+           "dono do repo, nao medicao. O que esta medido e' o sitio, o banco, o id, as "
+           "4 vozes, o par estereo e a duracao.",
+)
+
 # ───────────────────── de-para rótulo PS1 -> recorte do atlas HD PT ─────────────────────
 #
 # `celula` = (u, v, w, h) em unidades SD (×4 no webp de 1024²).
@@ -328,6 +405,63 @@ def tabela_seno(exe_path=EXE):
     exe = Exe(exe_path)
     b = exe.bytes_at(SIN_TAB, SIN_N)
     return [v - 256 if v >= 128 else v for v in b]
+
+
+def medir_vinheta(banco=None, id_se=None):
+    """Mede o SE da VINHETA no `.VH` do disco do usuario (ver VINHETA_TITULO).
+
+    Le o descritor do id no offset 0 do header, resolve as `(byte0 >> 6) + 1` vozes com os
+    tons `(byte1 >> 4) + i`, e devolve pan/vag/taxa/duracao de cada uma. NENHUM numero
+    digitado a mao: tudo sai do arquivo. Devolve `None` se o banco nao estiver extraido.
+    """
+    banco = banco or VINHETA_TITULO["banco"]
+    id_se = VINHETA_TITULO["id_se"] if id_se is None else id_se
+    vh_p = paths.cd_data("SOUND", banco + ".VH")
+    vb_p = paths.cd_data("SOUND", banco + ".VB")
+    if not (os.path.exists(vh_p) and os.path.exists(vb_p)):
+        return None
+    import vab                                   # noqa: E402  (opcional: so quando ha disco)
+    with open(vh_p, "rb") as f:
+        vh = f.read()
+    vb_bytes = os.path.getsize(vb_p)
+    b = vab.parse_bank(vh, vb_bytes)
+    desc = struct.unpack_from("<I", vh, id_se * 4)[0]
+    if desc == 0xFFFFFFFF:
+        return None
+    b0, b1 = desc & 0xFF, (desc >> 8) & 0xFF
+    vozes = (b0 >> 6) + 1                        # 0x80074c84
+    tom0 = b1 >> 4                               # 0x80074ab4 (+ i por volta do laco)
+    saida, usados = [], {}
+    for i in range(vozes):
+        if tom0 + i >= len(b["tones"]):
+            break
+        t = b["tones"][tom0 + i]
+        s = b["samples"][t["vag"] - 1]
+        amostras = s["blocks"] * 28              # PS-ADPCM: 16 B -> 28 amostras
+        usados[t["vag"]] = s["end"] - s["start"]
+        saida.append(dict(
+            tom=tom0 + i, pan=t["pan"], vol=t["vol"], vag=t["vag"],
+            vag_bytes=s["end"] - s["start"], amostras=amostras, taxa_hz=s["rate"],
+            duracao_s=round(amostras / float(s["rate"]), 4),
+            # `re3_sfx.py` descarta o VAG#1 (bloco mudo do SPU): vag k -> <banco>_{k-2}.wav
+            wav="%s/%s_%02d.wav" % (banco, banco, t["vag"] - 2),
+            lado=("esquerda" if t["pan"] < 0x40 else
+                  "direita" if t["pan"] > 0x40 else "centro"),
+        ))
+    if not saida:
+        return None
+    dur = max(v["duracao_s"] for v in saida)
+    return dict(
+        banco=banco, id_se=id_se, descritor="0x%08x" % desc, vozes=vozes, tom_base=tom0,
+        vozes_detalhe=saida,
+        duracao_s=dur,
+        ticks=int(math.ceil(dur * TAXA_TICK)),
+        vb_bytes=vb_bytes,
+        fracao_do_banco=round(sum(usados.values()) / float(vb_bytes), 4),
+        estereo=len({v["lado"] for v in saida}) > 1,
+        wavs=[v["wav"] for v in saida],
+        wavs_distintos=sorted({v["wav"] for v in saida}),
+    )
 
 
 def filmes(exe_path=EXE):
@@ -895,6 +1029,7 @@ def montar_json(rel_assets, tinta, rel_init=None, mapping=None):
                     "volta ao titulo. DECLARADO: escolha do port.",
         },
         "som_titulo": SOM_TITULO,
+        "vinheta_titulo": dict(VINHETA_TITULO, medida=medir_vinheta()),
         "prologo": prologo(),
         "sala_inicial": {
             "id": "R10D", "origem": "informado pelo usuário (conhece o jogo)",
@@ -950,6 +1085,27 @@ def main():
               % (fase, n, n / 59.94, n // 2))
     at = soma("atrator")
     print("  atrator            %4d ticks = %5.2f s" % (at, at / 59.94))
+    ini = soma("inicio")
+    print("  transicao inicio   %4d ticks = %5.2f s (0x80195e9c/0x80195eec/0x80195f3c)"
+          % (ini, ini / TAXA_TICK))
+
+    v = medir_vinheta()
+    if v is None:
+        print("  VINHETA: %s.VH/.VB nao extraidos (extracted/ntsc-u/CD_DATA/SOUND)"
+              % VINHETA_TITULO["banco"])
+    else:
+        print("  VINHETA cat %d / id %d do %s  desc %s  %d vozes (tons %d..%d)"
+              % (VINHETA_TITULO["cat"], v["id_se"], v["banco"], v["descritor"],
+                 v["vozes"], v["tom_base"], v["tom_base"] + v["vozes"] - 1))
+        for e in v["vozes_detalhe"]:
+            print("     tom %2d pan %3d (%-9s) vag %d  %6d B  %5.3f s @ %5d Hz  %s"
+                  % (e["tom"], e["pan"], e["lado"], e["vag"], e["vag_bytes"],
+                     e["duracao_s"], e["taxa_hz"], e["wav"]))
+        print("     duracao %5.3f s = %d ticks ; %.1f%% do %s.VB ; estereo=%s"
+              % (v["duracao_s"], v["ticks"], 100.0 * v["fracao_do_banco"],
+                 v["banco"], v["estereo"]))
+        print("     a transicao tem %d ticks (%.2f s): o original NAO espera o som acabar"
+              % (ini, ini / TAXA_TICK))
 
     if a.medir:
         print("\ntinta medida no atlas HD (unidades SD):")

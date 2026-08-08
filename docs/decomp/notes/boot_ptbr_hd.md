@@ -14,10 +14,15 @@
 >
 > **Código:** `port/present/boot.gd`, `port/present/titulo.gd`, `port/present/video.gd`,
 > `port/present/prologo.gd`, `port/scenes/boot.tscn`.
-> **Teste:** `port/dev/tests/test_boot.gd` (267 asserts).
+> **Teste:** `port/dev/tests/test_boot.gd` (302 asserts).
 > **Sondas:** `port/dev/diag_video.gd`, `port/dev/shot_boot.gd`.
 >
-> **§10 e §11 são da rodada mais recente:** o BUG do clique na dificuldade, o alinhamento pelo
+> **§12 é a rodada mais recente:** a **VINHETA DE VOZ** entre a dificuldade e o filme — o
+> `SE_pede(cat 0, id 0)` de `0x80195e70`, que no banco `C_01` é um par estéreo de 4,679 s
+> tocado em 4 vozes (`(byte0 >> 6) + 1`, medido em `0x80074c84`) e ocupa 79 % do banco — mais
+> os 196 ticks de transição, e **dois bugs** que faziam o passo `prologo` do §11 nunca rodar.
+>
+> **§10 e §11 são da rodada anterior:** o BUG do clique na dificuldade, o alinhamento pelo
 > `title_mapping.xml`, o banco de SE do som do menu e — o maior — a **VINHETA**: o prólogo do
 > `OPENING.BIN` é um **interpretador de 13 opcodes** rodando um **script de 80 bytes que mora
 > no fim de `ETC/OPENING1.DAT`**. Com ele a linha do tempo do prólogo ficou medida, e a legenda
@@ -33,9 +38,17 @@
 
 ```
 aviso legal (5,01 s)  ->  logo CAPCOM (4,00 s)  ->  FILME DE ATRAÇÃO roop (15,4 s)
-   ->  TÍTULO navegável  ->  dificuldade  ->  ETC/INIT_TBL.DAT
+   ->  TÍTULO navegável  ->  dificuldade
+   ->  VINHETA DE VOZ (SE cat 0/id 0, 4,68 s) + transição de 3 fades (196 ticks = 3,27 s)
+   ->  ETC/INIT_TBL.DAT
    ->  VINHETA: prólogo narrado (55,56 s, legenda PT-BR)  ->  FMV opn (90,6 s)  ->  R10D
 ```
+
+> **⚠ A VINHETA DE VOZ e a transição são NOVAS (§12)** e são o item "depois de selecionar o
+> modo deveria tocar o som do 'Resident Evil' e depois ir para o vídeo". `0x80195e70` pede
+> `SE_pede(cat 0, id 0)` — no banco `C_01` da tela de título esse id é **4 vozes sobre um par
+> estéreo de VAGs que ocupa 79 % do banco, 4,679 s a 30 392 Hz**. De quebra, §12 conserta
+> dois bugs que faziam o passo `prologo` **nunca acontecer**.
 
 > **⚠ A VINHETA é NOVA (§11)** e é o item "falta a vinheta do jogo antes do próximo vídeo".
 > `0x801960d8` cria a tarefa do `OPENING.BIN` (overlay 5) e só um tick depois, em
@@ -66,6 +79,10 @@ Tudo em **ticks de tarefa**, que é a unidade que o binário conta. Nada foi arr
 | `titulo_fade_in` | 60 | `0x80194b08` sub2, `fade(T=0x3c)` `abr=2` | 1,00 |
 | **até o menu** | **611** + o filme | | **10,19** + 15,40 |
 | `atrator_timeout` | 900 | `0x8019454c` `*(u16*)(ctx+0x16) = 0x384` | 15,02 |
+| `inicio_clarao_in` | 4 | `0x80195e9c` `fade(0x000000→0xffffff, T=4)` `abr=1` | 0,07 |
+| `inicio_clarao_out` | 12 | `0x80195eec` `fade(0xffffff→0x000000, T=0xc)` `abr=1` | 0,20 |
+| `inicio_para_preto` | 180 | `0x80195f3c` `fade(0x000000→0xffffff, T=0xb4)` `abr=2` | 3,00 |
+| **transição do início** | **196** | sub 1 (`0x80195c68`), depois do bit `0x100` | **3,27** |
 
 Conferido em execução real: `godot --path port --rendering-driver opengl3 --quit-after 2400
 res://scenes/boot.tscn` imprime os 11 passos na ordem e nas durações acima e para no `menu`.
@@ -331,7 +348,7 @@ não verificado por audição. FMV em inglês exigiria o `.dat` do PC ou o `.STR
 | `port/dev/diag_clique_titulo.gd` | sonda do mouse no título (hover + um clique), pelo evento |
 | `port/dev/diag_som_boot.gd` | sonda do som: qual WAV/`.ogg` o `Sfx`/`Audio` escolheu |
 | `port/scenes/boot.tscn` | a cena |
-| `port/dev/tests/test_boot.gd` | 267 asserts |
+| `port/dev/tests/test_boot.gd` | 302 asserts (o grupo `vinheta de voz (0x80195e70)` é §12) |
 | `port/dev/shot_boot.gd` | screenshot por fase (validação visual) |
 | `port/dev/diag_video.gd` | sonda do `.ogv` fora do `.pck` |
 
@@ -654,6 +671,13 @@ func 18 (94)**. Nomear qual delas é "a primeira cutscene" exigiria rodar a VM �
     O que está medido do caminho pós-`opn` é: `0x801960f0` espera o bit `0x10000`, faz um fade
     (`0x8002a35c`) e chama `0x8006d0d8`; nenhum `filme_prepara` a mais e nenhum opcode `0x7a`
     em `R10D` (§7.2). Se ela existir, é cena de MOTOR, como a de §8.7.
+15.1 **O CONTEÚDO da vinheta de voz** (§12.3): que a amostra `C_01/C_01_05.wav` diga
+    "Resident Evil" é o relato do dono, não medição — não há metadado e eu não ouço. Medido
+    está o sítio (`0x80195e70`), o banco (`C_01`), o id (0), as 4 vozes, o par estéreo
+    (pan 0/127), 30 392 Hz, 4,679 s e 79 % do `.VB`. Fecha com um `ffplay`.
+15.2 **O bit `0x10000000` de `0x800cc858`** que PULA o bloco de vibração + vinheta
+    (`0x80195e2c`) — parece "som/vibração desligados no OPTION", mas quem o escreve **não foi
+    localizado**. É o mesmo bit da porta de prioridade de `SE_pede` (`0x800746d4`).
 16. **`R10D_2`** (§8.7): o dono afirma que `R10D` tem 2 cutscenes e que a primeira roda em
     `R10D_2`. Não existe arquivo com esse nome em nenhum `STAGE*` (só `R10D.ARD/.BIN/.BSS`) e
     o `.ARD` traz **um** SCD com 49 funções. Continua **informação do usuário, não medida** —
@@ -894,4 +918,162 @@ BOOT_FASE=prologo BOOT_QUADRO=1350 godot --path port --rendering-driver opengl3 
 godot --path port --headless --audio-driver Dummy --script res://dev/diag_som_boot.gd
 godot --path port --rendering-driver opengl3 --audio-driver Dummy \
     --script res://dev/diag_clique_titulo.gd   # hover + um clique, pelo evento de verdade
+```
+
+---
+
+## 12. A VINHETA DE VOZ: o que toca entre a dificuldade e o filme
+
+> **O pedido.** "No menu, **após selecionar o modo** (a dificuldade), deveria tocar o som do
+> 'Resident Evil' e depois ir para o vídeo." O port ia direto para o `opn`.
+>
+> **A resposta curta.** É um **SE**, não BGM nem XA: `SE_pede(cat 0, id 0)` em
+> **`0x80195e70`**, que no banco `C_01` da tela de título resolve para um **par estéreo de
+> 4,679 s tocado em 4 vozes** — `SOUND/SFX/C_01/C_01_05.wav` (esquerda) +
+> `C_01_06.wav` (direita). Ele ocupa **79,0 % do `C_01.VB`**.
+
+### 12.1 O sítio, na desmontagem
+
+O sub 1 do `TITLE.BIN` (`0x80195c68`) é a tela de dificuldade. Confirmar (`0x80195d84` testa
+o bit `0x800` do pad em `0x800cc834`) cai em `0x80195d8c`, que grava o bit `0x100` (EASY) de
+`0x800cc858` — `0x80195db8` limpa para HARD, `0x80195dcc` liga para EASY — e desemboca em:
+
+```
+80195e1c  lw    v0, 0x800cc858
+80195e28  and   v0, 0x10000000
+80195e2c  bnez  v0, 0x80195e7c        ; <- o bloco todo é PULADO por esse bit
+80195e38  jal   0x80038678(7, 0)              ; vibração: motor pequeno
+80195e48  jal   0x80038704(9, 0xff, 0)        ; vibração: motor grande
+80195e5c  jal   0x8003879c(4, 0xff, 0x3c, 0xa); vibração: rampa de 60 ticks
+80195e64  move  a0, zero
+80195e70  jal   0x800746c0                    ; <<< SE_pede(a0 = 0) = cat 0, idx 0
+80195e9c  jal   0x8002a35c  (0x000000->0xffffff, T=4,    abr=1)   \
+80195eec  jal   0x8002a35c  (0xffffff->0x000000, T=0xc,  abr=1)    > 196 ticks
+80195f3c  jal   0x8002a35c  (0x000000->0xffffff, T=0xb4, abr=2)   /
+80195f80  ori   v0, 0x1000 ; sw 0x800cc858    ; "jogo iniciando"
+80196068  jal   0x80012818(0x30, 0x800d1d28)  ; ETC/INIT_TBL.DAT
+801960d8  jal   0x80031f50(1, 5)              ; overlay 5 = OPENING (o prólogo)
+801960e8  jal   0x800321c4(0)                 ; filme_prepara(0) = ZMOVIE/OPN.STR
+```
+
+Cada fade é **esperado até o fim** por `0x8002a6bc` num laço que chama o desenho do título
+(`0x80194c4c`) e `yield` — por isso a tela da dificuldade fica no ar durante os 196 ticks.
+**Nenhum dos três laços lê o pad**: a transição não é pulável no original.
+
+Dois detalhes de método:
+
+* **O `a0 = 0` não é recuperável por back-walk de imediato** (`move $a0, $zero`), e é por isso
+  que `overlay_parse.py --calls` imprime `a0=?` em `0x80195e70`. Foi lido na desmontagem.
+* **O `abr` é o 4º argumento de `0x8002a35c`.** A assinatura é
+  `(slot, ?, ?, abr, c0@sp+0x10, c1@sp+0x14, T@sp+0x18)` — o prólogo do callee
+  (`0x8002a394`/`0x8002a398`/`0x8002a3a4` lendo `sp+0x38/0x3c/0x40`) dá as três últimas, e o
+  `abr` foi calibrado em dois sítios de valor já documentado: `0x80185480` tem `a3 = 2` e §1
+  diz `abr=2`; `0x80194248` tem `a3 = 1` e §1 diz `abr=1`.
+
+### 12.2 Por que `cat 0 / id 0` é a vinheta, e não um blip de UI
+
+`cat 0` na tela de título é o banco **`C_01`** (`0x801944c0` → `0x8007809c(0, 1)`, já provado
+em §8.2). No `C_01`, o id 0 tem o descritor `0x03e005e0`, e ele se destaca de tudo:
+
+| medida | id 0 | os blips de UI (4/5/6/7/9) |
+|---|---|---|
+| vozes | **4** | 1 |
+| pan dos tons | **0 / 127 / 0 / 127** (hard L/R) | 64 (centro) em todos |
+| taxa | **30 392 Hz** | 11 025 … 22 050 |
+| duração | **4,679 s** | 0,08 … 0,86 s |
+| fatia do `.VB` | **79,0 %** (2 × 81 264 de 205 616 B) | 21 % somados |
+| compartilhado entre bancos `C_` | **não** | byte-idêntico em 13 dos 14 |
+
+**As 4 vozes são MEDIDAS, e isso é uma correção a [`exe_audio.md`](exe_audio.md) §4.1**, que
+lista `byte0` bits 6-7 como não decodificados (registro aqui porque aquele doc não é meu nesta
+rodada). Em `0x800749a0`:
+
+```
+80074ab4  lbu v0, 1(s6) ; srl v0, 4 ; addu v0, s2, v0   ; tom = (byte1 >> 4) + i
+80074c84  lbu v1, 0(s6) ; srl v1, 6 ; addiu v1, 1       ; limite do laço
+80074c98  bnez -> 0x80074a74                            ; repete enquanto i < limite
+```
+
+➜ **`nº de vozes = (byte0 >> 6) + 1`**, cada voz usando o tom `(byte1 >> 4) + i`. Para o id 0
+do `C_01`, `byte0 = 0xe0` → 4 vozes, tons 0..3. E os tons 0..3 do `C_01` (lidos do `.VH`)
+são `pan 0 → vag 7`, `pan 127 → vag 8`, `pan 0 → vag 7`, `pan 127 → vag 8`: **o par estéreo,
+tocado em dobro**. Os blips têm `byte0 = 0x00` → 1 voz.
+
+O mesmo trio de vibração + `SE_pede(0)` aparece em **exatamente outros dois sítios** do
+`TITLE.BIN`, e em nenhum outro: `0x80195a08` (sub 2, o que carrega o `MEM_CARD`) e
+`0x80196c34` (sub 11). É o "beat de apresentação" do overlay.
+
+E o `C_0B` (banco de título do Mercenaries) tem o **mesmo descritor** no id 0 apontando uma
+amostra **diferente** — 44 100 Hz, 4,21 s, 83,2 % do banco. Jingle por modo.
+
+### 12.3 O que eu NÃO provei
+
+**Que a voz diga "Resident Evil".** Não há metadado de idioma nem de conteúdo em nenhum dos
+arquivos, e eu não ouço. O que está medido é o sítio, o banco, o id, as 4 vozes, o par
+estéreo, a taxa, a duração e a fatia do banco — tudo compatível com um jingle de voz e
+incompatível com um blip. Tentei desempatar por medida de sinal (razão de modulação de
+envelope em 2–10 Hz e planura espectral, contra as 370 vozes de `DATA_A/VOICE`, contra
+`MAIN06`/`MAIN38` e contra os blips): a amostra fica **entre** voz e música, sem separar. O
+comando para fechar de ouvido:
+
+```bash
+tools/ffmpeg/ffmpeg-master-latest-win64-gpl/bin/ffplay.exe -autoexit \
+    port/assets/SOUND/SFX/C_01/C_01_05.wav
+```
+
+**O que o original NÃO faz:** esperar o som acabar. A transição mede **196 ticks (3,27 s)** e
+o som tem **281 ticks (4,679 s)** — o rabo dele soa por cima do início do prólogo (as vozes
+do SPU sobrevivem ao load do overlay 5, que não toca o `.VB` do menu).
+
+### 12.4 DOIS BUGS que este item revelou
+
+1. **O passo `prologo` nunca acontecia.** `Boot._on_novo_jogo` fazia `_ir_para_passo("fmv")`,
+   pulando o `prologo` que §11 tinha implementado e que a lista de passos continha. A ordem
+   agora é a do binário: dificuldade → vinheta + transição → INIT_TBL → prólogo → filme.
+2. **Ninguém chamava `Prologo.avancar()`.** O `Prologo` tem relógio próprio dirigido de fora
+   (`boot.gd` conta os ticks) e nenhum `_process`; com o passo inalcançável, isso passou.
+   Se alguém tivesse forçado o passo, o prólogo ficaria parado no quadro 0 para sempre.
+   `avancar_ticks` agora tica o prólogo.
+
+### 12.5 Onde ficou no port
+
+| arquivo | o que mudou |
+|---|---|
+| `tools/boot_assets.py` | 3 tempos novos em `TEMPOS`; `VINHETA_TITULO` (os sítios) e `medir_vinheta()`, que **lê o `.VH` do disco do usuário** e emite vozes/pan/vag/taxa/duração/fatia em `boot_flow.json.vinheta_titulo.medida` |
+| `port/present/boot.gd` | passos `inicio_clarao_in`/`inicio_clarao_out`/`inicio_para_preto`; sinal `pediu_vinheta`; `_on_novo_jogo` cai na transição; tique do prólogo; `titulo_aceita_ponteiro()` |
+| `port/dev/tests/test_boot.gd` | grupo `vinheta de voz (0x80195e70)` + o caminho novo no fluxo inteiro e no mouse (**302 asserts**) |
+| `port/dev/diag_som_boot.gd` | imprime qual amostra o `Sfx` escolheu para a vinheta |
+
+Três escolhas **declaradas** do port, e o motivo de cada uma:
+
+1. **A BGM `main38` para no início da transição.** O sítio que para o SEQ continua não
+   localizado (§8.5), e a trilha por cima de um jingle de 4,7 s some com ele.
+2. **As duas metades do par estéreo tocam no centro.** `Sfx.tocar_id(0, 0, "C_01")` resolve
+   só o tom 0 (VAG 7, `pan 0` = esquerda) e o `Sfx` não tem pan, então o `Boot` toca o VAG 8
+   pelo nome (`C_01/C_01_06.wav`): é a **soma mono** do par, que é o mais perto que a API dá.
+3. **Sem o prólogo** (`tocar_vinheta = false` ou script ausente), o passo `prologo` SEGURA os
+   85 ticks que faltam do jingle antes de entrar no filme — o "espere ele terminar" do dono.
+   No caminho medido essa espera é **zero**, porque o prólogo de 55,56 s está no caminho.
+
+### 12.6 Como conferir
+
+```bash
+# a medição sai do .VH do disco, não de número digitado
+NOSTALGIA_OUT=port python tools/boot_assets.py | tail -12
+python tools/exe_audio.py --tabela C_01        # o id 0 e os 5 blips, lado a lado
+
+# o sítio, na desmontagem
+python tools/overlay_parse.py TITLE --disasm 0x80195e1c 40
+
+# o som de verdade, do lado do port
+godot --path port --headless --audio-driver Dummy --script res://dev/diag_som_boot.gd
+#   -> [boot] vinheta do título: cat 0 / id 0 do C_01 (0x80195e70) — esquerda=true direita=true
+
+# a transição, renderizada
+BOOT_FASE=inicio_clarao_in  BOOT_TICKS=2  godot --path port --rendering-driver opengl3 \
+    --script res://dev/shot_boot.gd        # o clarão branco sobre a tela de dificuldade
+BOOT_FASE=inicio_para_preto BOOT_TICKS=90 godot --path port --rendering-driver opengl3 \
+    --script res://dev/shot_boot.gd        # meio do fade de 3,00 s para o preto
+
+godot --path port --headless --audio-driver Dummy --script res://dev/run_tests.gd -- boot
 ```

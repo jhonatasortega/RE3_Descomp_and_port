@@ -3,8 +3,20 @@ extends Node2D
 ## FLUXO DE ABERTURA do RE3, do primeiro quadro até cair na sala inicial.
 ##
 ##     aviso legal  ->  logo CAPCOM  ->  FILME DE ATRAÇÃO (roop)  ->  TÍTULO (navegável)
-##     ->  dificuldade  ->  INIT_TBL.DAT  ->  VINHETA (prólogo narrado)
-##     ->  FMV de abertura (opn)  ->  jogo (R10D)
+##     ->  dificuldade  ->  VINHETA DE VOZ + transição (196 ticks)  ->  INIT_TBL.DAT
+##     ->  VINHETA (prólogo narrado)  ->  FMV de abertura (opn)  ->  jogo (R10D)
+##
+## ── ⚠ O QUE MUDOU NESTA RODADA: o som entre a dificuldade e o filme ──
+## O dono: "no menu, depois de selecionar o modo, deveria tocar o som do 'Resident Evil' e
+## depois ir para o vídeo". Duas coisas estavam faltando, e as duas são MEDIDAS:
+##  1. **A VINHETA DE VOZ** — `0x80195e70` pede `SE_pede(cat 0, id 0)` logo depois de o bit
+##     `0x100` da dificuldade ser gravado, com o trio de vibração antes. No banco `C_01` da
+##     tela de título esse id é 4 vozes sobre um PAR ESTÉREO de VAGs que ocupa **79 % do
+##     banco**, 4,679 s a 30 392 Hz. Ver `SE_VINHETA`.
+##  2. **A TRANSIÇÃO** — três fades em fila (4 + 12 + 180 = 196 ticks = 3,27 s), passos
+##     `inicio_clarao_in` / `inicio_clarao_out` / `inicio_para_preto`.
+## De quebra, `_on_novo_jogo` ia direto para o `fmv` e **pulava o passo `prologo`**, que
+## existia na lista e nunca era alcançado. A ordem agora é a do binário.
 ##
 ## ── O REPRODUTOR DE FMV: achado desta rodada ──
 ## O RE3 do PS1 **não tem MDEC no EXE nem nos 17 overlays** (varri `0x1f801820`/`0x1f801824`
@@ -119,6 +131,44 @@ const BANCO_SE_TITULO := "C_01"
 ## medido com ffprobe) — três fontes independentes apontando o mesmo `0x38`.
 const BGM_TITULO := "main38"
 
+## ── A VINHETA DE VOZ DO TÍTULO: o SE que toca ao escolher a dificuldade ──
+## Pedido do dono: "no menu, depois de selecionar o modo, deveria tocar o som do
+## 'Resident Evil' e depois ir para o vídeo". É um **SE**, não BGM nem XA, e o sítio é
+## MEDIDO — sub 1 do `TITLE.BIN` (`0x80195c68`, a tela de dificuldade), logo depois de
+## `0x80195db8`/`0x80195dcc` gravarem o bit `0x100` (EASY) de `0x800cc858`:
+##
+##     0x80195e2c  bnez  (0x800cc858 & 0x10000000)     -> pula o bloco inteiro
+##     0x80195e38  0x80038678(7, 0)                    vibração do motor pequeno
+##     0x80195e48  0x80038704(9, 0xff, 0)              vibração do motor grande
+##     0x80195e5c  0x8003879c(4, 0xff, 60, 10)         rampa de vibração
+##     0x80195e70  0x800746c0(a0 = 0, 0, 0, 0)         <<< SE_pede: cat 0, id 0
+##
+## e SÓ DEPOIS vêm os três fades (`inicio_*`), `0x80196068` (INIT_TBL), `0x801960d8`
+## (overlay 5 = OPENING, o prólogo) e `0x801960e8` (`filme_prepara(0)` = o `opn`).
+## O `a0 = 0` é `move $a0, $zero` (`0x80195e64`) — lido na desmontagem, não por back-walk.
+##
+## `cat 0` na tela de título é o banco **`C_01`** (`0x801944c0`). E no `C_01` o id 0 é o
+## maior ativo do banco, e é ESTÉREO:
+##  • descritor `0x03e005e0` -> **`(byte0 >> 6) + 1` = 4 VOZES**, MEDIDO em `0x80074c84`
+##    (é o limite do laço que começa em `0x80074a74`), cada volta usando o tom
+##    `(byte1 >> 4) + i` (`0x80074ab4`);
+##  • os tons 0..3 do `C_01` têm pan **0 / 127 / 0 / 127** e apontam os VAGs **7 e 8** —
+##    os ÚNICOS tons do banco fora do centro (`pan = 64`);
+##  • os dois VAGs ocupam **79,0 % do `C_01.VB`** (2 × 81 264 de 205 616 B);
+##  • 30 392 Hz, 142 212 amostras => **4,679 s**, contra 0,08…0,86 s dos blips de UI.
+##
+## **NÃO VERIFICADO POR AUDIÇÃO:** que a voz diga "Resident Evil" é o relato do dono. O
+## que está medido é o sítio, o banco, o id, as 4 vozes, o par estéreo e a duração.
+## Detalhe e provas: `docs/decomp/notes/boot_ptbr_hd.md` §12.
+const SE_VINHETA := 0
+## O segundo VAG do par estéreo. O `Sfx` resolve só o tom 0 (VAG 7, o lado ESQUERDO) a
+## partir de `(cat, id)`, e não tem pan — então o port toca as duas metades no centro,
+## que é a soma mono do par. **DECLARADO**, com o dado medido acima por trás.
+const SE_VINHETA_WAV_DIR := "C_01/C_01_06.wav"
+## 4,679 s medidos (142 212 amostras a 30 392 Hz) = 281 ticks a 59,94 Hz. Só é USADO no
+## caminho degradado (sem vinheta): ver `_aplicar_passo` / `prologo`.
+const SE_VINHETA_TICKS := 281
+
 enum Blend { NENHUM, ADITIVO, SUBTRATIVO }
 
 signal fase_mudou(nome: String)
@@ -129,6 +179,10 @@ signal pediu_parar_bgm()                       ## silêncio ao entrar no filme (
 ## nos últimos 9 s. O `Audio.tocar_faixa` repete por padrão.
 signal pediu_narracao(faixa: String)
 signal pediu_sfx(id: int)
+## A VINHETA de voz do título (`SE_VINHETA`). Separada do `pediu_sfx` porque o SE do
+## original tem 4 vozes sobre um PAR ESTÉREO de VAGs e `Sfx.tocar_id` resolve só o tom 0
+## (o lado esquerdo) — ver o comentário de `SE_VINHETA`.
+signal pediu_vinheta()
 signal terminou()                              ## acabou a abertura; o jogo pode entrar
 
 ## Se `false`, a cena não troca para `game.tscn` no fim (usado pelo teste e pelo diagnóstico).
@@ -159,6 +213,9 @@ var _sub: ColorRect
 var _acumulado := 0.0
 var _pad_antes := 0
 var _fim := false
+## Ticks que ainda faltam do jingle de voz do título (`SE_VINHETA`). Só é CONSULTADO no
+## caminho sem prólogo — no caminho medido o prólogo cobre o rabo do som de graça.
+var _vinheta_ticks := 0
 
 
 func _ligar_som() -> void:
@@ -192,6 +249,16 @@ func _ligar_som() -> void:
 		## **byte-idênticos** aos de `C_00` (`cmp` nos 5 pares): o som audível é o mesmo, o que
 		## muda é passar a tocar o banco que o binário carrega, em qualquer ordem de cena.
 		pediu_sfx.connect(func(id: int) -> void: sf.call("tocar_id", 0, id, BANCO_SE_TITULO))
+		## A VINHETA: `tocar_id(0, 0, "C_01")` já dá o VAG 7 (tom 0, pan 0 = ESQUERDA) pelo
+		## de-para medido; o VAG 8 (tom 1, pan 127 = direita) não é alcançável por `(cat, id)`,
+		## então vai pelo nome. O `Sfx` não tem pan, logo as duas metades saem no centro — a
+		## soma mono do par estéreo, que é o mais perto que a API dá. Ver `SE_VINHETA`.
+		pediu_vinheta.connect(func() -> void:
+			var esq: bool = bool(sf.call("tocar_id", 0, SE_VINHETA, BANCO_SE_TITULO))
+			var dir: bool = bool(sf.call("tocar_arquivo", SE_VINHETA_WAV_DIR))
+			print("[boot] vinheta do título: cat 0 / id %d do %s (0x80195e70) — "
+				% [SE_VINHETA, BANCO_SE_TITULO]
+				+ "esquerda=%s direita=%s" % [esq, dir]))
 
 
 func _ready() -> void:
@@ -263,6 +330,20 @@ static func construir_passos(d: Dictionary) -> Array[Dictionary]:
 			"blend": Blend.SUBTRATIVO, "c0": Color.WHITE, "c1": Color.BLACK},
 		# ── TITLE.BIN estado 3 (0x80195564): o menu. Sem duração fixa. ──
 		{"nome": "menu", "ticks": 0, "fundo": "titulo", "blend": Blend.NENHUM},
+		# ── A TRANSIÇÃO DO INÍCIO DO JOGO (sub 1, 0x80195e34..0x80195f44) ──
+		# ⚠ Este trecho FALTAVA e é o item do dono. Escolher a dificuldade dispara a VINHETA
+		# de voz (`0x80195e70`, ver `SE_VINHETA`) e então TRÊS fades em fila, cada um esperado
+		# até o fim por `0x8002a6bc` antes do próximo. A tela da DIFICULDADE continua no ar
+		# durante os três (o laço de espera chama o desenho do título, `0x80194c4c`).
+		# O `abr` é o 4º argumento de `0x8002a35c`, calibrado em dois sítios de `abr` conhecido
+		# (`0x80185480` a3=2 = subtrativo; `0x80194248` a3=1 = aditivo).
+		# NENHUM dos três laços lê o pad: a transição NÃO é pulável no original.
+		{"nome": "inicio_clarao_in", "ticks": f.call("inicio_clarao_in"), "fundo": "titulo",
+			"blend": Blend.ADITIVO, "c0": Color.BLACK, "c1": Color.WHITE},
+		{"nome": "inicio_clarao_out", "ticks": f.call("inicio_clarao_out"), "fundo": "titulo",
+			"blend": Blend.ADITIVO, "c0": Color.WHITE, "c1": Color.BLACK},
+		{"nome": "inicio_para_preto", "ticks": f.call("inicio_para_preto"), "fundo": "titulo",
+			"blend": Blend.SUBTRATIVO, "c0": Color.BLACK, "c1": Color.WHITE},
 		# ── a VINHETA (prólogo) — `0x801960d8 load_overlay_task(1, ovl 5 = OPENING)` ──
 		# Vem DEPOIS da dificuldade + `INIT_TBL` e ANTES do FMV: no original a tarefa do
 		# OPENING é criada em `0x801960d8` e só um tick depois (`0x801960e0` yield) o TITLE
@@ -348,14 +429,36 @@ func _aplicar_passo() -> void:
 		"menu":
 			titulo.fase = Titulo.Fase.MENU
 			titulo.ticks = 0
+		"inicio_clarao_in", "inicio_clarao_out", "inicio_para_preto":
+			# A tela da DIFICULDADE fica no ar durante os 196 ticks: no original os três laços
+			# de espera chamam o desenho do título (`0x80194c4c`). O `Titulo` já foi para a
+			# fase SAINDO ao confirmar, e nela ele desenharia os itens do MENU — então o passo
+			# devolve a fase DIFICULDADE só para o desenho. O clique não volta a valer: o
+			# roteamento de mouse exige `passo_atual() == "menu"` (ver `titulo_aceita_ponteiro`).
+			titulo.fase = Titulo.Fase.DIFICULDADE
+			titulo.queue_redraw()
+			if passo_atual() == "inicio_clarao_in":
+				# `0x80195e70`: o SE da VINHETA DE VOZ, pedido ANTES do 1º fade (`0x80195e9c`).
+				# A BGM do título para aqui — **DECLARADO**: no binário eu não localizei o
+				# sítio que para o SEQ da `MAIN38` (a mesma ressalva de §8.5), e deixar a
+				# trilha por cima de um jingle de 4,7 s some com ele.
+				pediu_parar_bgm.emit()
+				_vinheta_ticks = SE_VINHETA_TICKS
+				pediu_vinheta.emit()
 		"prologo":
 			# A vinheta: `0x801960d8 load_overlay_task(1, ovl 5 = OPENING)`, criada ANTES de
 			# `filme_prepara(0)` (que só vem em `0x801960e8`, um tick depois). A narração
 			# (`main06`) é pedida pelo próprio `Prologo` no 1º trecho de XA do script.
 			pediu_parar_bgm.emit()
 			prologo.comecar()
-			if not tocar_vinheta or prologo.total <= 0:
-				_ir_para_passo("fmv")
+			if not vinheta_vai_tocar():
+				# Sem prólogo, o filme entraria em 196 ticks (3,27 s) e CORTARIA o jingle de
+				# 4,679 s no meio. No original isso não acontece porque o prólogo (55,56 s)
+				# está no caminho — então aqui o passo SEGURA o que falta do som antes do
+				# filme. Escolha do port, e o motivo é o pedido do dono ("espere ele
+				# terminar"); a espera é ZERO no caminho normal, que é o medido.
+				if _vinheta_ticks <= 0:
+					_ir_para_passo("fmv")
 		"fmv":
 			# `0x801960e8` filme_prepara(0) -> registro 0 = ZMOVIE/OPN.STR (`opn`).
 			_tocar_filme("opn", "jogo")
@@ -366,6 +469,13 @@ func _aplicar_passo() -> void:
 
 func em_filme() -> bool:
 	return passo_atual() in ["filme_atracao", "fmv"]
+
+
+func vinheta_vai_tocar() -> bool:
+	## O prólogo do `OPENING.BIN` tem script para rodar? É o que decide se o jingle de voz
+	## termina de graça (55,56 s de prólogo à frente) ou se o passo `prologo` precisa segurar
+	## o que falta dele antes do filme.
+	return tocar_vinheta and prologo != null and prologo.total > 0
 
 
 func _tocar_filme(qual: String, destino: String) -> void:
@@ -383,6 +493,8 @@ func avancar_ticks(n := 1) -> void:
 	for _i in n:
 		if passo >= passos.size() or _fim:
 			break
+		if _vinheta_ticks > 0:
+			_vinheta_ticks -= 1                 ## quanto falta do jingle de 4,679 s (281 ticks)
 		var dur := int((passos[passo] as Dictionary).get("ticks", 0))
 		if dur <= 0:
 			# Passo sem duração fixa (menu / FMV / jogo): quem sai dele é um EVENTO, não o
@@ -390,6 +502,17 @@ func avancar_ticks(n := 1) -> void:
 			# selecionado respirar e o timeout do atrator contar.
 			if passo_atual() == "menu":
 				titulo.avancar(1)
+			elif passo_atual() == "prologo":
+				if vinheta_vai_tocar():
+					# ⚠ **BUG desta rodada:** NINGUÉM chamava `Prologo.avancar()` — o prólogo
+					# tinha relógio próprio e nenhum tique. Não se notava porque
+					# `_on_novo_jogo` pulava o passo inteiro (ia direto para o `fmv`).
+					# O `Prologo` sai deste passo pelo sinal `terminou`, no fim do script.
+					prologo.avancar(1)
+				elif _vinheta_ticks <= 0:
+					# Caminho degradado: sem script de prólogo, seguramos aqui até o jingle de
+					# voz acabar, para o filme não cortá-lo (ver `_aplicar_passo`).
+					_ir_para_passo("fmv")
 			continue
 		ticks += 1
 		if ticks >= dur:
@@ -491,7 +614,7 @@ func _input(e: InputEvent) -> void:
 	## O 2º aperto de um DUPLO CLIQUE (`double_click`) é IGNORADO de propósito: agora um clique
 	## já confirma, então o 2º cairia na tela seguinte — um duplo clique em COMEÇAR JOGO
 	## escolheria a dificuldade sem o dono ver a tela.
-	if titulo == null or not titulo.visible:
+	if not titulo_aceita_ponteiro():
 		return
 	if e is InputEventMouseButton:
 		var mb := e as InputEventMouseButton
@@ -521,7 +644,7 @@ func ponto_do_titulo(pos_viewport: Vector2) -> Vector2:
 func clique(pos_viewport: Vector2) -> bool:
 	## Roteia um clique/toque em coordenada de VIEWPORT para o título. Separado do `_input`
 	## para o teste poder chamar sem fabricar evento (e para a sonda `diag_clique_titulo.gd`).
-	if titulo == null or not titulo.visible:
+	if not titulo_aceita_ponteiro():
 		return false
 	var pt := ponto_do_titulo(pos_viewport)
 	var r: String = titulo.clicar(pt)
@@ -532,9 +655,18 @@ func clique(pos_viewport: Vector2) -> bool:
 
 func pairar(pos_viewport: Vector2) -> bool:
 	## Roteia o MOVIMENTO do ponteiro para o hover do título.
-	if titulo == null or not titulo.visible:
+	if not titulo_aceita_ponteiro():
 		return false
 	return titulo.pairar(ponto_do_titulo(pos_viewport))
+
+
+func titulo_aceita_ponteiro() -> bool:
+	## Mouse/toque só valem no passo `menu` — que é onde o `Titulo` roda a máquina dele
+	## (MENU e DIFICULDADE são fases INTERNAS desse passo, `0x80195564` / `0x80195c68`).
+	## Sem esta guarda o nó do título ficaria clicável durante a TRANSIÇÃO do início do jogo
+	## (196 ticks em que ele continua desenhado, com a fase devolvida para DIFICULDADE só
+	## para o desenho) e um clique ali re-escolheria a dificuldade.
+	return titulo != null and titulo.visible and passo_atual() == "menu"
 
 
 func _ler_pad() -> void:
@@ -586,7 +718,13 @@ func _on_novo_jogo(eh_facil: bool) -> void:
 	print("[boot] jogo novo: %s · INIT_TBL %s" % [
 		"FÁCIL (bit 0x100 ligado)" if eh_facil else "DIFÍCIL (bit 0x100 limpo)",
 		"conferido" if init_tbl_ok else "AUSENTE/divergente"])
-	_ir_para_passo("fmv")
+	## ⚠ **CORREÇÃO desta rodada** (o dono: "depois de selecionar o modo deveria tocar o som
+	## do 'Resident Evil' e depois ir para o vídeo"). Isto ia direto para o `fmv` — o que
+	## PULAVA duas coisas medidas: a VINHETA DE VOZ do `0x80195e70` com os três fades da
+	## transição, e o próprio passo `prologo` (que existia na lista e nunca era alcançado).
+	## A ordem agora é a do binário: dificuldade -> vinheta + transição (196 ticks) ->
+	## INIT_TBL (`0x80196068`) -> prólogo (`0x801960d8`) -> filme `opn` (`0x801960e8`).
+	_ir_para_passo("inicio_clarao_in")
 
 
 func aplicar_dificuldade(eh_facil: bool) -> void:

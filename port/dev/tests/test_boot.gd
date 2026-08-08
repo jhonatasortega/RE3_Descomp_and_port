@@ -18,6 +18,7 @@ func run(t: Object) -> bool:
 	_dados_do_boot(t)
 	_filmes(t)
 	_passos(t)
+	_vinheta_de_voz(t)
 	_fluxo_inteiro(t)
 	_titulo(t)
 	_mouse(t)
@@ -139,6 +140,9 @@ func _mouse(t: Object) -> void:
 	var b := Boot.new()
 	b.entrar_no_jogo = false
 	b.tocar_fmv = false
+	## Sem a vinheta narrada o caminho é curto (dificuldade -> transição -> filme); a
+	## transição em si continua valendo e é medida no grupo próprio.
+	b.tocar_vinheta = false
 	b.preparar()
 	b.titulo.carregar()
 	b.titulo.scale = Vector2(Titulo.ESCALA, Titulo.ESCALA)
@@ -186,19 +190,93 @@ func _mouse(t: Object) -> void:
 		"e o MESMO clique confirmou: a dificuldade está no ar")
 	t.eq(b.titulo.cursor_dificuldade, 0, "a dificuldade abre em MODO DIFICIL (0x80195d04)")
 
-	# ── UM CLIQUE em MODO FACIL (não selecionado) escolhe FÁCIL e vai para o filme ──
+	# ── UM CLIQUE em MODO FACIL (não selecionado) escolhe FÁCIL e vai para a transição ──
 	var escolhas: Array[bool] = []
+	var vinhetas := [0]
+	b.pediu_vinheta.connect(func() -> void: vinhetas[0] += 1)
 	b.titulo.escolheu_novo_jogo.connect(func(f: bool) -> void: escolhas.append(f))
 	t.check(b.clique(alvo.call(1)), "um clique em MODO FACIL é aceito")
 	t.eq(escolhas, [true],
 		"e emite escolheu_novo_jogo(true) — FÁCIL, bit 0x100 de 0x800cc858 (0x80195dcc)")
 	t.check(b.facil, "o Boot guarda facil=true")
+	t.eq(b.passo_atual(), "inicio_clarao_in",
+		"o clique cai na TRANSIÇÃO do início (0x80195e34), não direto no filme")
+	t.eq(vinhetas[0], 1,
+		"e pede a VINHETA DE VOZ uma vez (0x80195e70 SE_pede(cat 0, id 0) do C_01)")
+	# ── depois de escolher, o título não aceita mais clique (não é mais o passo `menu`) ──
+	t.check(not b.clique(alvo.call(0)), "clique depois de escolher não faz nada")
+	t.check(not b.pairar(alvo.call(0)), "e o hover também não")
+	b.avancar_ticks(196)                            ## 4 + 12 + 180: os três fades
+	t.eq(b.passo_atual(), "prologo",
+		"196 ticks: a transição acabou e o passo é o prólogo (0x801960d8, antes do filme)")
+	# Sem script de prólogo (`tocar_vinheta = false`) o passo SEGURA o que falta do jingle:
+	# 281 ticks (4,679 s) − 196 da transição = 85. É o "espere ele terminar" do dono.
+	b.avancar_ticks(84)
+	t.eq(b.passo_atual(), "prologo", "e o filme NÃO entra enquanto o jingle não acaba")
+	b.avancar_ticks(1)
 	t.check(fases.has("fmv"),
-		"o clique leva ao passo fmv (0x801960e8 filme_prepara(0) = ZMOVIE/OPN.STR)")
+		"no tick 281 o fluxo chega ao fmv (0x801960e8 filme_prepara(0) = OPN.STR)")
 	t.eq(b.passo_atual(), "jogo", "e sem .ogv o fluxo segue para o jogo, como no teclado")
 
-	# ── depois de escolher, o título não aceita mais clique (fase SAINDO / nó invisível) ──
-	t.check(not b.clique(alvo.call(0)), "clique depois de escolher não faz nada")
+	# ── no jogo o título nem existe mais ──
+	t.check(not b.clique(alvo.call(0)), "clique depois do fim da abertura não faz nada")
+
+
+# ─────── a VINHETA DE VOZ: o SE que toca entre a dificuldade e o filme ───────
+
+func _vinheta_de_voz(t: Object) -> void:
+	## O item do dono: "depois de selecionar o modo deveria tocar o som do 'Resident Evil' e
+	## depois ir para o vídeo". O sítio é `TITLE.BIN 0x80195e70`, `SE_pede(cat 0, id 0)`,
+	## dentro do sub 1 (a tela de dificuldade) e ANTES do INIT_TBL / OPENING / filme.
+	##
+	## O que este grupo protege é a MEDIÇÃO no dado, que `tools/boot_assets.py --medir` refaz
+	## do `.VH` do disco do usuário: 4 vozes (`(byte0 >> 6) + 1`, `0x80074c84`) sobre um par
+	## estéreo de VAGs (pan 0/127 — os únicos tons do banco fora do centro) que ocupa 79 % do
+	## `C_01.VB`, 4,679 s. O que NÃO é medido é o idioma/conteúdo da voz.
+	t.group("vinheta de voz (0x80195e70)")
+	var raw: Variant = JSON.parse_string(
+		FileAccess.get_file_as_string("res://data/boot_flow.json"))
+	if not (raw is Dictionary):
+		return
+	var v: Variant = (raw as Dictionary).get("vinheta_titulo")
+	if not t.check(v is Dictionary, "boot_flow.json traz `vinheta_titulo`"):
+		return
+	var d: Dictionary = v
+	t.eq(int(d.get("cat", -1)), 0, "é `cat 0` — o banco de personagem/UI")
+	t.eq(int(d.get("id_se", -1)), Boot.SE_VINHETA, "e o id 0 (o mesmo que o Boot pede)")
+	t.eq(String(d.get("banco", "")), "C_01",
+		"no banco C_01, que é o que a tela de título carrega (0x801944c0)")
+	var m: Variant = d.get("medida")
+	if not t.check(m is Dictionary, "e a MEDIÇÃO do .VH (rode tools/boot_assets.py)"):
+		return
+	var med: Dictionary = m
+	t.eq(String(med.get("descritor", "")), "0x03e005e0", "descritor do id 0 no C_01")
+	t.eq(int(med.get("vozes", 0)), 4,
+		"(byte0 >> 6) + 1 = 4 vozes (0x80074c84), tons 0..3 (0x80074ab4)")
+	t.check(bool(med.get("estereo", false)),
+		"os tons têm pan 0 e 127: é um PAR ESTÉREO, não um blip mono")
+	t.check(float(med.get("fracao_do_banco", 0.0)) > 0.7,
+		"os dois VAGs ocupam mais de 70%% do C_01.VB (obtido: %.1f%%)"
+		% (100.0 * float(med.get("fracao_do_banco", 0.0))))
+	t.eq(int(med.get("ticks", 0)), Boot.SE_VINHETA_TICKS,
+		"a duração medida (%.3f s) casa com o SE_VINHETA_TICKS do Boot"
+		% float(med.get("duracao_s", 0.0)))
+	var wavs: Array = med.get("wavs_distintos", [])
+	t.eq(wavs.size(), 2, "duas amostras distintas (VAG 7 = esquerda, VAG 8 = direita)")
+	t.check(wavs.has(Boot.SE_VINHETA_WAV_DIR),
+		"e a metade que o Boot toca pelo nome é uma delas (%s)" % Boot.SE_VINHETA_WAV_DIR)
+	for rel: Variant in wavs:
+		t.check(FileAccess.file_exists(AssetIO.path("SOUND/SFX/%s" % rel)),
+			"a amostra %s está no disco (tools/re3_sfx.py)" % rel)
+	# a transição NÃO cobre o som: é o que justifica o prólogo ficar no meio do caminho
+	var tp: Dictionary = (raw as Dictionary).get("tempos", {})
+	var ini := 0
+	for nome: String in ["inicio_clarao_in", "inicio_clarao_out", "inicio_para_preto"]:
+		ini += int(((tp.get(nome, {}) as Dictionary).get("ticks", 0)))
+	t.eq(ini, 196, "a transição mede 196 ticks (4 + 12 + 180)")
+	t.check(ini < int(med.get("ticks", 0)),
+		"e é MENOR que o som (196 < %d): no original o rabo do jingle soa por cima do prólogo"
+		% int(med.get("ticks", 0)))
 
 
 # ────────────────────── a tabela de filmes do EXE (0x8009ca64) ──────────────────────
@@ -283,6 +361,7 @@ func _fluxo_inteiro(t: Object) -> void:
 	var b := Boot.new()
 	b.entrar_no_jogo = false                        ## não troca de cena dentro do teste
 	b.tocar_fmv = false                             ## caminho curto título -> jogo
+	b.tocar_vinheta = false                         ## sem o prólogo narrado de 55,56 s
 	b.preparar()
 	var fases: Array[String] = []
 	b.fase_mudou.connect(func(n: String) -> void: fases.append(n))
@@ -307,14 +386,24 @@ func _fluxo_inteiro(t: Object) -> void:
 	t.eq(b.passo_atual(), "menu", "611 ticks: o menu está no ar")
 	t.eq(b.titulo.fase, Titulo.Fase.MENU, "e o Titulo está na fase MENU")
 
-	# NEW GAME -> dificuldade -> HARD -> INIT_TBL -> (sem FMV) -> jogo
+	# NEW GAME -> dificuldade -> HARD -> VINHETA + transição -> INIT_TBL -> (sem FMV) -> jogo
+	var vinhetas := [0]
+	b.pediu_vinheta.connect(func() -> void: vinhetas[0] += 1)
 	b.titulo.cursor = Titulo.Item.NOVO_JOGO
 	b.titulo.confirmar()
 	t.eq(b.titulo.fase, Titulo.Fase.DIFICULDADE, "confirmar abre a dificuldade")
 	b.titulo.confirmar()                            ## cursor 0 = HARD
 	t.check(not b.facil, "escolher o cursor 0 = DIFÍCIL (bit 0x100 limpo)")
-	t.eq(acabou[0], 1, "sem FMV o fluxo termina e o jogo pode entrar")
 	t.check(b.init_tbl_ok, "ETC/INIT_TBL.DAT conferido (2312 B + sha1 do NTSC-U)")
+	# ⚠ o que FALTAVA: a vinheta de VOZ e a transição de 196 ticks entre a dificuldade e o
+	# filme. Antes desta rodada `_on_novo_jogo` ia direto para o `fmv` e o fluxo terminava
+	# aqui, no mesmo quadro do clique.
+	t.eq(vinhetas[0], 1, "escolher a dificuldade pede a VINHETA DE VOZ (0x80195e70)")
+	t.eq(b.passo_atual(), "inicio_clarao_in", "e o passo é o 1º fade da transição (T=4)")
+	t.eq(acabou[0], 0, "o fluxo NÃO termina no mesmo quadro do clique")
+	t.check(parou_bgm[0] >= 2, "a BGM do título para ao entrar na transição (declarado)")
+	b.avancar_ticks(281)                            ## 196 da transição + 85 do rabo do jingle
+	t.eq(acabou[0], 1, "sem FMV o fluxo termina e o jogo pode entrar")
 
 	# o pulo, na granularidade do original (grupo por grupo)
 	var b2 := Boot.new()
@@ -356,6 +445,7 @@ func _fluxo_inteiro(t: Object) -> void:
 	var b5 := Boot.new()
 	b5.entrar_no_jogo = false
 	b5.tocar_fmv = false
+	b5.tocar_vinheta = false
 	b5.preparar()
 	b5.pular()
 	b5.pular()
@@ -365,8 +455,38 @@ func _fluxo_inteiro(t: Object) -> void:
 	b5.titulo.cursor = Titulo.Item.NOVO_JOGO
 	b5.titulo.confirmar()                           ## abre a dificuldade
 	t.check(not fases5.has("fmv"), "confirmar NEW GAME (só a dificuldade) NÃO dispara o FMV")
-	b5.titulo.confirmar()                           ## escolhe HARD -> aí sim
+	b5.titulo.confirmar()                           ## escolhe HARD -> a transição
+	t.check(not fases5.has("fmv"),
+		"e escolher a dificuldade também não: primeiro vem a vinheta + os 196 ticks de fade")
+	b5.avancar_ticks(281)
 	t.check(fases5.has("fmv"), "o FMV entra só depois de escolher a dificuldade (0x801960e8)")
+
+	# ── com a VINHETA LIGADA, o prólogo entra no caminho e o RELÓGIO dele anda ──
+	# ⚠ Isto pega dois bugs de uma vez: `_on_novo_jogo` ia direto para o `fmv` (pulando o
+	# passo `prologo`) e NINGUÉM chamava `Prologo.avancar()` — o prólogo ficaria parado no
+	# quadro 0 para sempre. Ver `boot.gd:avancar_ticks`.
+	var b6 := Boot.new()
+	b6.entrar_no_jogo = false
+	b6.tocar_fmv = false
+	b6.tocar_vinheta = true
+	b6.preparar()
+	b6.prologo.carregar()                           ## fora da árvore não há `_ready`
+	if b6.prologo.total > 0:
+		b6.pular()
+		b6.pular()
+		b6.pular()
+		b6.titulo.cursor = Titulo.Item.NOVO_JOGO
+		b6.titulo.confirmar()
+		b6.titulo.confirmar()
+		b6.avancar_ticks(196)                       ## a transição
+		t.eq(b6.passo_atual(), "prologo", "com a vinheta ligada o prólogo entra no caminho")
+		t.eq(b6.prologo.quadro, 0.0, "e começa no quadro 0")
+		b6.avancar_ticks(120)                       ## 60 quadros a 2 ticks por quadro
+		t.eq(b6.prologo.quadro, 60.0,
+			"o Boot faz o RELÓGIO do prólogo andar (2 ticks = 1 quadro de 29,97 Hz)")
+		b6.avancar_ticks(2 * 1665)                  ## o script inteiro (1665 quadros)
+		t.check(b6.passo_atual() in ["fmv", "jogo"],
+			"e no fim do script o fluxo sai para o filme (obtido: %s)" % b6.passo_atual())
 
 	# EASY liga o bit 0x100 e o port espelha em GameState.difficulty
 	var b4 := Boot.new()
@@ -540,13 +660,26 @@ func _passos(t: Object) -> void:
 	t.eq(nomes, ["aviso_fade_in", "aviso_exibicao", "aviso_fade_out",
 			"capcom_para_branco", "capcom_entra_logo", "capcom_exibicao",
 			"capcom_sai_logo", "capcom_para_preto", "filme_atracao",
-			"titulo_espera", "titulo_flash", "titulo_fade_in", "menu", "prologo",
+			"titulo_espera", "titulo_flash", "titulo_fade_in", "menu",
+			"inicio_clarao_in", "inicio_clarao_out", "inicio_para_preto", "prologo",
 			"fmv", "jogo"],
 		"a sequência é a tabela de switch 0x80194004 + o corpo do WARNING")
-	# a VINHETA entra entre o menu e o FMV: `0x801960d8` cria a tarefa do OPENING e só
-	# `0x801960e8` (um tick depois) chama filme_prepara(0)
-	t.eq(nomes.find("prologo"), nomes.find("menu") + 1,
-		"prologo vem logo depois do menu (0x801960d8 load_overlay_task(1, ovl 5))")
+	# a TRANSIÇÃO do início do jogo (sub 1, 0x80195e34..0x80195f44) entra entre o menu e o
+	# prólogo: é onde `0x80195e70` pede a vinheta de VOZ e rodam os três fades.
+	t.eq(nomes.find("inicio_clarao_in"), nomes.find("menu") + 1,
+		"a transição do início vem logo depois do menu (0x80195e34, sub 1)")
+	var ini := 0
+	for nome: String in ["inicio_clarao_in", "inicio_clarao_out", "inicio_para_preto"]:
+		ini += int((passos[nomes.find(nome)] as Dictionary)["ticks"])
+	t.eq(ini, 196, "os três fades somam 196 ticks = 3,27 s (T = 4, 0xc e 0xb4)")
+	t.eq(int((passos[nomes.find("inicio_clarao_in")] as Dictionary)["ticks"]), 4,
+		"0x80195e9c fade(0x000000->0xffffff, T=4)")
+	t.eq(int((passos[nomes.find("inicio_para_preto")] as Dictionary)["ticks"]), 180,
+		"0x80195f3c fade(0x000000->0xffffff, T=0xb4) abr=2 — 3,00 s até o preto")
+	# a VINHETA (prólogo) entra depois da transição e antes do FMV: `0x801960d8` cria a
+	# tarefa do OPENING e só `0x801960e8` (um tick depois) chama filme_prepara(0)
+	t.eq(nomes.find("prologo"), nomes.find("inicio_para_preto") + 1,
+		"prologo vem depois da transição (0x801960d8 load_overlay_task(1, ovl 5))")
 	t.eq(nomes.find("fmv"), nomes.find("prologo") + 1,
 		"e antes do fmv (0x801960e8 filme_prepara(0))")
 	# o filme de atração entra ENTRE o logo CAPCOM e a entrada do título (0x801943a4)

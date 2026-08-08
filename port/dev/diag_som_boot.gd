@@ -47,6 +47,18 @@ func _process(_delta: float) -> bool:
 	print("[som] confirmar     -> SE = %s" % sf.call("ultimo_tocado"))
 	tt.call("cancelar")
 	print("[som] cancelar      -> SE = %s" % sf.call("ultimo_tocado"))
+	## A VINHETA DE VOZ do título: `0x80195e70` pede `SE_pede(cat 0, id 0)` ao confirmar a
+	## dificuldade. No `C_01` esse id é 4 vozes sobre um PAR ESTÉREO (VAG 7 pan 0 + VAG 8
+	## pan 127); o `Sfx` resolve o VAG 7 por `(cat, id)` e o `Boot` toca o VAG 8 pelo nome.
+	_cena.call("_ir_para_passo", "menu")
+	tt.set("cursor", Titulo.Item.NOVO_JOGO)
+	tt.call("confirmar")                            ## abre a dificuldade
+	tt.call("confirmar")                            ## escolhe -> dispara a vinheta
+	print("[som] vinheta de voz -> passo=%s  SE = %s  BGM = '%s'"
+		% [_cena.call("passo_atual"), sf.call("ultimo_tocado"), au.call("faixa_atual")])
+	print("[som]   cat 0 / id 0 do C_01 = %s (esquerda, VAG 7)"
+		% sf.call("tocar_id", 0, 0, "C_01"))
+
 	_cena.call("_ir_para_passo", "filme_atracao")
 	print("[som] entrou no filme -> BGM = '%s' (vazia = parou)" % au.call("faixa_atual"))
 	## a VINHETA: entrar no passo PARA a BGM e, no quadro 30, o script pede a narracao
