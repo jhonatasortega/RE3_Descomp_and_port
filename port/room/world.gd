@@ -45,6 +45,11 @@ func _init(estado: GameState = null) -> void:
 		var g_sfx: Node = (laco as SceneTree).root.get_node_or_null("/root/Game")
 		if g_sfx != null:
 			player.sfx = g_sfx.get("sfx") as Sfx
+			## Banco `cat 0` do PERSONAGEM. O room-loader `0x800493ec` faz isto na carga
+			## (`0x800495d0`: `0x8007809c(0, 2)` para a Jill) — sem esta linha o port tocava o
+			## `C_00` (banco de MENU), que nem define metade dos ids de jogo.
+			if player.sfx != null:
+				player.sfx.definir_banco_area()
 	player.alvos = func() -> Array:
 		var fora: Array = []
 		if vm == null:
@@ -237,6 +242,12 @@ func atravessar(porta: Aot) -> bool:
 	if destino == "":
 		return false
 	var de := room.room_id if room != null else ""
+	## SOM DA PORTA, antes de trocar a sala: o banco vem do `DOORxx.DOn` daquela porta
+	## (`cat 4`, banco embutido — é o que dá porta de madeira != portão de metal). O índice
+	## `Dtex_Type` é campo ESTÁTICO do SCD e está em `data/porta_banco.json` por sala/AOT.
+	## O id é MEDIDO (`0x800161c4`: `a0 = 0x401` = cat 4 / id 1); que o momento seja "abrir" e
+	## não "fechar" segue DECLARADO (ver `Sfx.porta_abrir`).
+	_som_da_porta(de, porta)
 	if not carregar(destino):
 		return false
 	aplicar_chegada(porta)
@@ -250,6 +261,43 @@ func atravessar(porta: Aot) -> bool:
 				break
 	sala_trocada.emit(de, destino, porta)
 	return true
+
+
+func _som_da_porta(sala: String, porta: Aot) -> void:
+	## Seleciona o banco `cat 4` da porta e toca o som. `sala` é a sala de ORIGEM (o AOT que
+	## disparou é dela). Sem `Dtex_Type` para o par sala/AOT, cai no banco padrão do
+	## `re3_se.json` em vez de ficar mudo.
+	if player == null or player.sfx == null or porta == null:
+		return
+	if not player.sfx.usar_porta_da_sala(sala, porta.id):
+		player.sfx.definir_banco_porta("")          ## banco padrão do re3_se.json
+	player.sfx.porta_abrir()
+
+
+## Item da FACA — é o único par item->arma que o port tem provado (o `Player.quadro_do_tiro()`
+## já o usa para escolher a linha `w-1 = 0` da tabela de timing `0x8009cf28`).
+const ITEM_FACA := 0x01
+
+
+func _banco_da_arma(item_id: int) -> void:
+	## Diz ao `Sfx` qual banco `cat 1` (`A_{w}`) está carregado — é dele que sai o ESTOURO da arma
+	## (`cat 1 / id 0`, ver `Sfx.tiro`). O motor faz isto no equipar (`0x80043eb4` →
+	## `0x8007809c(1, lbu player+0x46)`).
+	##
+	## O de-para completo **item -> `w`** continua NÃO MEDIDO (`tools/exe_aim_shoot.py`). O que
+	## está amarrado é a mesma aproximação DECLARADA que o `Player.quadro_do_tiro()` já usa, e que
+	## as tabelas do EXE confirmam nos dois extremos: as tabelas por arma são indexadas por
+	## **`w - 1`** (`0x8003ea1c` para a de funções `0x8009ced8`, `0x8003e454` para a de timing
+	## `0x8009cf28`, stride 3), a linha 0 (`w = 1`) é a que **não** pede SE de tiro e o `A_01` é o
+	## único dos 20 bancos `A_` sem o id 0 → **`w = 1` é a FACA, `w = 2` é a pistola**.
+	if player == null or player.sfx == null:
+		return
+	if item_id == ITEM_FACA:
+		player.sfx.definir_banco_arma(Sfx.ARMA_FACA)
+	elif Itens.categoria(item_id) == Itens.CAT_ARMA:
+		player.sfx.definir_banco_arma(Sfx.ARMA_PADRAO)
+	else:
+		player.sfx.definir_banco_arma(0)             ## sem arma: sem banco de `cat 1`
 
 
 signal item_pego(item_id: int, qtd: int)
@@ -268,6 +316,7 @@ func tick(pad: Pad) -> void:
 	## (ver `tools/exe_aim_shoot.py`), e para o teste de "tem arma" o id serve igual.
 	var eq := state.equipped_item_id()
 	player.equipped_weapon = eq if Itens.categoria(eq) == Itens.CAT_ARMA else 0
+	_banco_da_arma(eq)
 	player.dificuldade = state.dificuldade as Player.Dificuldade
 	player.tick(pad)
 	# O Y NÃO é integrado: é rederivado do piso todo frame (`0x80033b88` → `floor_height`

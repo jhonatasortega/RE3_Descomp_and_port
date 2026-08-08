@@ -99,7 +99,8 @@ VAG_DUMMY = 1                    # VAG#1 = bloco mudo padrão do SPU (descartado
 CORPO_ESPECIAL = {"R000": "R_000.VB"}
 
 # ─────────────────────────── Ações nomeadas ───────────────────────────
-# `cat` = id de banco VAB: 0 = C_xx (jogador/UI/global), 1 = A_xx (área), 2 = R###.SND (sala).
+# `cat` = id de banco VAB: 0 = C_xx (personagem/UI/global), 1 = A_xx (ARMA equipada — ver
+#           `tiro_arma`), 2 = R###.SND (sala), 4 = porta (banco embutido no DOORxx.DOn).
 #
 # PROVA de cada nome está no campo `prova`. Só os 5 de menu têm confirmação de
 # comportamento (observada pelo dono do repo no jogo) + corroboração estática: são os
@@ -121,13 +122,34 @@ ACOES = {
         "5 call sites com a0=7: 0x800666bc 0x80067e90 0x80067ebc 0x800687b0 0x8006fdd0")),
     "menu_abrir": dict(cat=0, id=9, conf="ALTA", prova=(
         "5 call sites com a0=9: 0x80023db8 0x800666f0 0x80066728 0x8006dd40 0x8006fdb4")),
+    # ---- ARMA: o estouro é cat 1 / id 0 (MEDIDO em 2026-08-08) ----
+    # Duas provas independentes:
+    #  1. Tabela de 20 funções POR ARMA em 0x8009ced8..0x8009cf24, indexada por `w - 1`
+    #     (`0x8003ea1c`: `lbu v1,0x46(s3)` -> `addiu v1,-1` -> `sll 2` -> `lw` -> `jalr`).
+    #     Em cada entrada aparece o mesmo trecho: 0x80044804 (HITSCAN, a2 = lbu player+0x46)
+    #     -> 0x80047860 -> 0x8006d030(1) -> SE_pede(cat 1, idx 0, a1 = *(player+0x108)+0x344).
+    #     São ~20 dos 155 `jal 0x800746c0`, todos com o MESMO id (ex.: 0x80041018, 0x80041184,
+    #     0x8004161c, 0x80041904, 0x80041ab8, ... 0x80043a40).
+    #  2. `A_01` é o ÚNICO dos 20 bancos `A_` que NÃO define o id 0 (define 6..10) — e `A_01`
+    #     é o banco de `w = 1`, a FACA. 19/20 definem o id 0.
+    # A tabela de TIMING vizinha (0x8009cf28) é lida com stride 3 e o mesmo índice `w - 1`
+    # (`0x8003e454`: `sll v0,v1,1` + `addu v0,v0,v1`), o que confirma a base do índice.
+    "tiro_arma": dict(cat=1, id=0, conf="MEDIA", prova=(
+        "MEDIDO: as 20 funções da tabela POR ARMA 0x8009ced8 (indexada por player+0x46 - 1, "
+        "ver 0x8003ea1c) pedem cat 1 / idx 0 logo depois do hitscan 0x80044804 e do "
+        "0x8006d030(1); e A_01 (w=1, a FACA) é o único dos 20 bancos A_ que não define o "
+        "id 0. Banco = A_{w:02X} (0x80043eb4 -> 0x8007809c(1, lbu player+0x46); base 0xda, e "
+        "o fid 0xdc mede 384 B = |A_01.VH|). O que falta é o de-para item -> w")),
     # ---- declarados: call site provado, SEMÂNTICA NÃO PROVADA ----
     "tiro": dict(cat=0, id=11, conf="DECLARADO", prova=(
         "call sites 0x8003ad6c (`lui a0,1; ori a0,a0,0xb` -> a0=0x1000b) e 0x8003cf10, "
         "ambos com a1 = player+0x34 (posição) na sequência de disparo/ataque "
         "(exe_combat.md §2). Nome 'tiro' é DECLARADO: o par id->ação não foi ouvido. "
         "NOTA: C_00/C_01 (bancos de menu) NÃO definem o id 11 — só os C_02..C_0D de "
-        "área — o que é coerente com 'não há tiro no menu'")),
+        "área — o que é coerente com 'não há tiro no menu'. CORREÇÃO 2026-08-08: o ESTOURO "
+        "da arma é a ação `tiro_arma` (cat 1 / id 0); este id 11 é pedido dentro da rotina 7 "
+        "(mira, 0x8003a7d8), num trecho que mexe em player+0x6e (pitch) e num contador u16 "
+        "@0x800d1f96 — não no hitscan. Fica como FALLBACK do port")),
     "impacto_ataque": dict(cat=0, id=0, conf="DECLARADO", prova=(
         "call site 0x8003d208 (`lui a0,1` -> a0=0x10000), grava player+0xc8=0x30004 e "
         "player+6=1, na vizinhança de 0x8003d14c = 'acerto/hit conectado' "
@@ -193,11 +215,13 @@ ACOES = {
 # C_00 é o banco de MENU (mesma tabela de SE que C_01) — é o certo para som de UI.
 BANCO_PADRAO = {0: "C_00", 1: "A_01", 2: "R000", 4: "S1_DOOR00"}
 
-# Reserva para os ids de cat 0 que só existem nos bancos DE ÁREA (C_02..C_0D) — o
-# tiro, por exemplo, não existe em C_00/C_01. Qual C_ vale em cada sala é decidido no
-# load da sala (indireção de runtime, não medida aqui).
-# **declarado: escolha do port, não medida.**
-BANCO_JOGO = {0: "C_02"}
+# Banco de JOGO por cat, para os ids que não existem no banco padrão:
+#   cat 0 -> C_02: MEDIDO. O room-loader 0x800493ec chama 0x8007809c(0, 2) para a Jill
+#            (0x800495d0; a1 = 8 quando *(gs+0x784e) >= 8). É banco de PERSONAGEM.
+#   cat 1 -> A_02: DECLARADO. O banco de cat 1 é o da ARMA (A_{w}, w = player+0x46) e o
+#            padrão A_01 é a FACA — que não define o id 0 (o estouro). A_02 é o primeiro
+#            banco de arma de fogo; o de-para item -> w continua NÃO MEDIDO.
+BANCO_JOGO = {0: "C_02", 1: "A_02"}
 
 
 # ─────────────────────────────── parsing ───────────────────────────────
@@ -578,7 +602,8 @@ META = {
                      "byte1 bits0-3 e byte3 bits1-7 NAO PROVADOS",
         "amostra": "tom.vag (1-based); VAG#1 = bloco mudo descartado -> wav = <banco>_{vag-2:02d}",
     },
-    "cat": {"0": "C_xx (jogador/UI/global)", "1": "A_xx (area)", "2": "R###.SND (sala)",
+    "cat": {"0": "C_xx (personagem/UI/global)",
+            "1": "A_xx da ARMA equipada (0x80043eb4 -> 0x8007809c(1, lbu player+0x46); A_{w:02X}, w=1 = faca)", "2": "R###.SND (sala)",
             "nota": "cat == id de banco VAB (mesma fn de busca 0x800750e4 para os dois)"},
     "CORRECOES": [
         "docs/decomp/notes/sfx.md §8 dizia que os opcodes SCD 0x57/0x58/0x59 eram filas de "
@@ -863,7 +888,108 @@ def tabela(nome):
                  v["wav"] or "(mudo)"))
 
 
+SE_PEDE = 0x800746C0
+
+
+def callsites():
+    """Os `jal 0x800746c0` do EXE com `(cat, idx)` recuperado por back-walk do imediato.
+
+    É a EVIDÊNCIA de duas coisas que o doc afirma:
+      * `tiro_arma` (cat 1 / id 0) aparece ~20 vezes, uma por arma da tabela `0x8009ced8`;
+      * **nenhuma** rotina de LOCOMOÇÃO do player pede SE — as 16 macro-ações do player estão
+        na tabela `0x8009cda0` e as de andar/correr/ré/idle (índices 0..3 = `0x80039294`,
+        `0x800397dc`, `0x80039b84`, `0x80039f08`) não contêm um único `jal 0x800746c0`.
+        É o que sustenta o **NÃO PROVADO** do som de PASSO.
+
+    Devolve [(addr, cat, idx, a0_bruto)]; `cat`/`idx` = None quando `a0` vem de registrador.
+    """
+    from exe_parse import Exe
+    import capstone
+
+    e = Exe(paths.extracted("SLUS_009.23"))
+    md = capstone.Cs(capstone.CS_ARCH_MIPS,
+                     capstone.CS_MODE_MIPS32 + capstone.CS_MODE_LITTLE_ENDIAN)
+    md.detail = True
+    alvo = (3 << 26) | ((SE_PEDE & 0x0FFFFFFF) >> 2)          # jal = opcode 3
+    hits = [e.base + o for o in range(0, len(e.text) - 4, 4)
+            if struct.unpack_from("<I", e.text, o)[0] == alvo]
+
+    out = []
+    for h in hits:
+        lo = h - 28 * 4
+        val, lui = None, None
+        for i in md.disasm(e.text[e.off(lo):e.off(h) + 8], lo):
+            ops = [x.strip() for x in i.op_str.split(",")]
+            if not ops or ops[0] != "$a0":
+                continue
+            if i.mnemonic == "lui":
+                lui = int(ops[1], 0) << 16
+                val = lui
+            elif i.mnemonic in ("ori", "addiu", "addi"):
+                if ops[1] == "$zero":
+                    val = int(ops[2], 0) & 0xFFFF
+                elif ops[1] == "$a0" and lui is not None:
+                    val = lui | (int(ops[2], 0) & 0xFFFF)
+                else:
+                    val = None
+            else:
+                val = None
+        if val is None:
+            out.append((h, None, None, None))
+        else:
+            out.append((h, (val >> 8) & 0xFF, val & 0xFF, val))
+    return out
+
+
+# As 16 macro-ações do player (`player+5` indexa esta tabela); 0..3 = locomoção.
+PLAYER_ACOES = 0x8009CDA0
+PLAYER_ACOES_N = 16
+
+
+def imprimir_callsites():
+    cs = callsites()
+    print("jal 0x800746c0: %d call sites (%d com a0 constante)"
+          % (len(cs), sum(1 for c in cs if c[1] is not None)))
+    print(" addr      a0        cat idx")
+    for addr, cat, idx, bruto in cs:
+        if cat is None:
+            print(" %08x  (registrador)" % addr)
+        else:
+            print(" %08x  0x%-7x %3d %3d" % (addr, bruto, cat, idx))
+    por_cat = {}
+    for _a, cat, idx, _b in cs:
+        if cat is not None:
+            por_cat.setdefault(cat, []).append(idx)
+    print("\npor cat:")
+    for cat in sorted(por_cat):
+        ids = sorted(set(por_cat[cat]))
+        print("  cat %d: %d pedidos, ids %s" % (cat, len(por_cat[cat]), ids))
+    n_arma = sum(1 for _a, cat, idx, _b in cs if cat == 1 and idx == 0)
+    print("\ncat 1 / id 0 (estouro da arma, tabela 0x8009ced8): %d call sites" % n_arma)
+
+    # PASSO — o achado NEGATIVO, medido: as macro-ações do player vivem na tabela
+    # `0x8009cda0` (16 ponteiros, indexada por `player+5`); 0..3 = idle / frente / ré /
+    # correr. O intervalo de cada rotina é [ptr[i], ptr[i+1]) porque a tabela está em ordem
+    # crescente de endereço. Se nenhum dos 155 `jal 0x800746c0` cair nesses intervalos, o
+    # motor NÃO pede SE de dentro da locomoção.
+    from exe_parse import Exe
+    e2 = Exe(paths.extracted("SLUS_009.23"))
+    ptrs = [e2.u32(PLAYER_ACOES + i * 4) for i in range(PLAYER_ACOES_N)]
+    print("\nPASSO — macro-ações do player (0x%08x):" % PLAYER_ACOES)
+    for i in range(4):
+        ini, fim = ptrs[i], ptrs[i + 1]
+        dentro = [a for a, _c, _x, _b in cs if ini <= a < fim]
+        print("  rotina %d [%08x, %08x): %d pedido(s) de SE %s"
+              % (i, ini, fim, len(dentro), [hex(x) for x in dentro]))
+    total = sum(1 for a, _c, _x, _b in cs if ptrs[0] <= a < ptrs[4])
+    print("  => %d pedidos de SE em TODA a locomoção (idle/frente/ré/correr)" % total)
+    print("  => som de PASSO: NÃO PROVADO (nenhum call site amarrável)")
+
+
 def main(argv):
+    if "--callsites" in argv:
+        imprimir_callsites()
+        return 0
     if "--verificar" in argv:
         return 1 if verificar()[1] else 0
     if "--tabela" in argv:

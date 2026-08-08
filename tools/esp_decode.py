@@ -888,9 +888,243 @@ def gravar_json_sala(regs, caminho=JSON_SALA):
     return caminho
 
 
+# ------------------------------------------------- quadros em HD (Seamless HD Project)
+#
+# O pack HD do PC (Classic REbirth + Seamless HD Project) substitui TEXTURA POR TEXTURA,
+# nomeando cada arquivo pelo hash do bloco SD que ele substitui — hash que NAO da para
+# reproduzir estaticamente (ver port/data/hd_ui_map.json, campo `meta.hash`). Entao o
+# de-para e feito POR CONTEUDO, e aqui ele e barato porque a GEOMETRIA e conhecida:
+#
+#   • todo asset HD do pack e exatamente 4x o SD (medido em todas as categorias);
+#   • hires/effect e hires/effect0 tem 391 arquivos, TODOS 1024x1024 = 4 x 256x256,
+#     e 256x256 e exatamente uma TPAGE de 4bpp do PS1 (64 halfwords x 256 linhas);
+#   • logo o sprite que mora em (u, v) da tpage mora em (u*4, v*4) do .webp, com lado
+#     `size*4` — nao ha busca de posicao, so a escolha do ARQUIVO.
+#
+# Cada arquivo HD e uma pagina JA COLORIDA (a CLUT foi aplicada), por isso a mesma pagina
+# aparece em varios arquivos: um por linha de CLUT em uso. A escolha e em duas etapas:
+#   1. FORMA: NCC da luminancia x alfa nos pixels do banco (recorte exato das entradas B
+#      que a sala usa). Verdadeiro ~0,999 · segundo colocado <0,75 — separacao enorme.
+#   2. COR: entre os empatados na forma, o menor erro RMS de cor contra o sprite SD
+#      daquela VARIANTE de CLUT. E isto que separa "a mesma chama na paleta 488" de
+#      "na paleta 490".
+# NAO ha atribuicao global (Hungarian) aqui de proposito: o pareamento nao e 1:1 — uma
+# pagina HD serve MUITAS salas (as 156 salas com ESP compartilham as paginas de efeito),
+# entao a restricao de unicidade seria falsa. O que substitui a atribuicao global e o
+# vinculo geometrico (u,v)x4, que torna cada par decidivel sozinho com folga medida.
+HIRES_DEFAULT = r"C:\Program Files (x86)\GOG Galaxy\Games\Resident Evil 3\hires"
+HIRES_ENV = "NOSTALGIA_HIRES"
+HD_PASTAS = ("effect", "effect0")
+HD_ESCALA = 4                  # 1024/256: medido em todos os 391 arquivos
+HD_LADO_SD = 256               # lado da tpage de 4bpp em pixels
+HD_NCC_MIN = 0.95              # verdadeiros >=0.99; o segundo colocado real fica <0.75
+JSON_HD = os.path.join(ROOT, "port", "data", "esp_hd_map.json")
+
+
+def hires_root(arg=None):
+    return arg or os.environ.get(HIRES_ENV) or HIRES_DEFAULT
+
+
+def hd_indexar(raiz):
+    """Le hires/effect* e devolve (nomes, paginas_sd) com as paginas reduzidas a 256x256.
+
+    A reducao e por MEDIA (BOX) de blocos 4x4, que e o inverso exato do upscale 4x do
+    pack; comparar em SD (e nao em HD) e o que permite casar com os pixels do PS1.
+    """
+    import numpy as np
+    from PIL import Image
+    nomes = []
+    arqs = []
+    for pasta in HD_PASTAS:
+        d = os.path.join(raiz, pasta)
+        if not os.path.isdir(d):
+            continue
+        for f in sorted(os.listdir(d)):
+            if f.lower().endswith(".webp"):
+                nomes.append("%s/%s" % (pasta, os.path.splitext(f)[0]))
+                arqs.append(os.path.join(d, f))
+    if not nomes:
+        raise SystemExit("ERRO: nao achei .webp em %s/{effect,effect0}" % raiz)
+    pag = np.zeros((len(nomes), HD_LADO_SD, HD_LADO_SD, 4), dtype=np.uint8)
+    for i, p in enumerate(arqs):
+        im = Image.open(p).convert("RGBA")
+        if im.size != (HD_LADO_SD * HD_ESCALA, HD_LADO_SD * HD_ESCALA):
+            im = im.resize((HD_LADO_SD * HD_ESCALA,) * 2, Image.BOX)
+        pag[i] = np.asarray(im.resize((HD_LADO_SD, HD_LADO_SD), Image.BOX), dtype=np.uint8)
+    return nomes, pag, arqs
+
+
+def _lum(a):
+    """Luminancia x alfa (float32) de um array RGBA — o que se compara na etapa FORMA."""
+    return (0.299 * a[..., 0] + 0.587 * a[..., 1] + 0.114 * a[..., 2]) * (a[..., 3] / 255.0)
+
+
+def hd_quadros_pedidos(bk, inst):
+    """{(variante): {entrada_A: (u, v, size)}} que as instancias da sala pedem deste banco."""
+    import collections
+    out = collections.defaultdict(dict)
+    for x in inst:
+        if x["tipo"] != bk["type"]:
+            continue
+        ef = bk["effects"].get(x["efeito"])
+        if not ef or "erro" in ef:
+            continue
+        for sl in ef["slots"]:
+            for fr in sl["frames"]:
+                if not fr["flag_draw"]:
+                    continue
+                for q in sequencia_anim(bk, fr["a_start"])["quadros"]:
+                    a = bk["atab"][q["a"]]
+                    if a["b_index"] >= bk["B"] or a["size"] == 0:
+                        continue
+                    b = bk["btab"][a["b_index"]]
+                    out[x["variante"]][q["a"]] = (b["u"], b["v"], a["size"],
+                                                  a["b_index"])
+    return out
+
+
+def hd_sala(sala, outdir, nomes, pag, arqs, verbose=True):
+    """Casa e recorta os quadros HD dos bancos de ESP de UMA sala. Devolve o registro."""
+    import numpy as np
+    from PIL import Image
+    ard = os.path.join(CD_DATA, sala + ".ARD")
+    info = room_esp(ard)
+    if not info:
+        return None
+    r = info["rdt"]
+    esp = parse_esp(r[info["data_off"]:], info["offtab_off"] - info["data_off"])
+    blocos = room_vram(r, info["vram_off"])
+    inst, _alc = spawns_da_sala(ard)
+    nome_sala = os.path.basename(sala)
+    dstdir = os.path.join(outdir, "sala", nome_sala, "hd")
+
+    reg = {"arquivo": sala + ".ARD", "bancos": {}, "n_png": 0}
+    for bk in esp["banks"]:
+        tp, cl = bk["tpage"], bk["clut"]
+        if tp["tp"] != 0:
+            continue
+        pedidos = hd_quadros_pedidos(bk, inst)
+        for var in sorted(pedidos):
+            quadros = pedidos[var]
+            cw = cl["raw"] + var * 0x40
+            cols = linha_clut_vram(blocos, unpack_clut(cw)["vram_x"],
+                                   unpack_clut(cw)["vram_y"])
+            if cols is None:
+                continue
+            # --- referencia SD: SO os pixels dos quadros pedidos, no espaco da tpage ---
+            us = [q[0] for q in quadros.values()]
+            vs = [q[1] for q in quadros.values()]
+            sz = max(q[2] for q in quadros.values())
+            x0, y0 = min(us), min(vs)
+            w = max(u + q[2] for u, q in zip(us, quadros.values())) - x0
+            h = max(v + q[2] for v, q in zip(vs, quadros.values())) - y0
+            if x0 + w > HD_LADO_SD or y0 + h > HD_LADO_SD:
+                continue
+            sd = np.zeros((h, w, 4), dtype=np.uint8)
+            val = np.zeros((h, w), dtype=bool)
+            for (u, v, size, _bi) in quadros.values():
+                x16 = tp["vram_x"] + (u >> 2)
+                w16 = ((u & 3) + size + 3) >> 2
+                px = bloco_de_pixels(blocos, x16, tp["vram_y"] + v, w16, size)
+                if px is None:
+                    continue
+                rgba = recortar_sprite(px, cols, tp["raw"], u, v, size)
+                sd[v - y0:v - y0 + size, u - x0:u - x0 + size] = np.frombuffer(
+                    bytes(rgba), dtype=np.uint8).reshape(size, size, 4)
+                val[v - y0:v - y0 + size, u - x0:u - x0 + size] = True
+            if not val.any():
+                continue
+            # --- etapa 1: FORMA (NCC da luminancia) sobre os pixels validos ---
+            alvo = _lum(sd.astype(np.float32))[val]
+            alvo = alvo - alvo.mean()
+            n_alvo = np.linalg.norm(alvo)
+            if n_alvo == 0:
+                continue
+            alvo /= n_alvo
+            cand = pag[:, y0:y0 + h, x0:x0 + w, :].astype(np.float32)
+            L = _lum(cand)[:, val]
+            L -= L.mean(axis=1, keepdims=True)
+            nn = np.linalg.norm(L, axis=1)
+            nn[nn == 0] = 1.0
+            ncc = (L / nn[:, None]) @ alvo
+            # --- etapa 2: COR (RMS) entre os que passaram na forma ---
+            op = val & (sd[..., 3] > 0)
+            sdc = sd[..., :3].astype(np.float32)[op]
+            hdc = cand[..., :3][:, op]
+            rms = np.sqrt(((hdc - sdc) ** 2).sum(-1)).mean(axis=1)
+            aopt = cand[..., 3][:, op] > 8
+            iou = (aopt.sum(axis=1) / max(1, int(op.sum())))
+            passou = np.where(ncc >= HD_NCC_MIN)[0]
+            if passou.size == 0:
+                if verbose:
+                    print("      banco 0x%02x v%d: SEM par HD (melhor NCC %.3f em %s)" % (
+                        bk["type"], var, float(ncc.max()), nomes[int(ncc.argmax())]))
+                continue
+            j = int(passou[np.argmin(rms[passou])])
+            outros = [k for k in passou if k != j]
+            reg["bancos"].setdefault(str(bk["type"]), {})["v%d" % var] = {
+                "webp": nomes[j], "ncc": round(float(ncc[j]), 4),
+                "rms_cor": round(float(rms[j]), 2), "alfa_iou": round(float(iou[j]), 3),
+                "empatados_na_forma": len(passou),
+                "rms_do_2o": (round(float(min(rms[k] for k in outros)), 2)
+                              if outros else None),
+                "ncc_do_1o_reprovado": round(float(max(
+                    [ncc[k] for k in range(len(nomes)) if k not in set(passou)] or [0.0])), 4),
+                "quadros": len(quadros),
+            }
+            # --- recorte dos quadros do arquivo escolhido, em 4x ---
+            os.makedirs(dstdir, exist_ok=True)
+            im = Image.open(arqs[j]).convert("RGBA")
+            k = im.size[0] // HD_LADO_SD
+            for ai, (u, v, size, bi) in sorted(quadros.items()):
+                crop = im.crop((u * k, v * k, (u + size) * k, (v + size) * k))
+                arq = "t%02x_A%02d_B%02d_v%d_%dx%d.png" % (
+                    bk["type"], ai, bi, var, size * k, size * k)
+                crop.save(os.path.join(dstdir, arq))
+                reg["n_png"] += 1
+            if verbose:
+                print("      banco 0x%02x v%d -> %s  ncc=%.4f rms=%.1f iou=%.2f "
+                      "(%d empatado(s) na forma, melhor reprovado ncc=%.3f)" % (
+                          bk["type"], var, nomes[j], ncc[j], rms[j], iou[j],
+                          len(passou), reg["bancos"][str(bk["type"])]["v%d" % var]
+                          ["ncc_do_1o_reprovado"]))
+    return reg
+
+
+def gravar_json_hd(regs, raiz, caminho=JSON_HD):
+    antigas = {}
+    if os.path.exists(caminho):
+        try:
+            with open(caminho, encoding="utf-8") as f:
+                antigas = json.load(f).get("salas", {})
+        except Exception:                            # noqa: BLE001
+            antigas = {}
+    antigas.update(regs)
+    meta = {
+        "_fonte": {
+            "hd": "Seamless HD Project / Classic REbirth (%s) — SOMENTE LEITURA, "
+                  "assets nao redistribuidos" % raiz,
+            "geometria": "todo arquivo de hires/effect* e 1024x1024 = 4x uma TPAGE de "
+                         "4bpp (256x256); o sprite em (u,v) da tpage esta em (u*4, v*4)",
+            "criterio": "1) NCC de luminancia x alfa nos pixels dos quadros usados "
+                        "(>= %.2f); 2) menor RMS de cor entre os empatados, que e o que "
+                        "separa as variantes de CLUT da mesma pagina" % HD_NCC_MIN,
+            "sem_atribuicao_global": "o pareamento nao e 1:1 (uma pagina HD serve muitas "
+                                     "salas), logo unicidade seria uma restricao falsa",
+            "png": "assets/ESP/sala/<SALA>/hd/t{tipo:02x}_A{a:02d}_B{b:02d}_v{var}_"
+                   "{px}x{px}.png, com px = size*4",
+        },
+        "salas": dict(sorted(antigas.items())),
+    }
+    os.makedirs(os.path.dirname(caminho), exist_ok=True)
+    with open(caminho, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=1)
+    return caminho
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["scan", "dump", "spawns"])
+    ap.add_argument("cmd", choices=["scan", "dump", "spawns", "hd"])
     ap.add_argument("out", nargs="?", default="port/assets/ESP")
     ap.add_argument("--room")
     ap.add_argument("--salas", help="lista separada por virgula (STAGE1/R10D,...)")
@@ -900,7 +1134,35 @@ def main():
                          "(o padrao com --all-rooms/--salas e so os que o 0x70 pede)")
     ap.add_argument("--folha", action="store_true",
                     help="dump: gera tambem a folha de contato de prova por sala")
+    ap.add_argument("--hires", help="hd: raiz da instalacao HD (default %s)" % HIRES_DEFAULT)
     args = ap.parse_args()
+
+    if args.cmd == "hd":
+        outdir = args.out if args.out else "port/assets/ESP"
+        if not os.path.isabs(outdir):
+            outdir = os.path.join(ROOT, outdir)
+        alvos = ([args.room] if args.room
+                 else (args.salas.split(",") if args.salas else salas_com_esp()))
+        raiz = hires_root(args.hires)
+        print("hires: %s" % raiz)
+        nomes, pag, arqs = hd_indexar(raiz)
+        print("%d paginas HD indexadas (%s), reduzidas a %dx%d" % (
+            len(nomes), "+".join(HD_PASTAS), HD_LADO_SD, HD_LADO_SD))
+        regs = {}
+        n = 0
+        for sala in alvos:
+            print("   %s" % sala)
+            reg = hd_sala(sala, outdir, nomes, pag, arqs)
+            if reg is None:
+                print("      sem ESP")
+                continue
+            if reg["n_png"] == 0:
+                continue
+            regs[os.path.basename(sala)] = reg
+            n += reg["n_png"]
+        print("%d salas com quadro HD · %d PNG · gravado %s" % (
+            len(regs), n, os.path.relpath(gravar_json_hd(regs, raiz), ROOT)))
+        return
 
     if args.cmd == "spawns":
         alvos = ([args.room] if args.room

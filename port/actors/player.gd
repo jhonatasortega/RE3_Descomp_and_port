@@ -133,8 +133,20 @@ func mira_com_laser() -> bool:
 func mira_trava() -> bool:
 	return dificuldade != Dificuldade.DIFICIL
 var mira_quadro := 0                      ## quadro dentro da animação de mira
-var tiro_pendente := -1                   ## quadro em que o tiro sai (do timing por arma)
-var recuo := 0                            ## quadros de recuo/rearme
+## ── RECUO: É CLIPE PRÓPRIO, e o tiro sai no QUADRO 0 ──
+## Correção de uma premissa minha que estava errada nas três pernas (achado provado em
+## `docs/decomp/notes/recuo_tiro.md`):
+##   • no subestado de fogo, `0x8003f248..0x8003f268` faz `a1 = 0x00030001`,
+##     `v0 = *(0x8009cd3d)*2 + a1` e `sw v0, 0xc8` → **seqs 1/3/5 do banco 2 do PLW**, 20 quadros
+##     cada, UMA POR ALTURA de mira. Ou seja: o recuo é o clipe `mira01`/`mira03`/`mira05` — os
+##     mesmos que eu havia rotulado de "rampas de transição";
+##   • o tiro sai no **quadro 0** dele (`0x80040fac`: `lbu 0xc9` e `bnez → return`), não no meio;
+##   • o `byte2 & 0x7f` do timing `0x8009cf28` (12 no handgun) é o quadro a partir do qual
+##     **soltar a mira CORTA o recuo** (`0x8003f3dc`) — não é o quadro do disparo;
+##   • `mira07` (32 quadros) é a **recarga** (`0x8003f554`), como o usuário reconheceu de olho.
+const RECUO_QUADROS := 20                 ## os 20 quadros do clipe de recuo (medido)
+var tiro_pendente := -1                   ## mantido só para o diag/HUD: -1 = sem tiro em curso
+var recuo := 0                            ## quadros restantes do clipe de recuo
 var municao_vazia := false                ## clique seco (sem munição)
 ## Alvos possíveis: Callable() -> Array[Vector3i] (posições dos inimigos, unidades PS1).
 var alvos: Callable = Callable()
@@ -220,6 +232,10 @@ func tick(pad: Pad) -> void:
 		_tick_mira(pad)
 		return
 	if acao == Acao.MIRANDO:
+		## soltar a mira NO MEIO do recuo só corta depois do quadro de corte da arma
+		if recuo > 0 and (RECUO_QUADROS - recuo) < quadro_do_corte():
+			_tick_mira(pad)
+			return
 		_sair_da_mira()
 
 	# --- giro no próprio eixo ---
@@ -354,6 +370,11 @@ func clipe_atual() -> String:
 			## ele sai num QUADRO DENTRO da animação de mira (a tabela `0x8009cf28` guarda esse
 			## quadro: 12 no handgun). Então atirar MANTÉM a pose de mira.
 			## `mira07` fica reservado para a recarga, quando ela existir.
+			if recuo > 0:
+				## RECUO, uma seq por altura de mira (seqs 1/3/5 do banco 2)
+				if mira_alto > 0:
+					return "mira03"
+				return "mira05" if mira_alto < 0 else "mira01"
 			if mira_sub == Mira.LEVANTAR:
 				return "mira00"
 			if mira_alto > 0:
@@ -386,6 +407,7 @@ func _sair_da_mira() -> void:
 	mira_sub = Mira.LEVANTAR
 	mira_quadro = 0
 	tiro_pendente = -1
+	recuo = 0
 	mira_alvo = -1
 	mira_mouse_y = 0
 	mira_pitch_y = 0
@@ -459,9 +481,10 @@ func _tick_mira(pad: Pad) -> void:
 			mira_alvo = _travar_alvo()                    ## o alvo é reavaliado enquanto segura
 			if mira_alvo >= 0 and dificuldade == Dificuldade.FACIL:
 				_girar_para_alvo(mira_alvo)               ## AUTO-MIRA: o corpo vira para o alvo
-			if tiro_pendente >= 0:
-				if mira_quadro >= tiro_pendente:
-					_resolver_tiro()
+			if recuo > 0:
+				recuo -= 1
+				if recuo == 0:
+					tiro_pendente = -1
 				return
 			if (pad.just_pressed(Pad.TIRO) or pad.just_pressed(Pad.ACAO)) and recuo == 0:
 				_puxar_gatilho()
@@ -484,14 +507,18 @@ func _puxar_gatilho() -> void:
 		recuo = 8
 		return
 	municao_vazia = false
-	tiro_pendente = quadro_do_tiro()
+	## o tiro sai NO QUADRO 0 do recuo: resolve agora e toca o clipe
+	tiro_pendente = 0
 	mira_quadro = 0
+	recuo = RECUO_QUADROS
+	_resolver_tiro()
 
 
-func quadro_do_tiro() -> int:
-	## Quadro em que o tiro sai, do timing `0x8009cf28` (`byte2 & 0x7f`). O de-para
-	## **item → índice de arma `w`** não foi achado no EXE (ver `tools/exe_aim_shoot.py`), então:
-	## faca = w0 (50 quadros) e o resto = w1 (12, o do handgun). Declarado.
+func quadro_do_corte() -> int:
+	## Quadro do recuo a partir do qual **soltar a mira corta** o clipe (`0x8003f3dc`), do timing
+	## `0x8009cf28` (`byte2 & 0x7f`). Eu chamava isso de "quadro do tiro" — estava errado, o tiro
+	## sai no quadro 0. O de-para **item → índice de arma `w`** segue não achado, então faca = w0
+	## (50) e o resto = w1 (12, handgun). Declarado.
 	var st := _estado()
 	var id := int(st.equipped_item_id()) if st != null else 0
 	return 50 if id == 0x01 else 12
@@ -517,10 +544,6 @@ func _resolver_tiro() -> void:
 		PS1Math.rsin(facing) * MIRA_ALCANCE >> PS1Math.SHIFT, 0,
 		-PS1Math.rcos(facing) * MIRA_ALCANCE >> PS1Math.SHIFT)
 	atirou.emit(mira_alvo, de, para)
-	tiro_pendente = -1
-	mira_quadro = 0
-	recuo = 10                                    ## rearme: o EXE volta para a rotina 5
-	mira_sub = Mira.LEVANTAR
 
 
 func _girar_para_alvo(i: int) -> void:

@@ -130,9 +130,9 @@ descritor dentro de um arquivo cita **um único** banco, sempre o do próprio ar
 
 | `cat` = banco | Arquivos | Entradas na tabela de SE | Papel |
 |---:|---|---:|---|
-| 0 | `C_00`..`C_0D` | 16 | **jogador / UI / global** |
-| 1 | `A_01`..`A_14` | 32 | ambiente de **área** |
-| 2 | `R###.SND` | 48 | efeitos de **sala** |
+| 0 | `C_00`..`C_0D` | 16 | **personagem / UI / global** |
+| 1 | `A_01`..`A_14` | 32 | **ARMA equipada** (não "área" — ver §11.1) |
+| 2 | `R###.SND` **+ o banco embutido em cada `R###.ARD`** | 48 | efeitos de **sala** — ver §11.4 |
 | **4** | `STAGE*/DOOR??.DO1` (banco **embutido**) | 4 | **porta** — ver §4.4 |
 
 ### 3.1 Quem escolhe o banco: `0x8007809c(cat, banco)` — e a tela de TÍTULO usa **`C_01`**
@@ -146,8 +146,13 @@ addu`). Conferido contra a tabela de arquivos `0x800946a4`:
 
 ```
 cat 0 -> tab = 0x104 = SOUND/C_00.VH   (o .VB sai do par, 0x103)
-cat 1 -> tab = 0x0da = SOUND/A_01.VH   (par 0x0d9)
+cat 1 -> tab = 0x0da                   (base; o banco de `w` é 0x0da + w*2)
 ```
+
+> **Correção de 2026-08-08 — `0x0da` NÃO é o `A_01.VH`.** Conferindo os **tamanhos** da tabela
+> `0x800946a4` contra os arquivos reais: `fid 0xdb` = **23600 B** = `A_01.VB` e `fid 0xdc` =
+> **384 B** = `A_01.VH`. Logo `fileid = 0xda + w*2` dá `A_01` em **`w = 1`**, e o de-para é
+> **`w` → `A_{w:02X}`**. `w = 0` não é banco de arma nenhum. Isso é o que fecha a §11.1.
 
 * **`TITLE.BIN` `0x801944c0`: `0x8007809c(0, (0x800cc858 & 0x80) ? 0xb : 1)`** → no título
   normal o `cat 0` recebe **`0x104 + 2 = 0x106 = SOUND/C_01.VH`**, isto é **`C_01`**; no
@@ -441,20 +446,56 @@ estouro é o `cat 0 / id 11` da §5.2.
 
 ---
 
-## 7. Trilha (BGM) — o que dá para afirmar
+## 7. Trilha (BGM) — **o de-para sala → faixa ESTÁ MEDIDO** (correção de 2026-08-08)
 
 - A trilha tocável do port vem do **PC/GOG**: `DATA_A/SOUND/*.WAV` → 125 Ogg em
   `assets/SOUND/BGM/gog/` (`tools/audio_gog.py`). São as `MAIN##.BGM` do PS1 já
   renderizadas com os instrumentos reais — **é a melhor fonte disponível** e é HD no
   sentido que importa (22 kHz PCM em vez de sequência aproximada). Ver
   [`audio_video.md §9.1`](../../formatos/audio_video.md).
-- O de-para **sala → faixa** continua **NÃO MEDIDO**. `bgm_map.json` mapeia por **STAGE →
-  área → faixa** e traz a ressalva `TODO ... PROVISORIO`; `room_override` está vazio.
-  `test_audio.gd` **testa que a ressalva continue lá**, para ninguém tratar isso como
-  medido.
-- Motivo de continuar aberto: **nenhum dos 144 handlers de opcode do SCD toca BGM**
-  (§5.3). Logo o vínculo não está no bytecode de sala; deve estar numa tabela do EXE ou no
-  header do RDT/ARD — não localizada nesta rodada.
+
+> **O texto anterior desta seção estava ERRADO.** Ele dizia que o de-para sala → faixa
+> continuava "NÃO MEDIDO" e que `room_override` estava vazio. Não está: o
+> `tools/audio_gog.py --mapa` **já fechou o vínculo por outro caminho** e o `bgm_map.json`
+> publica os dois blocos (`salas` com as 169 e `room_override` com 133). O erro veio de
+> procurar o vínculo só no EXE/SCD.
+
+**O que é PROVADO** (`bgm_map.json._meta.PROVA`): cada `R###.ARD` embute **4 pares
+(SEQ+VH, VB)** nos sub-blocos de tipo `0x05` (MAIN) e `0x06` (SUB), e o **sha1** de cada
+bloco casa com um `DATA/SOUND/<nome>.BGM` **nomeado** do `Rofs7.dat` do PC em **676/676**
+blocos (169 salas × 4), **0 falhas**, 98 nomes distintos. Ou seja: **sala → nome da BGM do
+PS1 é byte-exato**, e o vínculo nunca esteve no bytecode — está no **próprio arquivo da
+sala**, que é dado estático (o mesmo padrão da §6.3).
+
+**O que continua aberto é o RENDER**, não o vínculo: a faixa tocável é o WAV do PC de
+**mesmo nome**, aceito quando a duração da sequência do PS1 casa.
+
+| `conf` | Salas | Critério |
+|---|---:|---|
+| ALTA | 78 | erro de duração ≤ 1,5 % |
+| MEDIA | 55 | ≤ 20 % |
+| NAO_CASADO | 32 | o nome do PS1 está provado, mas o WAV homônimo do PC é outra peça (ou não existe) |
+| SEM_MAIN | 4 | a sala não tem bloco MAIN (`R11B`, `R409`, `R40A`, `R414`) |
+
+Casamentos de sanidade (todos `ALTA`): **`R100` → `main07`** (0,02 % de erro),
+**`R10F` → `main32`** (0,01 %) — e `main32` é exatamente a chave `context.SAVE` do mapa,
+isto é a sala de save toca o tema de save —, **`R200` → `main01`** (0,4 %),
+**`R112` → `main0a`** (0,4 %).
+
+**Consequência no port** (`port/core/audio.gd`): `faixa_para_sala` passou a ler o bloco
+`salas` (169) em vez de só o `room_override` (133), com precedência
+`room_override > salas.faixa > salas.ps1 (nome provado) > área do STAGE`. Resultado medido
+em `test_audio.gd`: **169/169 salas com faixa e o `.ogg` dela existindo no disco**, sendo
+**151 pela cadeia medida** e só **18** ainda no fallback por STAGE (14 porque o
+`DATA_A/SOUND` do PC não tem WAV daquele nome + as 4 `SEM_MAIN`).
+
+**Um bug que isso corrigiu:** `area_default.PARK = "main2a"` e **não existe
+`main2a.ogg`** — o PC guarda a faixa partida em `main2a_0`/`main2a_1`. Como 36 salas caíam
+no fallback por STAGE, o **PARK inteiro ficava mudo**. `audio.gd` agora resolve o sufixo
+`_0` das faixas multipartes (qual parte é intro e qual é loop é **DECLARADO**, não medido).
+
+- Nota que continua válida: **nenhum dos 144 handlers de opcode do SCD toca BGM** (§5.3) —
+  o vínculo é pelo conteúdo do ARD, não por instrução.
 
 ---
 

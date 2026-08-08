@@ -104,6 +104,13 @@ const CAMINHO_JSON := "res://data/boot_flow.json"
 const CENA_JOGO := "res://scenes/game.tscn"
 const INIT_TBL_BYTES := 2312                   ## tamanho na tabela de arquivos 0x800946a4
 const INIT_TBL_SHA1 := "bffeebee91922ed9b7171c460d8aba52d0428117"
+## Banco de SE da tela de título — MEDIDO (`0x801944c0` -> `0x8007809c(cat = 0, banco = 1)`).
+const BANCO_SE_TITULO := "C_01"
+## BGM da tela de título — MEDIDA (`0x801944dc` lê o índice de arquivo `0x121` = `SOUND/MAIN38.BGM`
+## e `0x800782f4(0, 0x38, …)` toca a sequência 0x38). Na instalação de PC o mesmo número é
+## `SOUND/MAIN38.WAV`, que `tools/audio_gog.py` converte para `BGM/gog/main38.ogg` (20,25 s,
+## medido com ffprobe) — três fontes independentes apontando o mesmo `0x38`.
+const BGM_TITULO := "main38"
 
 enum Blend { NENHUM, ADITIVO, SUBTRATIVO }
 
@@ -137,7 +144,6 @@ var _add: ColorRect
 var _sub: ColorRect
 var _acumulado := 0.0
 var _pad_antes := 0
-var _mouse_antes_bt := false            ## borda do botão esquerdo (clique no título)
 var _fim := false
 
 
@@ -160,7 +166,16 @@ func _ligar_som() -> void:
 		## e era por isso que a música do menu continuava tocando por cima do vídeo.
 		pediu_parar_bgm.connect(func() -> void: au.call("parar_bgm"))
 	if sf != null:
-		pediu_sfx.connect(func(id: int) -> void: sf.call("tocar_id", 0, id))
+		## ⚠ **BANCO EXPLÍCITO `C_01`** (correção desta rodada; o dono: "som do menu principal
+		## errado"). `tocar_id(0, id)` sem banco cai no `banco_padrao` do `re3_se.json`, que é
+		## `C_00` — e, pior, passaria a usar o banco de PERSONAGEM (`C_02`/`C_08`) se uma sala
+		## já tivesse sido carregada, porque `Sfx._banco_de(0)` prefere `_banco_area`. O banco
+		## da tela de título é MEDIDO: `0x801944c0` chama `0x8007809c(cat = 0, banco = 1)` e
+		## `file_index = tab[cat] + banco*2` com a tabela de bases `0x800110b0` dá
+		## `0x104 + 2 = 0x106 = SOUND/C_01.VH`. Conferido aqui que os 5 WAV de UI de `C_01` são
+		## **byte-idênticos** aos de `C_00` (`cmp` nos 5 pares): o som audível é o mesmo, o que
+		## muda é passar a tocar o banco que o binário carrega, em qualquer ordem de cena.
+		pediu_sfx.connect(func(id: int) -> void: sf.call("tocar_id", 0, id, BANCO_SE_TITULO))
 
 
 func _ready() -> void:
@@ -296,7 +311,7 @@ func _aplicar_passo() -> void:
 			# `0x801943a4` filme_prepara(0xc) -> registro 12 = ZMOVIE/ROOPNE.STR (`roop`).
 			_tocar_filme("roop", "titulo_espera")
 		"titulo_espera":
-			pediu_bgm.emit("main38")            ## `0x801944dc` SOUND/MAIN38.BGM (estado 1)
+			pediu_bgm.emit(BGM_TITULO)          ## `0x801944dc` SOUND/MAIN38.BGM (estado 1)
 		"menu":
 			titulo.fase = Titulo.Fase.MENU
 			titulo.ticks = 0
@@ -416,6 +431,68 @@ func _process(delta: float) -> void:
 	_atualizar_fade()
 
 
+func _input(e: InputEvent) -> void:
+	## CLIQUE / TOQUE na tela de título — por EVENTO, não por polling.
+	##
+	## ⚠ **CORREÇÃO desta rodada** (o dono: "escolher a dificuldade com o mouse não inicia o
+	## vídeo; com o teclado funciona"). A causa principal era a regra de dois cliques do
+	## `Titulo.clicar` (corrigida lá). Ler por EVENTO em vez de por borda de
+	## `Input.is_mouse_button_pressed` conserta o resto:
+	##  • **clique perdido:** solta-e-aperta dentro do MESMO quadro não gera borda nenhuma;
+	##  • **posição:** vem DO PRÓPRIO EVENTO, sem consultar o ponteiro do sistema — o que
+	##    também torna o caminho testável sem janela (a sonda `diag_clique_titulo.gd` roda
+	##    headless);
+	##  • o mesmo caminho atende `InputEventScreenTouch`, que é o toque do celular.
+	##
+	## O 2º aperto de um DUPLO CLIQUE (`double_click`) é IGNORADO de propósito: agora um clique
+	## já confirma, então o 2º cairia na tela seguinte — um duplo clique em COMEÇAR JOGO
+	## escolheria a dificuldade sem o dono ver a tela.
+	if titulo == null or not titulo.visible:
+		return
+	if e is InputEventMouseButton:
+		var mb := e as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed and not mb.double_click:
+			if clique(mb.position):
+				get_viewport().set_input_as_handled()
+	elif e is InputEventScreenTouch:
+		var st := e as InputEventScreenTouch
+		if st.pressed and clique(st.position):
+			get_viewport().set_input_as_handled()
+	elif e is InputEventMouseMotion:
+		## HOVER (pedido do usuário): passar o mouse por cima já deixa o item em evidência.
+		## O gatilho é o evento de MOVIMENTO, então a regra "só quando o ponteiro moveu" — que no
+		## menu do jogo precisa do `pad.mouse_dx/dy` — aqui é automática: mouse parado não gera
+		## evento, e o cursor não fica preso para quem navega pelo teclado.
+		pairar((e as InputEventMouseMotion).position)
+
+
+func ponto_do_titulo(pos_viewport: Vector2) -> Vector2:
+	## Converte coordenada de VIEWPORT para o espaço 320×240 do nó do título (que tem escala 4).
+	var ct := Transform2D()
+	if is_inside_tree():
+		ct = get_viewport().get_canvas_transform()
+	return titulo.to_local(ct.affine_inverse() * pos_viewport)
+
+
+func clique(pos_viewport: Vector2) -> bool:
+	## Roteia um clique/toque em coordenada de VIEWPORT para o título. Separado do `_input`
+	## para o teste poder chamar sem fabricar evento (e para a sonda `diag_clique_titulo.gd`).
+	if titulo == null or not titulo.visible:
+		return false
+	var pt := ponto_do_titulo(pos_viewport)
+	var r: String = titulo.clicar(pt)
+	if r != "":
+		print("[boot] clique em (%.0f, %.0f) -> %s" % [pt.x, pt.y, r])
+	return r != ""
+
+
+func pairar(pos_viewport: Vector2) -> bool:
+	## Roteia o MOVIMENTO do ponteiro para o hover do título.
+	if titulo == null or not titulo.visible:
+		return false
+	return titulo.pairar(ponto_do_titulo(pos_viewport))
+
+
 func _ler_pad() -> void:
 	var g: Node = _game()
 	var m := 0
@@ -428,16 +505,6 @@ func _ler_pad() -> void:
 		for tecla: int in Pad.KEYMAP:
 			if Input.is_key_pressed(tecla as Key):
 				m |= int(Pad.KEYMAP[tecla])
-	## CLIQUE DO MOUSE no título (pedido do usuário). Lido por borda, como no menu do jogo; o
-	## ponteiro entra no espaço 320×240 do nó do título (que tem escala 4).
-	if titulo != null and titulo.visible:
-		var agora_bt := Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
-		if agora_bt and not _mouse_antes_bt:
-			var pt: Vector2 = titulo.to_local(titulo.get_global_mouse_position())
-			if titulo.clicar(pt) != "":
-				_mouse_antes_bt = agora_bt
-				return
-		_mouse_antes_bt = agora_bt
 	var novo := m & ~_pad_antes
 	_pad_antes = m
 	if novo == 0:

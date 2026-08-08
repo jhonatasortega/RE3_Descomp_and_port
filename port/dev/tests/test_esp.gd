@@ -1,9 +1,3 @@
-## ⚠️ EM QUARENTENA (renomeado para `.wip`, o corredor de testes só pega `test_*.gd`).
-## Motivo: este arquivo PENDURA a suíte (mais de 2 minutos sem terminar) — a varredura do fim dele
-## chama `EspSala.carregar()` para MUITAS salas, e cada chamada carrega textura. O agente que o
-## escreveu foi cortado pelo limite de sessão antes de fechar. O conteúdo está aqui inteiro; para
-## voltar ao ar: reduzir a varredura a um punhado de salas (ou cachear a textura) e renomear de
-## volta para `test_esp.gd`.
 extends RefCounted
 ## Efeitos ESP **da sala** — o fogo do cenário (`port/present/esp_sala.gd`).
 ##
@@ -11,12 +5,21 @@ extends RefCounted
 ##   • os ids de ESP da sala vêm de `RDT off[17]` (`tools/rdt_esp.py`);
 ##   • os bancos, quadros e ticks vêm de `RDT off[17]/off[18]` (`tools/esp_decode.py`);
 ##   • as instâncias e as POSIÇÕES vêm do opcode SCD `0x70` (handler `0x80056004`), com
-##     âncora `0` = matriz identidade de translação zero em `0x80098970`.
+##     âncora `0` = matriz identidade de translação zero em `0x80098970`;
+##   • os quadros em HD vêm de `tools/esp_decode.py hd` (`port/data/esp_hd_map.json`).
 ## Se qualquer um mudar, isto fica VERMELHO em vez de o fogo sumir em silêncio.
 ##
 ##     godot --headless --path port --script res://dev/run_tests.gd -- esp
+##
+## ⚠ Este arquivo já esteve em quarentena por PENDURAR a suíte. A causa era a varredura das
+## 156 salas chamando `EspSala.carregar()` (cada chamada abre PNG e monta nó). Regra desta
+## suíte: `carregar()` no MÁXIMO em `SALAS_CARREGADAS`; o resto é conferência do JSON, que
+## é aritmética de dicionário e roda em milissegundos.
 
 const ARQ := "esp_sala.json"
+const ARQ_HD := "esp_hd_map.json"
+## Quantas salas podem passar por `carregar()` na varredura (a que custa I/O).
+const SALAS_CARREGADAS := 6
 
 
 static func ints(a: Variant) -> Array[int]:
@@ -118,6 +121,9 @@ func run(t: Object) -> bool:
 	for x: Dictionary in fogo:
 		t.eq(int(x["func"]), 38, "chama criada na função 38 do SCD")
 		t.eq(int(x["bloco"]), 0, "chama criada em bloco INCONDICIONAL (sem `if` aberto)")
+		# O Y das 8 é ZERO no dado do opcode: nenhuma chama do R10D é "de parede". O que
+		# fazia uma delas parecer colada na parede na altura do peito era a falta de
+		# profundidade (§ camada), não um Y errado.
 		t.eq(int((x["pos"] as Array)[1]), 0, "chama no nível y = 0 (o chão do R10D)")
 		t.eq(int(x["efeito"]), 0, "chama = efeito 0x00 do banco")
 		t.eq(int(x["variante"]), 0, "chama na variante 0 (linha de CLUT do próprio banco)")
@@ -142,35 +148,41 @@ func run(t: Object) -> bool:
 	t.eq(e0.get("pos"), Vector3i(16187, 0, -10637), "1ª chama em (16187, 0, -10637)")
 	var larg_ps1 := 48.0 * 8256.0 * 4096.0 / 1048576.0
 	t.near(larg_ps1, 1548.0, 0.5, "1ª chama: 1548 unidades PS1 de largura")
-	var malha: QuadMesh = (e0.get("no") as MeshInstance3D).mesh
-	t.near(malha.size.x, Coords.len_to_godot(1548.0), 0.001,
-		"o QuadMesh nasce com a largura da fórmula (1,916 unidade Godot)")
-	# pivô: o centro do quad fica `tam * -(oy + size/2)/size` ACIMA da âncora.
-	# banco 0x26 (oy=-42, size=48) -> 0,375 da altura; banco 0x24 (oy=-48) -> 0,5.
-	t.near(malha.center_offset.y, malha.size.y * 0.375, 0.001,
-		"banco 0x26: centro do quad a 0,375 da altura acima da âncora (oy = -42)")
-	var e24: Object = null
-	for e_v: Variant in (esp.efeitos as Array):
-		if int((e_v as Object).get("tipo")) == 0x24:
-			e24 = e_v
-			break
-	if t.check(e24 != null, "há chama do banco 0x24 montada"):
-		var m24: QuadMesh = (e24.get("no") as MeshInstance3D).mesh
-		t.near(m24.center_offset.y, m24.size.y * 0.5, 0.001,
-			"banco 0x24: centro a meia altura acima da âncora = BASE da chama no chão")
-		t.near(m24.center_offset.x, 0.0, 0.001, "ox = -24 = centrado na horizontal")
-	var mat: StandardMaterial3D = malha.material
-	t.eq(mat.blend_mode, BaseMaterial3D.BLEND_MODE_ADD, "material ADITIVO (abr 1)")
-	t.eq(mat.billboard_mode, BaseMaterial3D.BILLBOARD_ENABLED,
-		"billboard (flags sem bit 9 = quad de tela, não orientado pela matriz)")
-	t.check(mat.albedo_texture != null, "o 1º quadro tem textura carregada",
-		"rode `python tools/esp_decode.py dump port/assets/ESP --all-rooms`")
+	t.near(e0.call("larg_ps1"), larg_ps1, 0.01,
+		"o nó calcula a mesma largura de mundo da fórmula do EXE")
+	var no0: Sprite2D = e0.get("no")
+	t.check(no0 != null, "a chama é um Sprite2D 2D sobre o quadro (não billboard no 3D)")
+	t.check(not no0.centered, "pivô no CANTO: o `ofs` da tabela B é do canto, não do centro")
+	var mat: CanvasItemMaterial = no0.material
+	t.eq(mat.blend_mode, CanvasItemMaterial.BLEND_MODE_ADD, "material ADITIVO (abr 1)")
 
-	# ── 5. a cadência: 10 quadros de 1 tick, em laço ─────────────────────────────────
+	# ── 5. QUADROS EM HD: 4× o SD, casados por conteúdo ──────────────────────────────
+	var hd: Variant = AssetIO.json(ARQ_HD)
+	if hd is Dictionary and ((hd as Dictionary)["salas"] as Dictionary).has("R10D"):
+		var bhd: Dictionary = (((hd as Dictionary)["salas"] as Dictionary)["R10D"]
+			as Dictionary)["bancos"]
+		for tipo: int in [0x24, 0x26]:
+			var par: Dictionary = (bhd[str(tipo)] as Dictionary)["v0"]
+			t.check(float(par["ncc"]) >= 0.99,
+				"banco 0x%02x v0: par HD com NCC >= 0,99 (%s)" % [tipo, par["webp"]],
+				"ncc=%s" % par["ncc"])
+			t.check(float(par["ncc_do_1o_reprovado"]) < 0.9,
+				"banco 0x%02x v0: o 1º reprovado fica abaixo de 0,9 (folga do casamento)"
+					% tipo, "ncc=%s" % par["ncc_do_1o_reprovado"])
+			t.eq(int(par["quadros"]), 10, "banco 0x%02x v0: 10 quadros recortados em HD" % tipo)
+		t.eq(esp.n_quadros_hd, 80, "as 8 chamas × 10 quadros usam o asset HD")
+		t.check(e0.get("hd"), "a 1ª chama está em HD")
+		t.eq((e0.get("texturas") as Array)[0].get_width(), 48 * 4,
+			"quadro HD = 192 px = 4× os 48 texels do PS1")
+	else:
+		t.check(false, "data/%s tem R10D" % ARQ_HD,
+			"rode `python tools/esp_decode.py hd --room STAGE1/R10D`")
+
+	# ── 6. a cadência: 10 quadros de 1 tick, em laço ─────────────────────────────────
 	var vistos: Array[int] = []
 	for i in 25:
 		vistos.append(int(e0.get("indice")))
-		esp.avancar()
+		esp.avancar(null)
 	t.eq(vistos.slice(0, 10), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
 		"os 10 quadros passam um por tick")
 	t.eq(vistos.slice(10, 20), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
@@ -179,7 +191,48 @@ func run(t: Object) -> bool:
 	t.eq((e0.get("desloc") as Vector3i), Vector3i.ZERO,
 		"a chama não se move: vel e acc do frame record são zero")
 
-	# ── 6. varredura das 156 salas: coerência do dado ────────────────────────────────
+	# ── 7. PROFUNDIDADE: a chave de OT do efeito é a MESMA do personagem ─────────────
+	# O motor não tem z-buffer: quem entra na Ordering Table com chave MENOR fica na FRENTE
+	# (`0x80029618`). O efeito entra com `z >> 5` (`0x80022de0`) e o personagem com
+	# `zona*1024 + SZ>>5` (`0x80037d50` + `0x8002b86c`) — este bloco prova que as duas
+	# contas dão o MESMO número para o MESMO ponto, comparando com o `occlusion.gd`, que é
+	# a implementação independente da regra do cenário.
+	var room := RoomData.load_room("R10D")
+	if t.check(room.cameras.size() == 13, "R10D tem 13 câmeras",
+			"%d" % room.cameras.size()):
+		var occ := Occlusion.new()
+		var n_masc := occ.carregar(room, 0)
+		esp.avancar(null, room, 0, EspSala.CHAVE_LONGE)
+		t.eq((esp.get("_mascaras") as Array).size(), n_masc,
+			"EspSala vê os mesmos %d recortes de máscara que o Occlusion na câmera 0"
+				% n_masc)
+		var alvo := Vector3i(16187, 0, -10637)          ## a 1ª chama
+		occ.atualizar_profundidade(room.camera(0), alvo)
+		t.eq(esp.chave_ot(alvo, null), occ.char_key,
+			"a chave de OT do efeito e a do personagem no MESMO ponto são iguais")
+		# ordem: quanto mais LONGE da câmera, MAIOR a chave (é a definição de `z >> 5`)
+		var perto := esp.chave_ot(Vector3i(14493, 0, -8854), null)
+		var longe := esp.chave_ot(Vector3i(15693, 0, -14854), null)
+		t.check(perto != longe, "duas chamas em Z diferente têm chaves diferentes",
+			"perto=%d longe=%d" % [perto, longe])
+		var c := room.camera(0)
+		var d_perto := Vector3(float(14493 - c.from_ps1.x), 0.0,
+			float(-8854 - c.from_ps1.z)).length()
+		var d_longe := Vector3(float(15693 - c.from_ps1.x), 0.0,
+			float(-14854 - c.from_ps1.z)).length()
+		t.eq(perto < longe, d_perto < d_longe,
+			"a chave cresce com a distância à câmera (mais perto = fica na frente)")
+		# a decisão de camada é uma comparação de inteiros; aqui se prova o efeito dela na
+		# árvore (o sprite muda de camada de desenho, que é o que o `screen.gd` compõe)
+		esp._por_na_camada(e0, true)
+		t.eq(no0.get_parent().name, StringName("Sprites"),
+			"chave menor que a do personagem → sprite vai para a camada da FRENTE")
+		esp._por_na_camada(e0, false)
+		t.eq(no0.get_parent().name, StringName("Atras"),
+			"chave maior/igual → sprite volta para a camada de TRÁS (o 3D cobre)")
+		occ.free()
+
+	# ── 8. varredura das 156 salas: coerência do dado (SEM abrir asset) ──────────────
 	var n_com_inst := 0
 	var n_inst := 0
 	var n_ancora_outra := 0
@@ -206,7 +259,24 @@ func run(t: Object) -> bool:
 		"existem instâncias ancoradas em entidade (âncora != 0) — não posicionáveis aqui",
 		"%d de %d" % [n_ancora_outra, n_inst])
 
-	# ── 7. sala sem 0x70: o nó não inventa efeito ────────────────────────────────────
+	# ── 9. as primeiras salas com efeito montam sem erro (I/O limitado) ──────────────
+	# Só `SALAS_CARREGADAS` salas: `carregar()` abre PNG e monta nó, e é o que pendurava
+	# esta suíte quando rodava nas 156.
+	var carregadas := 0
+	var total_efeitos := 0
+	for id: String in salas:
+		if carregadas >= SALAS_CARREGADAS:
+			break
+		if (salas[id] as Dictionary)["instancias"].is_empty():
+			continue
+		total_efeitos += esp.carregar(id)
+		carregadas += 1
+	t.eq(carregadas, SALAS_CARREGADAS,
+		"%d salas com instância passam por carregar() sem erro" % SALAS_CARREGADAS)
+	t.check(total_efeitos >= 0, "nenhuma sala carregada devolve efeito negativo",
+		"%d efeitos somados" % total_efeitos)
+
+	# ── 10. sala sem 0x70: o nó não inventa efeito ───────────────────────────────────
 	var vazia := ""
 	for id: String in salas:
 		if (salas[id] as Dictionary)["instancias"].is_empty():

@@ -55,7 +55,7 @@ func run(t: Object) -> bool:
 	t.eq(p.acao, Player.Acao.MIRANDO, "a ação é MIRANDO")
 	t.eq(p.mira_pitch, 0x800, "pitch = (tier 0 << 9) + 0x800 (`0x8003ac5c`)")
 	## Agora existem os clipes do BANCO 2 do PLW (`mira00..mira07`, de-para de osso provado em
-	## `plw.md` §9): hold médio é `mira02`, levantar é `mira00` e o tiro/recuo é `mira07`.
+	## `plw.md` §9): hold médio `mira02`, levantar `mira00`, RECUO `mira01/03/05` e RECARGA `mira07`.
 	t.eq(p.clipe_atual(), "mira02", "hold da mira usa o `mira02` (banco 2 do PLW, pose média)")
 	var p6 := Player.new()
 	p6.equipped_weapon = 0x03
@@ -65,14 +65,19 @@ func run(t: Object) -> bool:
 	# o gatilho agenda o tiro para o quadro do timing e gasta 1 no disparo
 	pad.set_mask(Pad.AIM | Pad.ACAO)
 	p.tick(pad)
-	t.eq(p.tiro_pendente, 12, "gatilho agenda o tiro para o quadro 12 (handgun)")
-	t.eq(st.equipped_qtd(), 15, "a munição só sai NO quadro do tiro, não no aperto")
-	for _i in 12:
+	## ── O TIRO SAI NO QUADRO 0 DO RECUO (correção provada em `recuo_tiro.md`) ──
+	## Eu achava que o `byte2 = 12` do timing `0x8009cf28` era o quadro do disparo; é o quadro a
+	## partir do qual **soltar a mira corta** o recuo. O disparo é no quadro 0 (`0x80040fac`), e o
+	## recuo é CLIPE PRÓPRIO: seqs 1/3/5 do banco 2 (`mira01`/`mira03`/`mira05`), 20 quadros.
+	t.eq(st.equipped_qtd(), 14, "a munição sai no MESMO quadro do aperto (quadro 0 do recuo)")
+	t.eq(p.recuo, Player.RECUO_QUADROS, "e entra nos 20 quadros de recuo")
+	t.eq(p.clipe_atual(), "mira01", "a pose de recuo do tier médio é a `mira01`")
+	t.eq(p.quadro_do_corte(), 12, "o corte do handgun é no quadro 12 (`byte2 & 0x7f`)")
+	for _i in Player.RECUO_QUADROS:
 		pad.set_mask(Pad.AIM)
 		p.tick(pad)
-	t.eq(st.equipped_qtd(), 14, "no quadro 12 gasta 1")
-	t.eq(p.tiro_pendente, -1, "e o tiro deixa de estar pendente")
-	t.eq(p.mira_sub, Player.Mira.LEVANTAR, "depois do tiro volta ao rearme (rotina 5)")
+	t.eq(p.recuo, 0, "o recuo termina em 20 quadros")
+	t.eq(p.clipe_atual(), "mira02", "e volta para o hold")
 	# clique seco: munição 0 não dispara e marca `municao_vazia`
 	st.main_slots[st.equipped]["qtd"] = 0
 	for _i in 14:

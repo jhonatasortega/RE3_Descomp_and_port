@@ -73,7 +73,22 @@ MOD_PADRAO = (r"C:\Program Files (x86)\GOG Galaxy\Games\Resident Evil 3"
 FPS = 30000.0 / 1001.0                          # 29,97 — a do próprio mp4
 #: `<arquivo do mod>` -> `<vídeo a que a legenda pertence>` e a duração medida do mp4.
 ALVO = {
-    "prologue.xml": dict(video="opn", duracao_mp4=90.624),
+    # ⚠ CORRECAO desta rodada: `prologue.xml` NAO legenda o `opn.mp4` — legenda o PROLOGO
+    # (o slideshow narrado do `OPENING.BIN`, que no port e' o passo `prologo`). Tres medidas
+    # independentes, nenhuma delas por semelhanca de assunto:
+    #   1. o SCRIPT do prologo (80 B no fim de `ETC/OPENING1.DAT`, interpretado por
+    #      `OPENING.BIN`) toca **4 trechos de XA** (`op 0x0b`, args 0..3) — e `prologue.xml`
+    #      tem exatamente **4 blocos** `<Text>`;
+    #   2. as esperas do script entre um XA e o seguinte sao 260, 215, 600 e 320 quadros
+    #      (`op 3`+`op 4`); os blocos do XML duram 284, 228, 631 e 271 — mesma ordem de
+    #      grandeza, e a SOMA fecha em **1395 contra 1414 quadros (1,4 % de diferenca)**;
+    #   3. 1395 quadros a 29,97 = **46,55 s**, e a narracao `BGM/gog/main06.ogg` tem
+    #      **46,567 s** (ffprobe) — 0,03 %. Ja o `opn.mp4` tem 90,62 s e e' DUBLADO.
+    "prologue.xml": dict(video="prologo", duracao_mp4=55.55,
+                         nota="ALVO MEDIDO: o prologo (slideshow do OPENING.BIN). O script "
+                              "do prologo dura 1665 quadros = 55,55 s e a fala dele e' a "
+                              "narracao main06 (46,57 s). O `duracao_mp4` aqui e' a duracao "
+                              "do PROLOGO, nao de um mp4."),
     "epilogue.xml": dict(video="enda", duracao_mp4=62.66,
                          nota="ALVO DECLARADO: o epílogo é narração de FIM. Casei com "
                               "`enda` por duração (47,8 s de fala em 62,66 s de vídeo, "

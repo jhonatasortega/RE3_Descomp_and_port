@@ -27,7 +27,9 @@ extends Node
 ##     (`*(gs+0x784e) >= 8`). É banco de **PERSONAGEM**.
 ##   • **cat 1** — `0x80043eb4`, com `a1 = lbu *(player+0x46)` = **ARMA EQUIPADA** (o mesmo
 ##     byte que indexa a jump-table por arma em `0x8009dcd4`). Ou seja `A_01..A_14` é banco
-##     de **ARMA**, não de "área" como dizia o doc antigo.
+##     de **ARMA**, não de "área" como dizia o doc antigo. O de-para do índice é
+##     **`w` -> `A_{w:02X}`** (fileid `0xda + w*2`; `A_01.VH` = fid `0xdc`, 384 B, conferido
+##     contra o tamanho real do arquivo) — logo `w = 1` é a **FACA**.
 ##   • **cat 4** — loader de porta `0x8001644c`, `dtex = *(descriptor+0xc)`.
 ##
 ## O descritor dá o índice do TOM (`byte1 >> 4`); o `vag` do tom é a amostra. Como
@@ -49,6 +51,13 @@ const VOZES := 8                                ## pool de players (o SPU do PS1
 const NOME_BANCO_PORTA := "S1_DOOR%02X"
 ## Banco `cat 0` que o room-loader carrega para a Jill — MEDIDO (ver `definir_banco_area`).
 const BANCO_JOGADOR := "C_02"
+## Nome do banco `cat 1` para um índice de arma `w` (`player+0x46`) — ver `definir_banco_arma`.
+const NOME_BANCO_ARMA := "A_%02X"
+## `w` da FACA: é o único dos 20 bancos `A_` que **não** define o id 0 (o estouro).
+const ARMA_FACA := 1
+## `w` de partida do port enquanto o de-para **item -> `w`** não for medido (ver
+## `tools/exe_aim_shoot.py`). `A_02` é o primeiro banco de arma de fogo. **DECLARADO**.
+const ARMA_PADRAO := 2
 
 ## Ações nomeadas com confiança ALTA — o que a UI pode usar sem ressalva.
 const ACOES_MENU := ["menu_mover", "menu_cancelar", "menu_confirmar",
@@ -62,9 +71,11 @@ var _prox := 0
 var _cache: Dictionary = {}                     ## rel -> AudioStreamWAV
 var _banco_area := ""                           ## banco C_ da área atual (ver definir_banco_area)
 var _banco_porta := ""                          ## banco da porta em uso (ver definir_banco_porta)
+var _banco_arma := ""                           ## banco A_ da arma equipada (ver definir_banco_arma)
 var _portas: Dictionary = {}                    ## sala -> [{aot, dtex, ...}] (porta_banco.json)
 var _volume_db := 0.0
 var _ultimo := ""                               ## último rel tocado (harness/teste)
+var _reclamou: Dictionary = {}                  ## chave -> true (reclama UMA vez, sem spam)
 
 
 func _ready() -> void:
@@ -160,10 +171,54 @@ func menu_abrir() -> bool:
 
 
 func tiro() -> bool:
-	## Disparo. SE id 11 do banco `C_` **de área** (`0x8003ad6c`: `lui a0,1; ori a0,a0,0xb`).
-	## `C_00`/`C_01` (bancos de menu) não definem o id 11 — coerente com "não há tiro no
-	## menu". O nome é DECLARADO: o par id->ação não foi confirmado por ouvido.
+	## Disparo. **CORRIGIDO nesta rodada: o estouro da arma é `cat 1 / id 0`**, do banco `A_{w}`
+	## da arma equipada — não o `cat 0 / id 11` que estava aqui antes.
+	##
+	## Duas provas independentes:
+	##  1. **Tabela de 20 funções POR ARMA** em `0x8009ced8..0x8009cf24` (vizinha da tabela de
+	##     timing `0x8009cf28` que o `Player.quadro_do_tiro()` já usa). Em CADA entrada o mesmo
+	##     trecho aparece: `0x80044804` (HITSCAN, `a2 = lbu player+0x46`) → `0x80047860` →
+	##     `0x8006d030(1)` → `SE_pede(cat 1, idx 0, a1 = *(player+0x108)+0x344)`. São ~20 dos
+	##     155 `jal 0x800746c0` do EXE, todos com o MESMO id.
+	##  2. **`A_01` é o único dos 20 bancos `A_` que NÃO define o id 0** (define 6..10). E `A_01`
+	##     é o banco de `w = 1`, a FACA — arma que não estoura. 19/20 definem o id 0.
+	##
+	## O `cat 0 / id 11` (`0x8003ad6c`, dentro da rotina 7 = mira) **existe** e continua sendo o
+	## fallback quando nenhum banco de arma foi declarado — mas o trecho dele mexe em
+	## `player+0x6e` (pitch da mira) e num contador `u16 @0x800d1f96`, não no hitscan; o nome
+	## dele segue DECLARADO.
+	if _banco_arma != "":
+		if tocar_id(1, 0, _banco_arma):
+			return true
+		_reclamar("arma:%s" % _banco_arma,
+			"banco de arma '%s' não define o SE id 0 (é a faca?) — caindo no cat 0/id 11"
+			% _banco_arma)
 	return tocar_acao("tiro")
+
+
+func definir_banco_arma(w: int) -> void:
+	## Diz qual arma está equipada, pelo índice `w` = `player+0x46`. **MEDIDO**: `0x80043eb4`
+	## chama o carregador de banco `0x8007809c(a0 = 1, a1 = lbu player+0x46)`, e em `0x8007809c`
+	## `fileid = *(0x800110b0 + cat*4) + a1*2` com base `0xda` para o cat 1. Conferindo os
+	## TAMANHOS da tabela de arquivos `0x800946a4` contra os arquivos reais:
+	## `fid 0xdb` = 23600 B = `A_01.VB` e `fid 0xdc` = 384 B = `A_01.VH` → **`w` -> `A_{w:02X}`**.
+	## (A nota antiga em `exe_audio.md §3.1`, que dizia `0xda = A_01.VH`, estava um arquivo
+	## adiantada.)
+	##
+	## `w = 0` não é banco de arma nenhum (o fid `0xda` não é um `.VH` de `A_`); `w = 1` é a
+	## FACA. O de-para **item do inventário -> `w`** continua NÃO MEDIDO.
+	var nome := NOME_BANCO_ARMA % w
+	if _bancos.has(nome):
+		_banco_arma = nome
+		return
+	_banco_arma = ""
+	if w > 0:
+		_reclamar("banco_arma:%d" % w,
+			"banco de arma w=%d ('%s') não existe no re3_se.json" % [w, nome])
+
+
+func banco_arma() -> String:
+	return _banco_arma
 
 
 func impacto_ataque() -> bool:
@@ -244,12 +299,20 @@ func _tocar_porta(acao: String) -> bool:
 
 # ───────────────────────────── API genérica ─────────────────────────────
 func tocar_acao(acao: String) -> bool:
-	## Toca uma ação nomeada do `re3_se.json`. false se o nome ou o WAV não existir.
+	## Toca uma ação nomeada do `re3_se.json`. false se o nome ou o WAV não existir — e
+	## **RECLAMA ALTO** nos dois casos (era aqui que o som do tiro sumiria em silêncio).
 	var a: Variant = _acoes.get(acao)
 	if not (a is Dictionary):
+		_reclamar("acao:%s" % acao,
+			"ação '%s' não existe no data/%s — rode `NOSTALGIA_OUT=port python tools/exe_audio.py`"
+			% [acao, DADOS])
 		return false
 	var rel: Variant = (a as Dictionary).get("wav_padrao")
 	if not (rel is String) or rel == "":
+		_reclamar("acao_sem_wav:%s" % acao,
+			"ação '%s' (cat %d / id %d) existe mas não tem amostra: o tom aponta o VAG mudo ou o "
+			% [acao, acao_cat(acao), acao_id(acao)]
+			+ "banco não está no disco extraído")
 		return false
 	# Se a área definiu um banco `C_` e a ação é de cat 0, prefere o som daquela área —
 	# é o que o original faz (o mesmo id toca amostra diferente por banco carregado).
@@ -292,7 +355,11 @@ func tocar_arquivo(rel: String) -> bool:
 	_prox = (_prox + 1) % _pool.size()
 	p.stream = s
 	p.volume_db = _volume_db
-	p.play()
+	## Fora da árvore (harness de teste: os testes são `RefCounted`, não cena) o `play()` do motor
+	## só produz `ERROR: Playback can only happen when a node is inside the scene tree`. O de-para
+	## já foi resolvido aqui, que é o que o teste mede — então só o `play()` é pulado.
+	if p.is_inside_tree():
+		p.play()
 	_ultimo = rel
 	return true
 
@@ -374,13 +441,32 @@ func _banco_de(cat: int) -> String:
 
 func _stream(rel: String) -> AudioStream:
 	## WAV de disco (o `assets/` não é importado pelo editor — ver AssetIO).
+	##
+	## Reclama COM O CAMINHO quando o arquivo falta ou não carrega. Sem isto, "o som não sai" e
+	## "a amostra não foi extraída" ficam indistinguíveis do lado de quem joga — foi exatamente
+	## a dúvida do dono do repo sobre o tiro.
 	if _cache.has(rel):
 		return _cache[rel]
 	var abs_path := AssetIO.path("%s/%s" % [SFX_DIR, rel])
 	if not FileAccess.file_exists(abs_path):
+		_reclamar("falta:%s" % rel,
+			"amostra AUSENTE: %s — rode `NOSTALGIA_OUT=port python tools/re3_sfx.py --all` " % abs_path
+			+ "(bancos do disco) e `... tools/exe_audio.py --portas` (bancos de porta)")
 		return null
 	var s := AudioStreamWAV.load_from_file(abs_path)
 	if s == null:
+		_reclamar("ilegivel:%s" % rel,
+			"AudioStreamWAV.load_from_file falhou em %s (WAV corrompido?)" % abs_path)
 		return null
 	_cache[rel] = s
 	return s
+
+
+func _reclamar(chave: String, msg: String) -> void:
+	## Um aviso por chave: o pedido de SE acontece a 30 Hz e um `push_warning` por quadro
+	## afogaria o log (e esconderia justamente o aviso que importa).
+	if _reclamou.has(chave):
+		return
+	_reclamou[chave] = true
+	push_warning("Sfx: %s" % msg)
+	print("[sfx] AVISO: %s" % msg)

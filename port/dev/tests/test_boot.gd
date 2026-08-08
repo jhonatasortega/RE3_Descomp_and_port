@@ -20,9 +20,93 @@ func run(t: Object) -> bool:
 	_passos(t)
 	_fluxo_inteiro(t)
 	_titulo(t)
+	_mouse(t)
 	_legendas(t)
 	_video(t)
 	return true
+
+
+# ────────────────────── mouse e toque na tela de título ──────────────────────
+
+func _mouse(t: Object) -> void:
+	## ⚠ ESTE GRUPO É A REGRESSÃO DO BUG que o dono relatou: "escolher a dificuldade com o mouse
+	## NÃO inicia o vídeo; com o teclado inicia". Duas causas, as duas cobertas aqui:
+	##  1. a regra era a do inventário (1º clique destaca, 2º confirma) e a tela de dificuldade
+	##     abre com o cursor em MODO DIFICIL — clicar em MODO FACIL só acendia o rótulo;
+	##  2. o alvo de clique era a caixa de TINTA do rótulo (55×19 no espaço 320×240).
+	## Agora: **um clique seleciona e confirma**, o alvo é a linha inteira repartida entre os
+	## itens, e passar o mouse por cima já destaca (`pairar`).
+	##
+	## ⚠ O teste roda o `Boot` FORA da árvore de cena (como o resto deste arquivo), e num
+	## `SceneTree` o `_ready` só acontece no PRIMEIRO QUADRO — depois do `_initialize` que chama
+	## os testes. Então o que `Titulo._ready` faria (escala 4 + `carregar()`) é feito aqui na mão;
+	## sem isso o nó do título fica com escala 1 e sem tabelas, e a conversão
+	## viewport -> 320×240 não existiria para testar. O caminho do EVENTO de mouse de verdade
+	## (`Boot._input`) é conferido com janela em `port/dev/diag_clique_titulo.gd`.
+	t.group("Boot: mouse/toque no título")
+	var b := Boot.new()
+	b.entrar_no_jogo = false
+	b.tocar_fmv = false
+	b.preparar()
+	b.titulo.carregar()
+	b.titulo.scale = Vector2(Titulo.ESCALA, Titulo.ESCALA)
+	b.pular()                                       ## aviso -> CAPCOM
+	b.pular()                                       ## CAPCOM -> filme (atravessado) -> título
+	b.pular()                                       ## entrada do título -> menu
+	if not t.check(b.passo_atual() == "menu", "o menu está no ar para testar o mouse"):
+		return
+	# alvo em coordenada de VIEWPORT, exatamente como o evento de mouse chega
+	var alvo := func(i: int) -> Vector2:
+		var c: Rect2 = b.titulo.caixa_de_clique(i)
+		return b.titulo.get_global_transform() * c.get_center()
+
+	# ── o ALVO: a linha inteira é clicável e cada pixel dela é de UM item só ──
+	for i in 3:
+		var tinta: Rect2 = b.titulo.caixa_do_item(i)
+		var clique: Rect2 = b.titulo.caixa_de_clique(i)
+		t.check(clique.encloses(tinta), "o alvo de clique do item %d contém a tinta do rótulo" % i)
+		t.eq(b.titulo.item_sob(tinta.get_center()), i,
+			"o centro da tinta do item %d pertence ao item %d" % [i, i])
+	var a0: Rect2 = b.titulo.caixa_de_clique(0)
+	var a1: Rect2 = b.titulo.caixa_de_clique(1)
+	var a2: Rect2 = b.titulo.caixa_de_clique(2)
+	t.eq(a0.end.x, a1.position.x, "os alvos 0 e 1 se encostam (nenhum pixel morto entre eles)")
+	t.eq(a1.end.x, a2.position.x, "os alvos 1 e 2 também")
+	t.check(b.titulo.item_sob(Vector2(160, 40)) < 0, "clique longe da linha não acerta item")
+
+	# ── HOVER: passar por cima destaca, e só isso ──
+	var sfx: Array[int] = []
+	b.titulo.pediu_sfx.connect(func(id: int) -> void: sfx.append(id))
+	t.eq(b.titulo.cursor, 1, "o cursor abre em LOAD GAME (0x801945b4)")
+	t.check(b.pairar(alvo.call(2)), "pairar sobre CONFIG muda algo")
+	t.eq(b.titulo.cursor, Titulo.Item.CONFIG, "e o cursor vai para CONFIG (2)")
+	t.eq(b.passo_atual(), "menu", "hover NÃO confirma nada: o passo continua no menu")
+	t.eq(b.titulo.fase, Titulo.Fase.MENU, "e a fase continua MENU")
+	t.check(not b.pairar(alvo.call(2)), "pairar de novo no MESMO item não repete trabalho")
+	t.eq(sfx, [4], "o hover pede o SFX 4 de cursor uma vez (0x801956f4)")
+
+	# ── UM CLIQUE em COMEÇAR JOGO (não selecionado) sai do menu ──
+	var fases: Array[String] = []
+	b.fase_mudou.connect(func(n: String) -> void: fases.append(n))
+	t.check(b.clique(alvo.call(0)), "um clique em COMEÇAR JOGO é aceito")
+	t.eq(b.titulo.cursor, Titulo.Item.NOVO_JOGO, "o cursor foi para o item clicado")
+	t.eq(b.titulo.fase, Titulo.Fase.DIFICULDADE,
+		"e o MESMO clique confirmou: a dificuldade está no ar")
+	t.eq(b.titulo.cursor_dificuldade, 0, "a dificuldade abre em MODO DIFICIL (0x80195d04)")
+
+	# ── UM CLIQUE em MODO FACIL (não selecionado) escolhe FÁCIL e vai para o filme ──
+	var escolhas: Array[bool] = []
+	b.titulo.escolheu_novo_jogo.connect(func(f: bool) -> void: escolhas.append(f))
+	t.check(b.clique(alvo.call(1)), "um clique em MODO FACIL é aceito")
+	t.eq(escolhas, [true],
+		"e emite escolheu_novo_jogo(true) — FÁCIL, bit 0x100 de 0x800cc858 (0x80195dcc)")
+	t.check(b.facil, "o Boot guarda facil=true")
+	t.check(fases.has("fmv"),
+		"o clique leva ao passo fmv (0x801960e8 filme_prepara(0) = ZMOVIE/OPN.STR)")
+	t.eq(b.passo_atual(), "jogo", "e sem .ogv o fluxo segue para o jogo, como no teclado")
+
+	# ── depois de escolher, o título não aceita mais clique (fase SAINDO / nó invisível) ──
+	t.check(not b.clique(alvo.call(0)), "clique depois de escolher não faz nada")
 
 
 # ────────────────────── a tabela de filmes do EXE (0x8009ca64) ──────────────────────
@@ -305,13 +389,36 @@ func _dados_do_boot(t: Object) -> void:
 	var vao2 := xs[2] - (xs[1] + ws[1])
 	t.eq(vao1, vao2, "os dois vãos são IGUAIS (era 13 e 32 com a regra antiga)")
 	t.check(vao1 > 0, "e são positivos: os rótulos não se sobrepõem (%d px)" % vao1)
-	# dificuldade: âncoras 80 e 180+54 = 234
+	# ── DIFICULDADE e COPYRIGHT: posição do PRÓPRIO pacote PT-BR (title_mapping.xml) ──
+	# ⚠ CORREÇÃO desta rodada. O doc dizia "MODO DIFICIL em x=80, o mesmo x que o
+	# title_mapping.xml declara para heavy mode" — mas 80 é onde vai a CÉLULA (62 px de
+	# largura) e a TINTA dela começa 6 px adiante. Comparava-se tinta com célula, e o port
+	# desenhava 6 px à esquerda do que o pacote manda. Agora `tools/boot_assets.py` LÊ o XML,
+	# CONFERE que `u,v,w,h` batem com a célula gravada no de-para e usa o `x,y` de lá.
+	for k5: String in ["diff_HARD_MODE", "diff_EASY_MODE", "copyright"]:
+		var pm: Variant = (rot[k5] as Dictionary).get("pos_mod")
+		if not t.check(pm is Dictionary, "%s tem posição declarada no title_mapping.xml" % k5):
+			continue
+		t.check(bool((pm as Dictionary)["celula_confere"]),
+			"e a célula do XML confere com a do de-para: %s" % k5)
 	var hx := int((rot["diff_HARD_MODE"] as Dictionary)["x_tela"])
 	var ex := int((rot["diff_EASY_MODE"] as Dictionary)["x_tela"])
 	var ew := int((rot["diff_EASY_MODE"] as Dictionary)["tinta_w"])
-	t.eq(hx, 80, "MODO DIFICIL começa em x=80 (o mesmo x do SPRT e do title_mapping.xml)")
-	t.eq(ex + ew, 234, "MODO FACIL termina em 234 (borda direita do SPRT EASY MODE)")
-	t.check(ex > hx, "e o FÁCIL fica à direita do DIFÍCIL, como no original")
+	t.eq(hx, 86, "MODO DIFICIL: tinta em x=86 = célula em 80 (heavy mode) + tinta_x 6")
+	t.eq(ex, 186, "MODO FACIL: tinta em x=186 = célula em 180 (light mode) + tinta_x 6")
+	t.eq(ex + ew, 231, "e termina em 231, dentro dos 234 da caixa do SPRT EASY MODE")
+	t.check(ex > hx, "o FÁCIL fica à direita do DIFÍCIL, como no original")
+	t.eq(int((rot["diff_HARD_MODE"] as Dictionary)["x_tela"])
+		- int(((rot["diff_HARD_MODE"] as Dictionary)["pos_mod"] as Dictionary)["x"]),
+		int((rot["diff_HARD_MODE"] as Dictionary)["tinta_x"]),
+		"a regra é célula do XML + tinta_x, não a tinta na origem do SPRT")
+	# copyright: o pacote põe a linha PT de 8 px em y=217 = 213 + (16−8)/2, isto é CENTRADA no
+	# bloco de 2 linhas (16 px) que o PS1 usa em 0x801945e4. O port desenhava em 213.
+	var cy := int((rot["copyright"] as Dictionary)["y_tela"])
+	t.eq(cy, 217, "copyright em y=217 (o pacote centra a linha de 8 px no bloco de 16)")
+	t.eq(cy, int((sp["copyright"] as Dictionary)["y"])
+		+ (int((sp["copyright"] as Dictionary)["h"]) - 8) / 2,
+		"e 217 é exatamente 213 + (16−8)/2 — duas fontes, mesmo número")
 	# o que NÃO tem HD em português fica registrado, não escalado do SD
 	var sem: Dictionary = d["sem_hd_pt"]
 	t.check(sem.has("PRESS_ANY_BUTTON"),

@@ -77,6 +77,8 @@ extends Node2D
 
 const ESCALA := 4
 const TELA := Vector2i(320, 240)
+## Sobra do alvo de clique em volta da tinta do rótulo (afordância do port — ver `caixa_de_clique`)
+const MARGEM_CLIQUE := 8.0
 const CAMINHO_JSON := "res://data/boot_flow.json"
 const ATLAS_ESCALA := 4                        ## o webp de rótulos é 4× a página SD
 
@@ -261,10 +263,14 @@ func _draw() -> void:
 		_rotulo(chave, chave, b if sel2 else 1.0, not sel2)
 
 
+func itens_da_fase() -> Array[String]:
+	return ITENS_DIFICULDADE if fase == Fase.DIFICULDADE else ITENS_MENU
+
+
 func caixa_do_item(i: int) -> Rect2:
 	## Retângulo de tela (320×240) do item `i` do menu — a MESMA geometria do desenho: `x_tela`/
 	## `y_tela` do JSON (âncoras de `0x801945e4`) e a caixa de TINTA medida no atlas HD.
-	var itens: Array[String] = ITENS_DIFICULDADE if fase == Fase.DIFICULDADE else ITENS_MENU
+	var itens: Array[String] = itens_da_fase()
 	if i < 0 or i >= itens.size():
 		return Rect2()
 	var ro: Variant = _rotulos.get(itens[i])
@@ -287,29 +293,102 @@ func caixa_do_item(i: int) -> Rect2:
 	return Rect2(float(x - 3), float(y - 3), float(tw + 6), float(h + 6))
 
 
+func caixa_de_clique(i: int) -> Rect2:
+	## ALVO DE CLIQUE/TOQUE do item `i` — **maior** que a caixa de tinta, de propósito.
+	##
+	## ⚠ Isto é AFORDÂNCIA DO PORT, declarada: o PS1 não tem ponteiro, então não existe medida
+	## de "área clicável" para copiar. A caixa de tinta (`caixa_do_item`) é estreita — "CONFIG"
+	## tem 28 px de tinta em 320 — e mirar nela com o mouse é justamente o que falhava. Aqui a
+	## linha de itens é repartida INTEIRA entre os itens: cada um vale do meio-caminho até o
+	## vizinho da esquerda ao meio-caminho até o da direita, com `MARGEM_CLIQUE` de sobra nas
+	## pontas e em Y. Nenhum pixel da linha fica morto.
+	var itens: Array[String] = itens_da_fase()
+	if i < 0 or i >= itens.size():
+		return Rect2()
+	var minha := caixa_do_item(i)
+	if minha.size.x <= 0.0:
+		return Rect2()
+	var esq := minha.position.x - MARGEM_CLIQUE
+	var dir := minha.end.x + MARGEM_CLIQUE
+	if i > 0:
+		var ant := caixa_do_item(i - 1)
+		if ant.size.x > 0.0:
+			esq = (ant.end.x + minha.position.x) * 0.5
+	if i < itens.size() - 1:
+		var prox := caixa_do_item(i + 1)
+		if prox.size.x > 0.0:
+			dir = (minha.end.x + prox.position.x) * 0.5
+	return Rect2(esq, minha.position.y - MARGEM_CLIQUE, dir - esq,
+		minha.size.y + 2.0 * MARGEM_CLIQUE)
+
+
+func item_sob(p: Vector2) -> int:
+	## Índice do item cujo ALVO DE CLIQUE contém `p`, ou -1. É o mesmo alvo para o hover e para
+	## o clique — se a caixa muda, muda para os dois.
+	if fase != Fase.MENU and fase != Fase.DIFICULDADE:
+		return -1
+	for i in itens_da_fase().size():
+		if caixa_de_clique(i).has_point(p):
+			return i
+	return -1
+
+
+func pairar(p: Vector2) -> bool:
+	## PASSAR O MOUSE POR CIMA já destaca (pedido do usuário; o mesmo padrão do
+	## `MenuStatus.pairar`). Move o cursor para o item sob o ponteiro **sem confirmar** e devolve
+	## `true` se mudou algo.
+	##
+	## ⚠ Quem chama só deve chamar quando o ponteiro se MOVEU: com o mouse parado sobre um item,
+	## o hover prenderia o cursor e a navegação por teclado não sairia do lugar. No `boot.gd` isso
+	## sai de graça, porque o gatilho é o `InputEventMouseMotion` — que só existe quando move.
+	var i := item_sob(p)
+	if i < 0:
+		return false
+	var atual := cursor_dificuldade if fase == Fase.DIFICULDADE else cursor
+	if i == atual:
+		return false
+	if fase == Fase.DIFICULDADE:
+		cursor_dificuldade = i
+	else:
+		cursor = i
+	pediu_sfx.emit(4)                           ## cursor moveu = SFX 4 (`0x801956f4`)
+	ticks = 0                                   ## e reinicia o timeout do atrator, como lá
+	_pulso_i = 0
+	queue_redraw()
+	return true
+
+
 func clicar(p: Vector2) -> String:
 	## CLIQUE/TOQUE na tela de título (pedido do usuário; serve para o port de celular também).
-	## Regra igual à do inventário: o 1º clique SELECIONA o item sob o ponteiro, e o 2º clique no
-	## MESMO item CONFIRMA.
+	##
+	## ⚠ **UM CLIQUE SÓ: seleciona E confirma.** Foi esta a causa do "escolher a dificuldade
+	## com o mouse não inicia o vídeo": a regra anterior era a do inventário (1º clique
+	## destaca, 2º confirma), e na tela de dificuldade o cursor abre em MODO DIFICIL — quem
+	## clicava em MODO FACIL via só o rótulo acender e concluía, com razão, que o jogo tinha
+	## travado. Com o mouse o clique é o próprio ato de escolher.
+	##
+	## A outra metade da correção está em `caixa_de_clique`: o alvo era a caixa de TINTA (55×19
+	## no espaço 320×240) e clicar ao lado do rótulo não acertava nada.
 	if fase != Fase.MENU and fase != Fase.DIFICULDADE:
 		return ""
-	var itens: Array[String] = ITENS_DIFICULDADE if fase == Fase.DIFICULDADE else ITENS_MENU
+	var itens: Array[String] = itens_da_fase()
 	for i in itens.size():
-		if not caixa_do_item(i).has_point(p):
+		if not caixa_de_clique(i).has_point(p):
 			continue
 		var atual := cursor_dificuldade if fase == Fase.DIFICULDADE else cursor
-		if i == atual:
-			confirmar()
-			return "confirmou %s" % itens[i]
-		if fase == Fase.DIFICULDADE:
-			cursor_dificuldade = i
-		else:
-			cursor = i
-		pediu_sfx.emit(4)                       ## SFX de cursor (`0x801956f4`)
-		ticks = 0                               ## reinicia o timeout do atrator
-		_pulso_i = 0
+		if i != atual:
+			if fase == Fase.DIFICULDADE:
+				cursor_dificuldade = i
+			else:
+				cursor = i
+			ticks = 0                           ## reinicia o timeout do atrator
+			_pulso_i = 0
+			## (com hover ligado o cursor já costuma estar aqui: o `pairar` chegou primeiro)
+		## `confirmar()` já pede o SFX 6 (`0x8019578c`); o 4 (cursor) fica de fora de
+		## propósito, senão um clique só tocaria dois sons em cima do outro.
+		confirmar()
 		queue_redraw()
-		return "selecionou %s" % itens[i]
+		return "confirmou %s" % itens[i]
 	return ""
 
 

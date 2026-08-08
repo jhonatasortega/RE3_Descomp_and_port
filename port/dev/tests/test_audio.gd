@@ -165,6 +165,12 @@ func run(t: Object) -> bool:
 	# ── 6. API do Sfx ──
 	t.group("Audio/Sfx API")
 	var s := Sfx.new()
+	## O pool de `AudioStreamPlayer` só toca DENTRO da árvore ("Playback can only happen when a
+	## node is inside the scene tree"); sem isto os testes que chamam `tiro()`/`tocar_acao()`
+	## enchiam o log de erro do motor mesmo passando.
+	var laco := Engine.get_main_loop() as SceneTree
+	if laco != null:
+		laco.root.add_child(s)
 	t.check(s.carregar(), "Sfx.carregar() lê data/re3_se.json")
 	t.check(s.pronto(), "Sfx pronto")
 
@@ -196,7 +202,8 @@ func run(t: Object) -> bool:
 	t.eq(s.banco_area(), "", "definir_banco_area ignora banco inexistente")
 
 	# porta: cada DOORxx.DO1 tem o próprio som (madeira != portão de metal)
-	t.eq(s.acao_id("porta_abrir"), 0, "porta_abrir = SE id 0 do banco de porta")
+	# id 1, não 0: o único `jal 0x800746c0` da região de porta é `0x800161c4` com `a0 = 0x401`.
+	t.eq(s.acao_id("porta_abrir"), 1, "porta_abrir = SE id 1 do banco de porta (0x800161c4)")
 	t.eq(s.acao_cat("porta_abrir"), 4, "porta vem do cat 4 (banco embutido no .DO1)")
 	t.check(not s.acao_confiavel("porta_abrir"),
 		"porta_abrir NÃO é ALTA (qual id é abrir vs fechar não foi medido)")
@@ -204,6 +211,41 @@ func run(t: Object) -> bool:
 	t.eq(s.banco_porta(), "S1_DOOR03", "definir_banco_porta aceita porta existente")
 	s.definir_banco_porta("S9_DOOR99")
 	t.eq(s.banco_porta(), "", "definir_banco_porta ignora porta inexistente")
+
+	# ── 6.1 TIRO: o estouro é `cat 1 / id 0` do banco A_{w} da arma ──
+	# Prova 1: a tabela de 20 funções POR ARMA `0x8009ced8` (indexada por `w-1`, ver
+	# `0x8003ea1c`) pede `cat 1 / id 0` em cada entrada, logo depois do hitscan `0x80044804`.
+	# Prova 2: `A_01` (w=1, a FACA) é o ÚNICO dos 20 bancos `A_` que não define o id 0.
+	t.group("Audio/tiro")
+	var com_id0: Array[String] = []
+	var sem_id0: Array[String] = []
+	for i in range(1, 21):
+		var nome := Sfx.NOME_BANCO_ARMA % i
+		var info := s.banco_info(nome)
+		if info.is_empty():
+			continue
+		var tab: Dictionary = info.get("se", {})
+		if tab.has("0"):
+			com_id0.append(nome)
+		else:
+			sem_id0.append(nome)
+	t.eq(com_id0.size() + sem_id0.size(), 20, "os 20 bancos de arma A_01..A_14 estão no JSON")
+	t.eq(sem_id0, ["A_01"] as Array[String],
+		"A_01 (w=1, a FACA) é o único banco de arma sem o id 0 — 19/20 definem o estouro")
+
+	s.definir_banco_arma(Sfx.ARMA_PADRAO)
+	t.eq(s.banco_arma(), "A_02", "definir_banco_arma(2) -> A_02 (fileid 0xda + 2*2 = 0xde)")
+	var wav_tiro := str((s.banco_info("A_02").get("se", {}) as Dictionary).get("0", {}).get("wav", ""))
+	t.check(AssetIO.exists("%s/%s" % [SFX_DIR, wav_tiro]),
+		"a amostra do tiro (%s) está no disco" % wav_tiro)
+	t.check(s.tiro(), "Sfx.tiro() toca com o banco de arma carregado")
+	t.eq(s.ultimo_tocado(), wav_tiro, "o tiro sai do banco da ARMA, não do C_ de personagem")
+
+	s.definir_banco_arma(Sfx.ARMA_FACA)
+	t.eq(s.banco_arma(), "A_01", "definir_banco_arma(1) -> A_01 (faca)")
+	t.check(s.tiro(), "com a faca (A_01, sem id 0) o tiro cai no fallback cat 0 / id 11")
+	s.definir_banco_arma(0)
+	t.eq(s.banco_arma(), "", "w = 0 não é banco de arma (o fid 0xda não é um .VH de A_)")
 
 	# ── 7. os WAV existem em disco e carregam ──
 	t.group("Audio/assets")
@@ -234,21 +276,47 @@ func run(t: Object) -> bool:
 		var m: Dictionary = bgm
 		var area: Dictionary = m.get("area_default", {})
 		t.eq(area.size(), 7, "7 áreas no mapa área->faixa")
-		# O vínculo real é BGM_ID -> sala e NÃO foi medido: nenhum opcode do SCD toca BGM
-		# (varredura dos 144 handlers de 0x8009e0f8 não achou set-bgm). Enquanto isso o
-		# mapa é por STAGE e está DECLARADO como provisório — o teste garante que a
-		# ressalva continue no arquivo, para ninguém tratar isso como medido.
+		# `area_default` (por STAGE) segue PROVISÓRIO — é só o FALLBACK. O teste garante que a
+		# ressalva continue no arquivo, para ninguém tratar o fallback como medido.
 		var meta: Dictionary = m.get("_meta", {})
 		t.check(str(meta.get("TODO", "")).contains("PROVISOR"),
-			"bgm_map.json mantém a ressalva de que área->faixa é PROVISÓRIO (não medido)")
-		t.check((m.get("room_override", {}) as Dictionary).is_empty(),
-			"room_override segue vazio (o de-para sala->faixa não foi medido)")
+			"bgm_map.json mantém a ressalva de que área->faixa é PROVISÓRIO (é só fallback)")
+		# O que é MEDIDO: sala -> NOME da BGM do PS1, byte-exato (sha1 dos 676 blocos de
+		# SEQ dos 169 ARD × os nomes do Rofs7.dat do PC). Vive no bloco `salas`.
+		var salas: Dictionary = m.get("salas", {})
+		t.eq(salas.size(), 169, "o mapa cobre as 169 salas (bloco `salas`)")
+		t.check(str(meta.get("PROVA", "")).contains("676/676"),
+			"bgm_map.json guarda a prova byte-exata (676/676 blocos)")
 
 		var a2 := Audio.new()
-		var faixa := a2.faixa_para_sala("R100")
-		t.eq(faixa, str(area.get("UPTOWN", "")),
-			"R100 (stage 1) cai na faixa de UPTOWN pelo fallback por stage")
+		# Três salas conhecidas, todas `conf: ALTA` (erro de duração < 0,5 %):
+		#   R100 = a rua da abertura · R10F = sala de save (tema de save) · R200 = Downtown
+		t.eq(a2.faixa_para_sala("R100"), "main07", "R100 -> main07 (medido, ALTA)")
+		t.eq(a2.faixa_para_sala("R10F"), "main32",
+			"R10F -> main32, o MESMO da chave `context.SAVE` (sala de save)")
+		t.eq(a2.faixa_para_sala("R200"), "main01", "R200 -> main01 (medido, ALTA)")
+		t.eq(str(a2.faixa_info("R100").get("conf", "")), "ALTA", "R100 tem confiança ALTA")
+		# Cobertura: NENHUMA das 169 salas pode ficar muda, e a faixa escolhida tem de EXISTIR
+		# no disco. Era aqui que o PARK falhava: `area_default` manda `main2a`, e o PC só tem a
+		# faixa partida (`main2a_0`/`_1`) — sem a resolução de multiparte o parque era mudo.
+		var mudas: Array[String] = []
+		var por_fonte: Dictionary = {}
+		for sala: String in salas:
+			var info := a2.faixa_info(sala)
+			var f := str(info.get("faixa", ""))
+			if f == "" or not AssetIO.exists("%s/%s.ogg" % [Audio.BGM_DIR, f]):
+				mudas.append(sala)
+			var fo := str(info.get("fonte", ""))
+			por_fonte[fo] = int(por_fonte.get(fo, 0)) + 1
+		t.eq(mudas.size(), 0, "as 169 salas têm faixa e o .ogg dela existe (mudas: %s)"
+			% str(mudas.slice(0, 6)))
+		t.eq(int(por_fonte.get("area_provisoria", 0)) + int(por_fonte.get("default", 0)), 18,
+			"só 18 salas ainda caem no fallback por STAGE (14 sem WAV no PC + 4 sem bloco MAIN)")
+		t.check(a2.faixa_para_sala("R400").begins_with("main2a"),
+			"R400 (PARK) resolve a faixa multiparte main2a_0 em vez de ficar muda")
 		a2.free()
 
+	if s.get_parent() != null:
+		s.get_parent().remove_child(s)
 	s.free()
 	return true
