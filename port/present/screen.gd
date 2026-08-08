@@ -61,6 +61,7 @@ var background: Sprite2D
 var frame: SubViewportContainer
 var world: SubViewport
 var esp: EspBrilho
+var esp_sala: EspSala                   ## efeitos da sala (fogo/fumaça), pelo `off[17]` do RDT
 var menu: MenuStatus
 var menu_arquivo: MenuArquivo
 var _mouse_antes := false               ## borda do botão esquerdo (clique = toque no menu)
@@ -258,6 +259,8 @@ func _on_tick(_frame: int) -> void:
 		occlusion.atualizar_profundidade(room.camera(camera_index), torso)
 	if mundo.camera != camera_index:
 		mostrar_camera(mundo.camera)
+	if esp_sala != null:
+		esp_sala.avancar(cam3d)                ## fogo/fumaça da sala, no mesmo tick de 30 Hz
 	if esp != null:
 		esp.avancar(cam3d)                     ## o cintilar do item anda no tick de 30 Hz
 	var gs2: Node = get_node_or_null("/root/Game")
@@ -472,6 +475,10 @@ func _montar() -> void:
 
 	# Brilho dos itens (efeito ESP): entra ACIMA do 3D e ABAIXO dos recortes de oclusão, para
 	# móvel na frente cobrir o cintilar. Ver esp_brilho.gd para o que é provado e o que é escolha.
+	## EFEITOS DA SALA (fogo, fumaça, faísca) — `EspSala`, alimentado pela tabela de ids de ESP do
+	## RDT (`off[17]`, provada em `tools/rdt_esp.py`). Fica na mesma altura do brilho de item.
+	esp_sala = EspSala.new()
+	add_child(esp_sala)
 	esp = EspBrilho.new()
 	add_child(esp)
 	if not esp.carregar(WORLD_W):
@@ -531,6 +538,11 @@ func carregar_sala(id: String) -> bool:
 	if not mundo.carregar(id):
 		return false
 	room = mundo.room
+	## efeitos da sala (fogo/fumaça): a lista vem do `off[17]` do RDT daquela sala
+	if esp_sala != null:
+		var n_ef := esp_sala.carregar(id)
+		if n_ef > 0:
+			print("[screen] %d efeitos de ESP na sala %s" % [n_ef, id])
 	player = mundo.player
 	room_id = id
 	var g0: Node = get_node_or_null("/root/Game")

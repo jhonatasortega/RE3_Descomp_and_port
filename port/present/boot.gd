@@ -449,7 +449,14 @@ func _ler_pad() -> void:
 		elif novo & Pad.PAUSA:
 			titulo.cancelar()
 		return
-	if pulo_livre or (novo & Pad.ACAO) != 0:
+	## PULO da etapa: **só teclado** (Enter/Espaço/E). O usuário pediu para tirar o pulo no mouse —
+	## clicar durante o filme pulava a abertura sem querer. Os bits do mouse (`TIRO` no esquerdo e
+	## `AIM` no direito) ficam de fora, e o `pulo_livre` deixa de valer para eles.
+	var teclas_pulo := Pad.ACAO | Pad.AIM_A | Pad.AIM_B
+	var so_mouse := Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) 		or Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)
+	if so_mouse and (novo & ~(Pad.TIRO | Pad.AIM)) == 0:
+		return                                  ## foi só clique: não pula
+	if (novo & teclas_pulo) != 0 or (pulo_livre and (novo & ~(Pad.TIRO | Pad.AIM)) != 0):
 		pular()
 
 
