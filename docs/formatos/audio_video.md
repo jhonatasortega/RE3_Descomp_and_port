@@ -366,6 +366,16 @@ faixa decodificada com os instrumentos reais** em WAV.
 > engenharia reversa do `.BGM`, mas para o jogo usamos as do GOG (trilha inteira, sem
 > aproximação de ADSR/pitch).
 
+**Faixas MULTIPARTE (armadilha, 2026-08-08):** parte das faixas do PC não tem o `.ogg` de
+nome "puro" — o WAV vem partido e sai como `main2a_0`/`main2a_1`, `main16_0..2`,
+`main24_0/1`, `main2b_0/1`, `main0f_0/1`, `main20_0/1`, `main30_0..main30_c`. Quem monta um
+nome de faixa a partir do de-para tem de resolver o sufixo, senão o `.ogg` simplesmente não
+existe e a sala fica **muda**. Foi exatamente o que aconteceu com o PARK: o
+`bgm_map.json.area_default.PARK` é `main2a` e não há `main2a.ogg`. `port/core/audio.gd`
+resolve isso em `_resolver_faixa()` (usa o nome puro se existir, senão `<nome>_0`); **qual
+parte é intro e qual é loop NÃO foi medido**. Ver
+[`exe_audio.md §7`](../decomp/notes/exe_audio.md).
+
 ### 9.2 SFX interativos — VAB (`.VB`) → WAV
 
 Os SFX do jogador (porta, tiro, passo, dano, menu) são tocados **ao vivo pelo SPU** a

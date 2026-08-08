@@ -274,7 +274,7 @@ func _som_da_porta(sala: String, porta: Aot) -> void:
 	player.sfx.porta_abrir()
 
 
-## Item da FACA — é o único par item->arma que o port tem provado (o `Player.quadro_do_tiro()`
+## Item da FACA — é o único par item->arma que o port tem provado (o `Player.quadro_do_corte()`
 ## já o usa para escolher a linha `w-1 = 0` da tabela de timing `0x8009cf28`).
 const ITEM_FACA := 0x01
 
@@ -285,7 +285,7 @@ func _banco_da_arma(item_id: int) -> void:
 	## `0x8007809c(1, lbu player+0x46)`).
 	##
 	## O de-para completo **item -> `w`** continua NÃO MEDIDO (`tools/exe_aim_shoot.py`). O que
-	## está amarrado é a mesma aproximação DECLARADA que o `Player.quadro_do_tiro()` já usa, e que
+	## está amarrado é a mesma aproximação DECLARADA que o `Player.quadro_do_corte()` já usa, e que
 	## as tabelas do EXE confirmam nos dois extremos: as tabelas por arma são indexadas por
 	## **`w - 1`** (`0x8003ea1c` para a de funções `0x8009ced8`, `0x8003e454` para a de timing
 	## `0x8009cf28`, stride 3), a linha 0 (`w = 1`) é a que **não** pede SE de tiro e o `A_01` é o

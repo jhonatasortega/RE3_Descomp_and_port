@@ -176,7 +176,7 @@ func tiro() -> bool:
 	##
 	## Duas provas independentes:
 	##  1. **Tabela de 20 funções POR ARMA** em `0x8009ced8..0x8009cf24` (vizinha da tabela de
-	##     timing `0x8009cf28` que o `Player.quadro_do_tiro()` já usa). Em CADA entrada o mesmo
+	##     timing `0x8009cf28` que o `Player.quadro_do_corte()` já usa). Em CADA entrada o mesmo
 	##     trecho aparece: `0x80044804` (HITSCAN, `a2 = lbu player+0x46`) → `0x80047860` →
 	##     `0x8006d030(1)` → `SE_pede(cat 1, idx 0, a1 = *(player+0x108)+0x344)`. São ~20 dos
 	##     155 `jal 0x800746c0` do EXE, todos com o MESMO id.
