@@ -686,6 +686,14 @@ func _atualizar_laser() -> void:
 			destino_ps1 = lista[player.mira_alvo]
 	var destino := Coords.to_godot_i(destino_ps1.x, player.pos.y, destino_ps1.z)
 	destino.y = origem.y
+	## INCLINAÇÃO: o laser tem de subir/descer com a mira (o usuário notou que ele saía reto).
+	## O pitch está em unidades de ângulo de 12 bits (`player.mira_pitch_y`), então a subida é
+	## `sen(pitch) × alcance` — usando a MESMA tabela de seno do jogo (`PS1Math.rsin`, fixo em
+	## 4096 = 1,0). Com alvo travado o destino é o próprio alvo e a inclinação sai dele.
+	if player.mira_alvo < 0 and player.mira_pitch_y != 0:
+		var comp_ps1 := float(Player.MIRA_ALCANCE)
+		var subida := float(PS1Math.rsin(player.mira_pitch_y)) / 4096.0 * comp_ps1
+		destino.y = origem.y + subida / Coords.WORLD_SCALE
 	var dir := destino - origem
 	var comp := dir.length()
 	if comp < 0.01:

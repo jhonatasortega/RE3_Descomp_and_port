@@ -82,6 +82,17 @@ const MIRA_ALTURA := 1600                 ## idem, altura
 const MIRA_MOUSE_GIRO := 8
 const MIRA_MOUSE_ZONA := 30
 var mira_mouse_y := 0
+## ── PITCH CONTÍNUO, **SÓ NO MOUSE** (pedido do usuário) ──
+## No pad o RE3 tem 3 posições em Y e ponto (o pitch do EXE é em degraus de `0x200`:
+## `player+0x6e = (tier << 9) + 0x800`, `0x8003ac5c`). Com o MOUSE dá para mirar fino, então aqui
+## existe um pitch contínuo em unidades de ângulo de 12 bits, que **só o mouse move**. A POSE
+## continua sendo uma das três (cai na mais próxima) — o que fica contínuo é o ÂNGULO, e é ele que
+## a mira laser desenha. **Declarado: extensão do port.**
+const MIRA_PITCH_POR_PIXEL := 6           ## unidades de ângulo por pixel de mouse
+const MIRA_PITCH_TETO := 0x500            ## ~44° para cima e para baixo
+const MIRA_PITCH_ZONA := 0x150            ## acima disso a POSE troca para alta/baixa
+const MIRA_PITCH_DEGRAU := 0x200          ## o degrau do EXE (`(tier << 9)`), usado pelo W/S
+var mira_pitch_y := 0                     ## pitch contínuo do mouse (0 = horizontal)
 ## ── SÓ 3 PONTOS NO EIXO Y, E ISSO É DO JOGO ──
 ## O usuário observou que a mira vertical tem apenas 3 posições. É o que o dado tem e o que o EXE
 ## faz: o banco 2 do PLW traz **três** poses de hold (`mira02` médio, `mira04` alto, `mira06`
@@ -377,6 +388,7 @@ func _sair_da_mira() -> void:
 	tiro_pendente = -1
 	mira_alvo = -1
 	mira_mouse_y = 0
+	mira_pitch_y = 0
 	municao_vazia = false
 	_set_acao(Acao.PARADO)
 
@@ -400,19 +412,23 @@ func _tick_mira(pad: Pad) -> void:
 			GIRO_POR_FRAME * 3)
 		facing = PS1Math.wrap_angle(facing + giro)
 	if pad.mouse_dy != 0 and mira_alvo < 0:
-		mira_mouse_y = clampi(mira_mouse_y + pad.mouse_dy, -MIRA_MOUSE_ZONA * 2,
-			MIRA_MOUSE_ZONA * 2)
-		if mira_mouse_y > MIRA_MOUSE_ZONA:
-			mira_alto = -1                     ## ponteiro para BAIXO = mira baixa
-		elif mira_mouse_y < -MIRA_MOUSE_ZONA:
-			mira_alto = 1                      ## para CIMA = mira alta
+		## ponteiro para BAIXO (dy > 0) abaixa a mira: pitch NEGATIVO
+		mira_pitch_y = clampi(mira_pitch_y - pad.mouse_dy * MIRA_PITCH_POR_PIXEL,
+			-MIRA_PITCH_TETO, MIRA_PITCH_TETO)
+		mira_mouse_y = -mira_pitch_y / MIRA_PITCH_POR_PIXEL    ## espelho em pixels, para o HUD
+		if mira_pitch_y > MIRA_PITCH_ZONA:
+			mira_alto = 1                      ## pose ALTA
+		elif mira_pitch_y < -MIRA_PITCH_ZONA:
+			mira_alto = -1                     ## pose BAIXA
 		else:
 			mira_alto = 0
 	if mira_alvo < 0:
 		if pad.pressed(Pad.FWD):
 			mira_alto = 1                      ## W = mira ALTA
+			mira_pitch_y = MIRA_PITCH_DEGRAU   ## no pad o pitch é em DEGRAU, como no EXE
 		elif pad.pressed(Pad.BACK):
 			mira_alto = -1                     ## S = mira BAIXA
+			mira_pitch_y = -MIRA_PITCH_DEGRAU
 		elif pad.just_released(Pad.FWD) or pad.just_released(Pad.BACK):
 			mira_alto = 0
 	mira_quadro += 1

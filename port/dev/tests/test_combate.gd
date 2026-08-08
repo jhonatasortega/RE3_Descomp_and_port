@@ -134,14 +134,23 @@ func run(t: Object) -> bool:
 		"o giro por tick tem teto de 3× o normal (o ponteiro não teleporta a Jill)")
 	# vertical escolhe a altura da mira, com zona morta
 	pad7.mouse_dx = 0
-	pad7.mouse_dy = Player.MIRA_MOUSE_ZONA / 2
+	## ── PITCH CONTÍNUO no mouse: o ÂNGULO é fino, a POSE cai numa das três ──
+	pad7.mouse_dy = 10
 	p7.tick(pad7)
-	t.eq(p7.mira_alto, 0, "dentro da zona morta a altura não muda")
-	pad7.mouse_dy = Player.MIRA_MOUSE_ZONA
+	t.eq(p7.mira_pitch_y, -10 * Player.MIRA_PITCH_POR_PIXEL,
+		"cada pixel do mouse move o pitch em 6 unidades de ângulo (ponteiro para baixo abaixa)")
+	t.eq(p7.mira_alto, 0, "mas dentro da zona a POSE segue a média")
+	t.eq(p7.clipe_atual(), "mira02", "pose média")
+	pad7.mouse_dy = 60
 	p7.tick(pad7)
-	t.eq(p7.mira_alto, -1, "ponteiro para BAIXO = mira baixa")
+	t.check(p7.mira_pitch_y < -Player.MIRA_PITCH_ZONA, "pitch passou da zona para baixo")
+	t.eq(p7.mira_alto, -1, "ponteiro para BAIXO = pose baixa")
+	pad7.mouse_dy = 10000
+	p7.tick(pad7)
+	t.eq(p7.mira_pitch_y, -Player.MIRA_PITCH_TETO, "o pitch tem TETO (~44° para baixo)")
+	pad7.mouse_dy = 0
 	t.eq(p7.clipe_atual(), "mira06", "e a pose vira a `mira06` (hold baixo)")
-	pad7.mouse_dy = -Player.MIRA_MOUSE_ZONA * 3
+	pad7.mouse_dy = -10000
 	p7.tick(pad7)
 	t.eq(p7.mira_alto, 1, "ponteiro para CIMA = mira alta")
 	t.eq(p7.clipe_atual(), "mira04", "e a pose vira a `mira04` (hold alto)")
@@ -150,6 +159,18 @@ func run(t: Object) -> bool:
 	pad7.mouse_dy = 0
 	p7.tick(pad7)
 	t.eq(p7.mira_mouse_y, 0, "sair da mira zera o acumulador do mouse")
+	t.eq(p7.mira_pitch_y, 0, "e zera o pitch contínuo")
+	## no PAD o pitch é em DEGRAU (0x200), como no EXE — não contínuo
+	var p8 := Player.new()
+	p8.equipped_weapon = 0x03
+	var pad8 := Pad.new()
+	for _i in 12:
+		pad8.set_mask(Pad.AIM)
+		p8.tick(pad8)
+	pad8.set_mask(Pad.AIM | Pad.FWD)
+	p8.tick(pad8)
+	t.eq(p8.mira_pitch_y, Player.MIRA_PITCH_DEGRAU, "W no pad põe o pitch num DEGRAU de 0x200")
+	t.eq(p8.mira_alto, 1, "e a pose vai para a alta")
 
 	# ── auto-lock: alvo dentro e fora da caixa ──
 	var p2 := Player.new()
