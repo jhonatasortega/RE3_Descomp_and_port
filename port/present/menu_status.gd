@@ -731,6 +731,14 @@ func _usar() -> String:
 		return "sem item"
 	var slot: Dictionary = _state.main_slots[cursor]
 	var id := int(slot.get("id", 0))
+	## USAR num DOCUMENTO = ler: marca no arquivo e abre a leitura naquele documento. É o que faz
+	## as Instruções A/B entrarem na lista (elas começam no inventário e nunca foram "pegas").
+	if Itens.categoria(id) == Itens.CAT_ARQUIVO:
+		_state.marcar_arquivo_lido(id)
+		if arquivo != null:
+			arquivo.call("abrir")
+			arquivo.call("ir_para_item", id)
+		return "leu o documento"
 	var pl := _player()
 	if pl == null:
 		return "sem personagem"

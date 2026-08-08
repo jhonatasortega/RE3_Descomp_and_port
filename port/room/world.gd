@@ -358,6 +358,8 @@ func pegar_item_sob_o_player() -> Aot:
 	for a: Aot in vm.itens():
 		if a.contem(sonda.x, sonda.z) or a.contem(player.pos.x, player.pos.z):
 			if state.add_item(a.item_id, maxi(1, a.item_qtd)) >= 0:
+				## PEGAR um documento já o coloca no arquivo (o jogo abre a página na hora)
+				state.marcar_arquivo_lido(a.item_id)
 				a.ativo = false
 				_marcar_pego(a)
 				return a

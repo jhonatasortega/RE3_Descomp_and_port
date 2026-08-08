@@ -3,6 +3,8 @@ extends SceneTree
 func _initialize() -> void:
 	var st := GameState.new()
 	st.novo_jogo()
+	for id: int in range(0x85, 0xa4):
+		st.marcar_arquivo_lido(id)
 	var a := MenuArquivo.new()
 	get_root().add_child(a)
 	a.carregar(st)

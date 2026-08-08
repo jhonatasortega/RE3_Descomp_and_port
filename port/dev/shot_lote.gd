@@ -28,6 +28,7 @@ func _process(_d: float) -> bool:
 		0:
 			for id: int in [0xa3, 0x86, 0x87, 0x88]:
 				g.get("state").call("add_item", id, 1)
+				g.get("state").call("marcar_arquivo_lido", id)
 			pad.call("set_mask", Pad.MENU)
 			_cena.call("_on_tick", _t)
 			pad.call("set_mask", 0)

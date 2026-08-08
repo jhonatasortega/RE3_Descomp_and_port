@@ -20,7 +20,8 @@ func _process(_d: float) -> bool:
 	var menu: Object = _cena.get("menu")
 	var arq: Object = _cena.get("menu_arquivo")
 	if _fase == 0:
-		g.get("state").call("add_item", 0xa3, 1)      ## Jill's Diary
+		g.get("state").call("add_item", 0xa3, 1)
+		g.get("state").call("marcar_arquivo_lido", 0xa3)      ## Jill's Diary
 		pad.call("set_mask", Pad.MENU)
 		_cena.call("_on_tick", _t)
 		pad.call("set_mask", 0)

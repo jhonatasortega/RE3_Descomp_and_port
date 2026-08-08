@@ -226,6 +226,24 @@ func find_by_id(item_id: int, box: bool = false) -> int:
 	return -1
 
 
+## ── DOCUMENTOS NO ARQUIVO ──
+## Regra do jogo (apontada pelo usuário): o documento **só aparece na tela de ARQUIVO depois de
+## ser LIDO** — pegar do chão já conta como leitura (o jogo abre a página na hora), e os dois que
+## vêm no inventário novo (Instruções A e B) precisam de USAR antes. O bit real está num banco de
+## flag que a decomp ainda não isolou (`menu_texto.md §6`: só `0x800d212c` apareceu na varredura),
+## então aqui é um conjunto próprio do save — declarado, não inventado.
+var arquivos_lidos: Dictionary = {}
+
+
+func marcar_arquivo_lido(item_id: int) -> void:
+	if Itens.categoria(item_id) == Itens.CAT_ARQUIVO:
+		arquivos_lidos[item_id] = true
+
+
+func arquivo_lido(item_id: int) -> bool:
+	return arquivos_lidos.has(item_id)
+
+
 func add_item(item_id: int, qtd: int = 1, flags: int = 0, box: bool = false) -> int:
 	## Coloca o item no 1º slot livre. Devolve o índice, ou -1 se estiver cheio.
 	var i := find_by_id(0, box)

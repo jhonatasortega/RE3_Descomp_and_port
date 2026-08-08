@@ -93,18 +93,30 @@ func abrir() -> void:
 	var todos: Array = _dados.get("documentos", [])
 	for d: Dictionary in todos:
 		var item := int(d.get("item_id", 0))
-		if _state != null and _state.find_by_id(item) >= 0:
+		## Entra na lista quem já foi **LIDO** (pegar do chão conta; os dois iniciais precisam de
+		## USAR) — regra apontada pelo usuário. Antes eu listava quem estivesse no inventário, e
+		## por isso as Instruções A/B apareciam sem nunca terem sido abertas.
+		if _state != null and _state.arquivo_lido(item):
 			docs.append(d)
-	if docs.is_empty():
-		# sem documento no inventário, mostra todos (modo de inspeção) para a tela não ficar vazia
-		docs = todos.duplicate()
-		ultima_acao = "nenhum documento no inventário: listando todos (inspeção)"
+	if docs.is_empty() and OS.get_environment("ARQ_TODOS") != "":
+		docs = todos.duplicate()               ## modo de inspeção dos diags
 	sel = 0
 	pagina = 0
 	lendo = false
 	aberto = true
 	visible = true
 	queue_redraw()
+
+
+func ir_para_item(item_id: int) -> void:
+	## Põe o cursor no documento daquele item e abre a LEITURA — é o que USAR num documento faz.
+	for i in docs.size():
+		if int((docs[i] as Dictionary).get("item_id", 0)) == item_id:
+			sel = i
+			lendo = true
+			pagina = 0
+			queue_redraw()
+			return
 
 
 func fechar() -> void:

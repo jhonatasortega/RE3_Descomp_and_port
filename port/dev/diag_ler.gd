@@ -21,7 +21,8 @@ func _process(_d: float) -> bool:
 	var arq: Object = _cena.get("menu_arquivo")
 	if _fase == 0:
 		var st: Object = g.get("state")
-		st.call("add_item", 0x93, 1)          ## Jill's Diary (doc14, 9 páginas)
+		st.call("add_item", 0x93, 1)
+		st.call("marcar_arquivo_lido", 0x93)          ## Jill's Diary (doc14, 9 páginas)
 		_tecla(pad, Pad.MENU)                  ## abre o menu
 		for _k in 24:                          ## espera a animação de abertura (_anim > 0 barra o Enter)
 			_cena.call("_on_tick", _t)
