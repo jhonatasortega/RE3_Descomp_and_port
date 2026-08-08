@@ -92,6 +92,67 @@ func run(t: Object) -> bool:
 	var fundo: Collision.Resolvido = cl.resolver(-2000, 0, -100, 0, 0, 200, 200)
 	t.check(fundo.rejeitado, "forma 4: correção > 400 rejeita o passo em vez de teleportar")
 
+	# ── formas 2 e 3: CÁPSULA (respostas `0x8004c57c` e `0x8004c6ec`) ──
+	# As duas são DESPACHANTES: classificam o ponto pelo eixo LONGO em 4 códigos e delegam para
+	# `0x8004c960` (caixa cheia, faixa do meio) ou `0x8004c408` (círculo de raio h nas pontas),
+	# com h = meio span TRANSVERSAL. Antes o port respondia "só a linha média" — uma parede de 1
+	# unidade — e o volume inteiro do móvel ficava andável: 484 registros forma 2 + 373 forma 3.
+	# Geometria deste caso: h = (500-(-500))/2 = 500, lo = f0+h = -1500, hi = f2-h = 1500;
+	# pontas em (-1500,0) e (1500,0), alcance h+raio = 700.
+	var cl2 := Collision.new()
+	cl2.rects.append(_rect(-2000, -500, 2000, 500, 2, 0x0FFF))
+	var p2a: Collision.Resolvido = cl2.resolver(2150, 0, 2150, 0, 0, 200, 200)
+	t.check(p2a.empurrado and p2a.x == 2200 and p2a.z == 0 and not p2a.rejeitado,
+		"forma 2: a PONTA empurra radialmente (2150,0) -> 2200 = f2+raio")
+	t.check(not cl2.resolver(2150, 650, 2150, 650, 0, 200, 200).empurrado,
+		"forma 2: a QUINA da caixa inflada fica livre — a ponta é CÍRCULO, não caixa")
+	var p2d: Collision.Resolvido = cl2.resolver(1924, 424, 1924, 424, 0, 200, 200)
+	t.check(p2d.empurrado and p2d.x - 1924 == 72 and p2d.z - 424 == 72,
+		"forma 2: na diagonal da ponta corrige x E z ((dx±8)·pen/d em cada eixo)")
+	t.check(cl2.resolver(2199, 0, 2199, 0, 0, 200, 200).empurrado,
+		"forma 2: a ponta alcança exatamente f2+raio (2199 ainda empurra)")
+	# ESTE é o buraco que a mudança fecha: o modelo antigo (linha média ±raio) deixava passar
+	# tudo com |z| > 200; a faixa do meio é CAIXA CHEIA, então o volume inteiro bloqueia.
+	t.check(cl2.resolver(0, 400, 0, 400, 0, 200, 200).empurrado,
+		"forma 2: dentro do VOLUME (0,400) empurra — o modelo 'linha média' deixava andar")
+	var p2p: Collision.Resolvido = cl2.resolver(0, -1200, 0, -600, 0, 200, 200)
+	t.check(p2p.empurrado and p2p.z == -701 and not p2p.rejeitado,
+		"forma 2: a faixa do meio clampa na face inflada (z = f1-raio-1), como `0x8004c960`")
+	# limite de 400 (`0x8004cc68`, o teto do caso-DENTRO): partir de dentro rejeita o passo
+	t.check(cl2.resolver(0, 0, 100, 0, 0, 200, 200).rejeitado,
+		"forma 2: fuga > 400 no caso-dentro REJEITA o passo (`slti 0x191` de `0x8004cc68`)")
+
+	# forma 3 = espelho exato (eixo longo em Z, h do span de X)
+	var cl3 := Collision.new()
+	cl3.rects.append(_rect(-500, -2000, 500, 2000, 3, 0x0FFF))
+	var p3a: Collision.Resolvido = cl3.resolver(0, 2150, 0, 2150, 0, 200, 200)
+	t.check(p3a.empurrado and p3a.z == 2200 and p3a.x == 0,
+		"forma 3: a PONTA em +Z empurra radialmente (z -> f3+raio)")
+	t.check(not cl3.resolver(650, 2150, 650, 2150, 0, 200, 200).empurrado,
+		"forma 3: a quina da caixa inflada fica livre")
+	var p3d: Collision.Resolvido = cl3.resolver(424, 1924, 424, 1924, 0, 200, 200)
+	t.check(p3d.empurrado and p3d.x - 424 == 72 and p3d.z - 1924 == 72,
+		"forma 3: na diagonal da ponta corrige x E z")
+	t.check(cl3.resolver(400, 0, 400, 0, 0, 200, 200).empurrado,
+		"forma 3: dentro do VOLUME (400,0) empurra")
+
+	# A resposta RADIAL não tem teto: NÃO existe `slti 0x191` em `0x8004c408`..`0x8004c578`.
+	# Aqui a ponta tem raio 4000 e o empurrão sai com 4698 un — e o passo NÃO é rejeitado.
+	var clr := Collision.new()
+	clr.rects.append(_rect(-5000, -4000, 5000, 4000, 2, 0x0FFF))
+	var pr: Collision.Resolvido = clr.resolver(1100, 0, 1100, 0, 0, 450, 450)
+	t.check(pr.empurrado and not pr.rejeitado and pr.x - 1100 == 4698 and pr.z == -348,
+		"radial `0x8004c408` não tem teto de rejeição (empurra 4698 un sem acender 0x100)")
+
+	# Quirk provado: se o span TRANSVERSAL for maior que o longo, lo > hi e a faixa do meio some.
+	# O EXE cai no código 1 e sai por `0x8004c628` SEM empurrar, devolvendo v0 = 1 (o `sltiu` de
+	# `0x8004c614`). Nenhum dos 857 registros forma 2/3 das 169 salas está nesse caso.
+	var clq := Collision.new()
+	clq.rects.append(_rect(-500, -2000, 500, 2000, 2, 0x0FFF))
+	var pq: Collision.Resolvido = clq.resolver(0, 0, 0, 0, 0, 450, 450)
+	t.check(pq.empurrado and pq.x == 0 and pq.z == 0,
+		"forma 2 degenerada (span Z > span X): código 1 responde mas NÃO move")
+
 	# ── forma 5: a tabela diz `0x8004c960`, a MESMA de 1/7/8 = caixa cheia ──
 	var cl5 := Collision.new()
 	cl5.rects.append(_rect(-1000, -1000, 1000, 1000, 5, 0x0FFF))
@@ -201,6 +262,48 @@ func run(t: Object) -> bool:
 	t.check(presos.is_empty(), "toda chegada dá o primeiro passo (%d presas: %s)"
 		% [presos.size(), ", ".join(presos.slice(0, 5))])
 	print("    [colisão] %d chegadas medidas, %d presas" % [total, presos.size()])
+
+	# ── INVARIANTE de jogo das cápsulas: o VOLUME do móvel bloqueia ──
+	# Ponto de prova por registro: no eixo longo o centro da caixa, no transversal a 3/4 do span —
+	# isto é, a `span/4` da linha média. Nos registros com span transversal > 4×raio esse ponto
+	# está FORA da faixa que o modelo antigo ("só a linha média, ±raio") cobria, então ele mede
+	# exatamente o entulho que não tinha colisão. Com a cápsula tem de ser 100%.
+	var largos := 0
+	var vazando: Array[String] = []
+	for sala: String in cache.keys():
+		var r: RoomData = cache[sala]
+		if r == null or r.colisao == null:
+			continue
+		var col_s: Collision = r.colisao
+		for i in col_s.rects.size():
+			var rc: Collision.Rect = col_s.rects[i]
+			if rc.forma != 2 and rc.forma != 3:
+				continue
+			if (rc.bits & Collision.MASCARA_RESOLVER) == 0:
+				continue
+			var transv := (rc.f3 - rc.f1) if rc.forma == 2 else (rc.f2 - rc.f0)
+			if transv <= 4 * Collision.RAIO_ATOR:
+				continue                                   # a linha média já cobria: não mede nada
+			largos += 1
+			var px := rc.f0 + (rc.f2 - rc.f0) / 2
+			var pz := rc.f1 + (rc.f3 - rc.f1) / 2
+			if rc.forma == 2:
+				pz = rc.f1 + transv * 3 / 4
+			else:
+				px = rc.f0 + transv * 3 / 4
+			var q := Vector2i(px, pz)
+			if (rc.mask & Collision.BIT_ROTACIONADO) != 0:
+				q = Collision.girar_para_mundo(px, pz, rc)  # o ponto vive no mundo, não no rect
+			var so := Collision.new()                      # 1 registro só: isola a forma
+			so.centro1 = col_s.centro1
+			so.centro2 = col_s.centro2
+			so.rects.append(rc)
+			if not so.resolver(q.x, q.y, q.x, q.y, rc.base_y / -Collision.ALTURA_POR_NIVEL).empurrado:
+				vazando.append("%s#%d forma%d" % [sala, i, rc.forma])
+	t.check(largos > 50, "mediu mais de 50 registros forma 2/3 largos (mediu %d)" % largos)
+	t.check(vazando.is_empty(), "todo volume de cápsula bloqueia (%d vazando: %s)"
+		% [vazando.size(), ", ".join(vazando.slice(0, 6))])
+	print("    [colisão] %d registros forma 2/3 largos, %d vazando" % [largos, vazando.size()])
 	return true
 
 

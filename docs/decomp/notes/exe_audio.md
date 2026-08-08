@@ -135,6 +135,30 @@ descritor dentro de um arquivo cita **um único** banco, sempre o do próprio ar
 | 2 | `R###.SND` | 48 | efeitos de **sala** |
 | **4** | `STAGE*/DOOR??.DO1` (banco **embutido**) | 4 | **porta** — ver §4.4 |
 
+### 3.1 Quem escolhe o banco: `0x8007809c(cat, banco)` — e a tela de TÍTULO usa **`C_01`**
+
+Achado de ago/2025, que faltava para fechar "qual banco está em cada `cat`" na tela de menu.
+
+`0x8007809c(a0 = cat, a1 = banco, a2 = dest, a3 = ?)` carrega o par `.VH`/`.VB` de um banco.
+Ele copia 16 B de **`0x800110b0`** (`04 01 03 01 da 00 d9 00 00…`) para a pilha e lê u16 com
+**passo 4**, então `file_index = tab[cat] + banco*2` (`0x8007817c sll s1,1` + `0x80078184
+addu`). Conferido contra a tabela de arquivos `0x800946a4`:
+
+```
+cat 0 -> tab = 0x104 = SOUND/C_00.VH   (o .VB sai do par, 0x103)
+cat 1 -> tab = 0x0da = SOUND/A_01.VH   (par 0x0d9)
+```
+
+* **`TITLE.BIN` `0x801944c0`: `0x8007809c(0, (0x800cc858 & 0x80) ? 0xb : 1)`** → no título
+  normal o `cat 0` recebe **`0x104 + 2 = 0x106 = SOUND/C_01.VH`**, isto é **`C_01`**; no
+  Mercenaries, `C_0B`.
+* **`TITLE.BIN` `0x801954d0` (handler 4, a demo de atração)**: `0x8007809c(0, {2, 8, 9, 0xa})`
+  conforme `*(u8*)0x800ccc0e` — é o banco de **área** do jogador (`C_02`/`C_08`/`C_09`/`C_0A`).
+
+Ressalva honesta: os 5 WAV de UI de `C_01` são **byte-idênticos** aos de `C_00` (comparei os
+arquivos extraídos), logo o som **audivel** é o mesmo — o que muda é a declaração de qual
+banco o binário carrega.
+
 `C_00`/`C_01` são os bancos de **menu** (tabela de SE idêntica entre os dois);
 `C_02`..`C_0D` são os bancos de **área** do jogador — e são os únicos que definem os ids de
 jogo (tiro etc.).
@@ -458,6 +482,15 @@ idêntico = `1,0000`; mesma tomada recodificada = `0,96–0,99`; tomada **difere
   (solto) → erro **0,06 %**. Em 1132 WAV medidos, só `MAIN06`/`MAIN07` chegam a menos de
   1,5 s desse alvo. `prologue.xml` soma **1414 quadros = 47,133 s** vs `MAIN06` 46,860 s
   (0,58 %).
+
+> **Onde a narração do PRÓLOGO toca (ago/2025):** no **`OPENING.BIN`** (ovl 5), que **não**
+> é tocador de FMV — é o slideshow de imagens paradas do prólogo (`ETC/OPENING0.DAT` +
+> `OPENING1.DAT`) e chama `0x8002fd30(0x00b90022, 0x3000)` = início de stream de áudio.
+> `MAIN06`/`MAIN07` **não existem no disco do PS1** (lá só há `MAIN33/38/39/3D`): a narração
+> vem por XA e a versão de PC a guarda como WAV. Isso **reforça** o casamento por duração
+> acima e **contradiz** `boot_ptbr_hd.md` §4.2, que atribuía `prologue.xml` ao `opn.mp4`
+> (0,58 % de erro contra `MAIN06` vs 43 s de vídeo sem legenda). Ver
+> [`boot_ptbr_hd.md`](boot_ptbr_hd.md) §8.6.
 
 **Marcação de tempo dos XML PT-BR:** `{clear NN}` / `{timed NN}`, **`NN` em QUADROS a
 30 fps** (provado numericamente acima); `{scroll N}` **não** é tempo. `prologue.xml`: 4

@@ -372,6 +372,10 @@ func bloqueia(r: Rect, ax: int, az: int, bx: int, bz: int) -> bool:
 
 const RAIO_ATOR := 450                ## `0x80033538`: raio X/Z do ator do player
 const REJEICAO_CAP := 400             ## `0x8004cc68`: teto do escape no caso "dentro"
+## `0x8004c4ac`/`0x8004c4b0`: antes de dividir, a resposta radial soma **8** a `dx`/`dz` NO
+## SENTIDO do próprio sinal (`bgtz` + os dois `addiu`). É o que garante empurrão não-nulo quando
+## o ator está quase em cima do eixo do círculo.
+const VIES_RADIAL := 8
 
 
 class Resolvido:
@@ -427,29 +431,39 @@ func _responder(r: Rect, res: Resolvido, prev_x: int, prev_z: int,
 	## Resposta POR FORMA — a tabela `0x8009dfec` foi LIDA do EXE (16 ponteiros):
 	##   forma 0 → `0x8004c408` radial          forma 8 → `0x8004c960`
 	##   forma 1 → `0x8004c960` caixa cheia     forma 9/10 → `0x8004ce2c`
-	##   forma 2 → `0x8004c57c`                 forma 11/12 → `0x8004d6b0`
-	##   forma 3 → `0x8004c6ec`                 forma 13 → `0x8004ded4`
+	##   forma 2 → **`0x8004c57c`** cápsula X   forma 11/12 → `0x8004d6b0`
+	##   forma 3 → **`0x8004c6ec`** cápsula Z   forma 13 → `0x8004ded4`
 	##   forma 4 → **`0x8004bb4c`** losango     forma 14 → `0x8004deb0`
 	##   forma 5 → `0x8004c960` caixa cheia     forma 15 → `0x8004e38c`
 	##   forma 6 → `0x8004d194`                 forma 7 → `0x8004c960`
-	## Duas correções que saíram dessa leitura (eu tinha atribuído `0x8004c6ec` à forma 4, que é
-	## da forma 3, e tratava a forma 5 como "sem resposta"): **a forma 5 empurra como caixa** e a
-	## **forma 4 é um LOSANGO**, não duas linhas médias — ver `_responder_losango`.
-	##   • 6 "L" → SÓ as duas arestas; 2/3 → SÓ a(s) linha(s) média(s) — respondê-las como
-	##     caixa cheia selava salas inteiras: 17 chegadas de porta nasciam PRESAS dentro de
-	##     caixas forma 6 (R10B, R207, R209, R303, R305, R20B…) e o usuário batia em "paredes"
-	##     onde o jogo só tem uma mureta ("problema de colisão geral, em diversas cenas");
+	## Três correções que saíram dessa leitura (eu tinha atribuído `0x8004c6ec` à forma 4, que é
+	## da forma 3, e tratava a forma 5 como "sem resposta"): **a forma 5 empurra como caixa**, a
+	## **forma 4 é um LOSANGO** (`_responder_losango`) e as **formas 2 e 3 são CÁPSULAS**
+	## (`_responder_capsula`) — nunca foram "a linha média".
+	##   • 6 "L" → SÓ as duas arestas: respondê-la como caixa cheia selava salas inteiras (17
+	##     chegadas de porta nasciam PRESAS dentro de caixas forma 6 — R10B, R207, R209, R303,
+	##     R305, R20B…);
 	##   • 9..15 → rampas/escadas, não empurram no plano (`0x8004ce2c` cuida do Y).
 	if r.forma >= 9:
 		return false
 	if r.forma == 0:
-		return _responder_circulo(r, res, prev_x, prev_z, rx)
+		return _responder_circulo(r, res, rx)
 	if r.forma == 4:
 		return _responder_losango(r, res, rx, rz, girado)
-	if r.forma in [2, 3, 6]:
+	if r.forma == 2 or r.forma == 3:
+		return _responder_capsula(r, res, prev_x, prev_z, rx, rz, girado)
+	if r.forma == 6:
 		return _responder_arestas(r, res, prev_x, prev_z, rx, rz, girado)
-	if (r.mask & 0x0F00) == 0 and r.forma in [1, 5, 7, 8]:       # `0x8004c988`: sem arestas
-		return false
+	return _responder_caixa(r, res, prev_x, prev_z, rx, rz, girado)
+
+
+func _responder_caixa(r: Rect, res: Resolvido, prev_x: int, prev_z: int,
+		rx: int, rz: int, girado: bool) -> bool:
+	## `0x8004c960` — a resposta de CAIXA CHEIA das formas 1/5/7/8. É também a **faixa do meio**
+	## das cápsulas: as formas 2/3 caem aqui em `0x8004c67c`/`0x8004c7ec`, com o registro
+	## ORIGINAL e o mesmo raio.
+	if (r.mask & 0x0F00) == 0:                                   # `0x8004c988`: sem arestas
+		return false                                             # (acende `+0x2e |= 0x80` e sai)
 	var p := Vector2i(prev_x, prev_z)
 	var n := Vector2i(res.x, res.z)
 	if girado:
@@ -557,32 +571,76 @@ func _responder_losango(r: Rect, res: Resolvido, rx: int, rz: int, girado: bool)
 	return corr_x != 0 or corr_z != 0
 
 
+func _responder_capsula(r: Rect, res: Resolvido, prev_x: int, prev_z: int,
+		rx: int, rz: int, girado: bool) -> bool:
+	## Formas 2 (`0x8004c57c`) e 3 (`0x8004c6ec`) = **CÁPSULA** (stadium): caixa cheia na faixa do
+	## meio, **círculo em cada ponta**. Desassembladas instrução por instrução — nenhuma das duas
+	## responde sozinha: as duas são DESPACHANTES que classificam o ponto em 1 de 4 códigos e
+	## delegam para `0x8004c960` (caixa) ou `0x8004c408` (radial).
+	##
+	## Forma 2 (eixo longo = X). `0x8004c58c`..`0x8004c5ac` monta a geometria:
+	##     t4 = f1 ; span = f3 − f1 ; h = sext16(span) >> 1     (`sll 0x10` + `sra 0x11`)
+	##     hi = f2 − h   (`0x8004c5a8`)      lo = f0 + h   (`0x8004c5ac`)
+	## `0x8004c5b8`..`0x8004c5e4`: se `+0x0a & 0x1000`, o ponto vem dos globais `0x800deb64/68`
+	## (a posição JÁ GIRADA que o laço gravou em `0x8004b108/10`); senão vem de `ator+0x08/+0x10`.
+	## `0x8004c5ec`..`0x8004c608` monta o código com DOIS sinais, **os dois em X**:
+	##     cod = (sinal(X − hi) << 1) | sinal(X − lo)
+	## e o despacho (`0x8004c610`..`0x8004c63c`) é:
+	##     cod 2 (lo ≤ X < hi) → `0x8004c960` com o registro ORIGINAL → CAIXA CHEIA
+	##     cod 3 (X < lo)      → quadrado temporário em `0x800deb48` = (f0, f1, f0+span, f1+span)
+	##                            e `0x8004c408` → CÍRCULO de raio h em (f0+h, f1+h)
+	##     cod 0 (X ≥ hi)      → temporário (f2−span, f1, f2, f3) → círculo em (f2−span+h, f1+h)
+	##     cod 1               → `j 0x8004c6dc` sem mexer em nada
+	## A forma 3 é o ESPELHO exato (eixo longo = Z, h do span de X, classificação em Z:
+	## `0x8004c6fc`..`0x8004c778`; temporários em `0x8004c7b4` e `0x8004c800`).
+	##
+	## Antes disto o port respondia "só a linha média em Z" (uma parede fina de 1 unidade), então
+	## **todo o volume do móvel ficava andável**: 484 registros forma 2 em 117 salas + 373 forma 3
+	## em 106 salas de entulho/mureta sem colisão. A geometria do PREDICADO (`0x8004f498`/
+	## `0x8004f5b4` — linha média + 2 diagonais deslocadas de h) continua valendo e foi conferida
+	## aqui: é a aproximação BARATA da mesma cápsula, e `segmentos()` já a implementa certo.
+	var n := Vector2i(res.x, res.z)
+	if girado:
+		n = girar_para_rect(res.x, res.z, r)                     # `0x8004c5cc` (globais girados)
+	var span := (r.f3 - r.f1) if r.forma == 2 else (r.f2 - r.f0)
+	var h := span >> 1                                           # `sra 0x11`
+	var lo := (r.f0 if r.forma == 2 else r.f1) + h
+	var hi := (r.f2 if r.forma == 2 else r.f3) - h
+	var pe := n.x if r.forma == 2 else n.y                       # `t1`: só UM eixo classifica
+	var cod := (2 if pe < hi else 0) | (1 if pe < lo else 0)
+	if cod == 2:
+		return _responder_caixa(r, res, prev_x, prev_z, rx, rz, girado)
+	if cod == 1:
+		# Só acontece se o span TRANSVERSAL for maior que o longo (lo > hi): aí a faixa do meio
+		# some e o EXE sai por `0x8004c628` **sem empurrar**, devolvendo `v0 = 1` (o `sltiu` de
+		# `0x8004c614` ficou em v0) — o chamador só usa isso para acumular o delta, que é zero.
+		# Medido: 0 dos 857 registros forma 2/3 das 169 salas cai nesse caso.
+		return true
+	var c := Vector2i(r.f0 + h, r.f1 + h)                        # ponta `lo` (cod 3)
+	if cod == 0:                                                 # ponta `hi`
+		if r.forma == 2:
+			c = Vector2i(r.f2 - span + h, r.f1 + h)
+		else:
+			c = Vector2i(r.f0 + h, r.f3 - span + h)
+	return _empurrao_radial(res, n.x, n.y, c.x, c.y, h, rx, girado)
+
+
 func _responder_arestas(r: Rect, res: Resolvido, prev_x: int, prev_z: int,
 		rx: int, rz: int, girado: bool) -> bool:
-	## Formas 6 ("L"), 2, 3 e 4: o collider são ARESTAS, não uma caixa — o personagem pode
-	## estar "dentro" da envolvente livremente; o que não pode é CRUZAR uma aresta. Cada
-	## aresta eixo-alinhada vira uma parede fina inflada pelo raio: cruzou → clampa no lado
-	## de onde veio. Aproximação declarada das respostas `0x8004d194`/`0x8004c57c`/
-	## `0x8004c6ec` (não desassembladas); as diagonais das formas 2/3 ficam com o predicado.
+	## Forma 6 ("L"): o collider são duas ARESTAS, não uma caixa — o personagem pode estar
+	## "dentro" da envolvente livremente; o que não pode é CRUZAR uma aresta. Cada aresta
+	## eixo-alinhada vira uma parede fina inflada pelo raio: cruzou → clampa no lado de onde
+	## veio. Aproximação declarada da resposta `0x8004d194` (não desassemblada).
 	var p := Vector2i(prev_x, prev_z)
 	var n := Vector2i(res.x, res.z)
 	if girado:
 		p = girar_para_rect(prev_x, prev_z, r)
 		n = girar_para_rect(res.x, res.z, r)
-	var arestas: Array = []                        # [eixo("x"/"z"), coord, span_lo, span_hi]
-	match r.forma:
-		6:
-			# canto por `bits & 0x30` (mesma seleção de `segmentos()`)
-			var zl := r.f3 if (r.bits & 0x20) == 0 else r.f1
-			var xl := r.f0 if (r.bits & 0x10) != 0 else r.f2
-			arestas = [["z", zl, r.f0, r.f2], ["x", xl, r.f1, r.f3]]
-		2:
-			arestas = [["z", (r.f1 + r.f3) / 2, r.f0, r.f2]]
-		3:
-			arestas = [["x", (r.f0 + r.f2) / 2, r.f1, r.f3]]
-		4:
-			arestas = [["z", (r.f1 + r.f3) / 2, r.f0, r.f2],
-				["x", (r.f0 + r.f2) / 2, r.f1, r.f3]]
+	# canto por `bits & 0x30` (mesma seleção de `segmentos()`)
+	var zl := r.f3 if (r.bits & 0x20) == 0 else r.f1
+	var xl := r.f0 if (r.bits & 0x10) != 0 else r.f2
+	# [eixo("x"/"z"), coord, span_lo, span_hi]
+	var arestas: Array = [["z", zl, r.f0, r.f2], ["x", xl, r.f1, r.f3]]
 	var corr_x := 0
 	var corr_z := 0
 	for a: Array in arestas:
@@ -617,28 +675,55 @@ func _responder_arestas(r: Rect, res: Resolvido, prev_x: int, prev_z: int,
 	return true
 
 
-func _responder_circulo(r: Rect, res: Resolvido, prev_x: int, prev_z: int, rx: int) -> bool:
-	## Forma 0: empurra RADIALMENTE para fora do círculo inflado (raio do círculo + raio do
-	## ator). Aproximação declarada da resposta `0x8004c408`.
-	var c := r.centro()
-	var alcance := r.raio() + rx
-	if alcance <= 0:
+func _responder_circulo(r: Rect, res: Resolvido, rx: int) -> bool:
+	## Forma 0 → `0x8004c408` direto pela tabela, com `a1 = +raio`. Por ser positivo, o `bgez` de
+	## `0x8004c430` faz a rotina ler o ponto CRU do ator (`+0x08/+0x10`) e NÃO des-rotacionar a
+	## correção: a forma 0 **ignora o bit `0x1000`**. (Sem efeito no dado real: 0 dos 632
+	## registros forma 0 das 169 salas tem esse bit.)
+	## Raio e centro saem do próprio registro em `0x8004c454`..`0x8004c468`:
+	## `raio = (f2−f0) >> 1`, `centro = (f0+raio, f1+raio)`.
+	return _empurrao_radial(res, res.x, res.z, r.f0 + r.raio(), r.f1 + r.raio(),
+		r.raio(), rx, false)
+
+
+func _empurrao_radial(res: Resolvido, px: int, pz: int, cx: int, cz: int,
+		raio_col: int, raio_ator: int, girado: bool) -> bool:
+	## `0x8004c408` — a resposta RADIAL. Serve a forma 0 e as duas PONTAS das cápsulas 2/3.
+	##     dx = X − cx ; dz = Z − cz ; d = SquareRoot0(dx² + dz²)   (`0x80087ff4`)
+	##     pen = (raio_col + raio_ator) − d ;  pen ≤ 0 → sem colisão (`0x8004c4a0`, devolve 0)
+	##     Δx = (dx ± 8)·pen / d      Δz = (dz ± 8)·pen / d   (`0x8004c4a8`..`0x8004c4ec`)
+	##     x += Δx ; z += Δz                                  (`0x8004c54c`..`0x8004c558`)
+	## O viés de 8 acompanha o sinal de dx/dz (os dois `addiu` do par `bgtz`).
+	## **NÃO existe teto de rejeição aqui**: não há um único `slti 0x191` em
+	## `0x8004c408`..`0x8004c578`, então a resposta radial nunca acende a flag `0x100`. Eu tinha
+	## inventado um (`> 2·raio`) e um empurrão "para a borda + 1" — os dois saíram.
+	## Quando o collider é girado, o chamador passa `a1` NEGATIVO (`negu` em `0x8004c6d0`/
+	## `0x8004c840`): aí `0x8004c438` volta o sinal, lê o ponto dos globais e des-rotaciona a
+	## correção com o mesmo 181/256 de `_aplicar` (`0x8004c4f8`..`0x8004c534`).
+	var dx := px - cx
+	var dz := pz - cz
+	var d := _raiz(dx * dx + dz * dz)
+	var pen := raio_col + raio_ator - d
+	if pen <= 0:                                       # `blez $s0, 0x8004c55c`
 		return false
-	var dx := res.x - c.x
-	var dz := res.z - c.y
-	var d := int(sqrt(float(dx * dx + dz * dz)))
-	if d > alcance:
-		return false
-	if absi(alcance - d) > 2 * rx:                     # fundo demais: mesmo espírito do 0x100
-		res.rejeitado = true
+	if d == 0:
+		# DECLARADO, não provado no EXE: aqui o MIPS faria `div` por zero. O R3000 não gera
+		# exceção — deixa LO = ±1 (sinal oposto ao do dividendo), o que daria um empurrão de 1
+		# unidade. É o que o port faz, por ser o menos destrutivo; nunca vi acontecer no jogo.
+		res.x += 1
+		res.z += 1
 		return true
-	if d == 0:                                         # em cima do centro: sai por onde veio
-		dx = prev_x - c.x
-		dz = prev_z - c.y
-		d = maxi(1, int(sqrt(float(dx * dx + dz * dz))))
-	res.x = c.x + dx * (alcance + 1) / d
-	res.z = c.y + dz * (alcance + 1) / d
+	var bx := dx + VIES_RADIAL if dx > 0 else dx - VIES_RADIAL
+	var bz := dz + VIES_RADIAL if dz > 0 else dz - VIES_RADIAL
+	_aplicar(res, bx * pen / d, bz * pen / d, girado)
 	return true
+
+
+static func _raiz(v: int) -> int:
+	## `0x80087ff4` (SquareRoot0): usa o contador de zeros à esquerda da GTE e uma tabela em
+	## `0x800a3b80` com 12 bits de fração, truncando no fim (`srl 0xc`). O port usa a raiz de
+	## ponto flutuante truncada — DECLARADO: pode diferir da tabela em uma unidade.
+	return int(sqrt(float(maxi(v, 0))))
 
 
 func _escapar_de_dentro(r: Rect, res: Resolvido, p: Vector2i, n: Vector2i,

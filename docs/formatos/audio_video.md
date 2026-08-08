@@ -116,6 +116,27 @@ java -jar <caminho>/jpsxdec.jar -x tools/re3.idx -a video -dir <saida>
 
 Origem no disco: `CD_DATA/ZMOVIE/<NOME>.STR`.
 
+### 4.1 Índice de arquivo e a TABELA DE FILMES do EXE (fechado em ago/2025)
+
+Os 13 `.STR` são os **únicos** registros com `flags = 0xff` na tabela de arquivos
+`0x800946a4`, nos índices **`0x53a`..`0x546`** (casamento por LBA contra `tools/re3.idx`):
+
+| índice | 0x53a | 0x53b | 0x53c..0x544 | 0x545 | 0x546 |
+|---|---|---|---|---|---|
+| arquivo | `ENDA` | `ENDB` | `INS01`..`INS09` | **`OPN`** | **`ROOPNE`** |
+
+O **reprodutor** é uma **tarefa do EXE**, não um overlay: `0x800321c4` prepara,
+`0x800324a0` faz o tick (chamado pelo laço de quadro em `0x80029370`) e a tabela de
+**14 registros de 24 B** está em **`0x8009ca64`** (`+0x00` = índice de arquivo, `+0x04` =
+quadros = jPSXdec−5 em 13/13, `+0x0a/+0x0e` = 320 e 40, `+0x14` = volume 0..127). O opcode
+SCD que toca FMV é o **`0x7a`** (2 B, handler `0x80055520`). Campos, de-para
+filme→sala e as quatro chamadas do `TITLE.BIN` estão em
+[`../decomp/notes/boot_ptbr_hd.md`](../decomp/notes/boot_ptbr_hd.md) §7.
+
+**De-para PS1 ↔ pacote de PC:** `ROOPNE` ≡ `roop.mp4` (236 quadros/15,7 s no PS1 contra
+15,49 s no mp4; o `ddraw.dll` do Classic REbirth tem o par `roop`/`roop_ne` em `+0x2fe1a0`).
+**`snl.mp4` (3,31 s) NÃO existe no disco do PS1** — são 13 `.STR`, sem SNL: é extra do PC.
+
 ## 5. Estrutura final da saída
 
 ```

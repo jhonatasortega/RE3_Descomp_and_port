@@ -417,6 +417,13 @@ func _registrar_aot(op: int) -> void:
 		a.kind = Aot.Kind.BOX
 		a.box = Rect2i(s16(pc + 6), s16(pc + 8), s16(pc + 10), s16(pc + 12))
 
+	# PAYLOAD (os 6 bytes que o handler `0x8009e0bc[sce]` recebe em `a0`). O laço da VM de AOT
+	# escolhe a base pelo bit `0x80` do `sat` (`0x80050a88 andi $v0,$v0,0x80`): `aot+0x14` quando
+	# aceso, `aot+0xc` quando apagado — e `aot = opcode + 2`, logo `opcode+0x16` ou `opcode+0x0e`.
+	var pbase := (pc + 0x16) if (a.sat & Aot.SAT_QUAD) != 0 else (pc + 0x0E)
+	var plen := mini(6, maxi(0, bytes.size() - pbase))
+	a.payload = bytes.slice(pbase, pbase + plen)
+
 	if op == 0x61 and a.is_porta():
 		a.to_pos = Vector3i(s16(pc + 0x0E), s16(pc + 0x10), s16(pc + 0x12))
 		a.to_facing = s16(pc + 0x14)
@@ -500,6 +507,49 @@ func portas() -> Array[Aot]:
 		if a.is_porta():
 			saida.append(a)
 	return saida
+
+
+func aots_de_sce(sce: int) -> Array[Aot]:
+	## Todos os AOTs ATIVOS de um tipo `sce` (o índice da tabela `0x8009e0bc`).
+	var saida: Array[Aot] = []
+	for k in aots:
+		var a: Aot = aots[k]
+		if a.sce == sce and a.ativo:
+			saida.append(a)
+	return saida
+
+
+func baus() -> Array[Aot]:
+	return aots_de_sce(Aot.SCE_BAU)
+
+
+## Distância do ponto de sonda: `0x26c` = 620, lido em `0x800505c8` (o laço roda
+## `rotate(0x26c, 0, char+0x6e)` por `0x80078690` e testa esse ponto, não o corpo).
+const SONDA := 620
+
+
+static func sonda_de(pos: Vector3i, facing: int) -> Vector2i:
+	## Ponto testado pelos AOTs com `sat & 0x20`: 620 unidades à FRENTE do personagem.
+	return Vector2i(
+		pos.x + (PS1Math.rsin(facing) * SONDA >> PS1Math.SHIFT),
+		pos.z - (PS1Math.rcos(facing) * SONDA >> PS1Math.SHIFT))
+
+
+func aot_de_acao(sce: int, pos: Vector3i, facing: int) -> Aot:
+	## AOT do tipo `sce` que o botão de AÇÃO dispararia agora — a mesma ordem do motor:
+	## exige `sat & 0x10` (a passagem de ação) e usa corpo/sonda conforme `sat & 0x40`/`0x20`.
+	## É o gatilho do BAÚ (`sce 9`, `sat 0x31` nos 16 do jogo) e da MÁQUINA DE ESCREVER (`sce 8`).
+	var sonda := sonda_de(pos, facing)
+	var corpo := Vector2i(pos.x, pos.z)
+	for a: Aot in aots_de_sce(sce):
+		if a.exige_acao() and a.disparado(corpo, sonda):
+			return a
+	return null
+
+
+func bau_de_acao(pos: Vector3i, facing: int) -> Aot:
+	## Atalho do gatilho do baú: `sce 9`. Devolve `null` se não há baú ao alcance.
+	return aot_de_acao(Aot.SCE_BAU, pos, facing)
 
 
 func _retornar() -> void:

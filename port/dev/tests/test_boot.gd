@@ -16,12 +16,88 @@ extends RefCounted
 
 func run(t: Object) -> bool:
 	_dados_do_boot(t)
+	_filmes(t)
 	_passos(t)
 	_fluxo_inteiro(t)
 	_titulo(t)
 	_legendas(t)
 	_video(t)
 	return true
+
+
+# ────────────────────── a tabela de filmes do EXE (0x8009ca64) ──────────────────────
+
+func _filmes(t: Object) -> void:
+	## O reprodutor de FMV do RE3 é uma TAREFA do EXE (`0x800321c4` prepara, `0x800324a0`
+	## faz o tick a partir do laço de quadro em `0x80029370`), com uma tabela própria de 14
+	## registros de 24 B em `0x8009ca64` — exatamente onde termina a de overlays
+	## (`0x8009c944 + 24*12`). Este grupo protege a decodificação dos campos.
+	t.group("filmes (0x8009ca64)")
+	var raw: Variant = JSON.parse_string(
+		FileAccess.get_file_as_string("res://data/boot_flow.json"))
+	if not (raw is Dictionary):
+		return
+	var d: Dictionary = raw
+	if not t.check(d.has("filmes"), "boot_flow.json traz a tabela de filmes"):
+		return
+	var f: Dictionary = d["filmes"]
+	var lista: Array = f["lista"]
+	t.eq(lista.size(), 14, "14 registros de 0x18 bytes")
+	t.eq(String(f["tabela"]), "0x8009ca64", "base da tabela")
+
+	# O que PROVA o campo +0x04: ele é o número de quadros do jPSXdec MENOS 5, nos 13 vídeos
+	var deltas_ok := 0
+	for e: Dictionary in lista:
+		if e.get("quadros_jpsxdec") != null and int(e["quadros_menos_jpsxdec"]) == -5:
+			deltas_ok += 1
+	t.eq(deltas_ok, 13, "+0x04 = (quadros do jPSXdec − 5) em 13 dos 14 registros")
+	# o 14º é o MESMO ROOPNE com 945 quadros (o laço de atração longo), e por isso não bate
+	var r13: Dictionary = lista[13]
+	t.eq(String(r13["str"]), "ROOPNE", "o registro 13 é ROOPNE outra vez")
+	t.eq(int(r13["quadros"]), 945, "com 945 quadros = 63,0 s (≈ 4 voltas de 231)")
+
+	# geometria: 320 de largura em y = 40 -> 40 + 160 + 40 = 240 (quadro 320x160 centrado)
+	for e2: Dictionary in lista:
+		t.eq(int(e2["largura"]), 320, "%s: largura 320 (+0x0a)" % e2["str"])
+		t.eq(int(e2["y"]), 40, "%s: y = 40 (+0x0e); 40+160+40 = 240" % e2["str"])
+
+	# os índices de arquivo são os 13 .STR de CD_DATA/ZMOVIE (flags 0xff na tabela 0x800946a4)
+	var r0: Dictionary = lista[0]
+	t.eq(int(r0["arquivo_indice"]), 0x545, "registro 0 = índice 0x545 = ZMOVIE/OPN.STR")
+	t.eq(String(r0["mp4"]), "opn", "e no pacote HD é opn.mp4")
+	var r12: Dictionary = lista[12]
+	t.eq(int(r12["arquivo_indice"]), 0x546, "registro 12 = 0x546 = ZMOVIE/ROOPNE.STR")
+	t.eq(String(r12["mp4"]), "roop", "e no pacote HD é roop.mp4")
+	t.eq(int(r12["volume"]), 90, "registro 12: volume 90/127 (+0x14)")
+	t.eq(int(r0["volume"]), 127, "registro 0 (opn): volume 127/127")
+
+	# o filme que FALTAVA antes do menu
+	var fa: Dictionary = d["filme_atracao"]
+	t.eq(int(fa["indice"]), 0x0C, "o filme de atração é o registro 0xc (0x801943a4)")
+	t.eq(String(fa["mp4"]), "roop", "= roop.mp4")
+
+	# o atrator do menu NÃO é o FMV de abertura
+	var at: Dictionary = d["atrator"]
+	t.eq(int(at["timeout_ticks"]), 900, "timeout do atrator: 900 ticks")
+	t.check(String(at["para_onde"]).contains("10"),
+		"o timeout vai para o sub 10 (demo jogável), não para o sub 11")
+
+	# opcode SCD 0x7a = tocar FMV; R10D NÃO tem nenhum
+	var op: Dictionary = f["opcode_scd"]
+	t.eq(int(op["opcode"]), 0x7A, "o opcode SCD que toca FMV é 0x7a (handler 0x80055520)")
+	t.eq(int(op["bytes"]), 2, "e ocupa 2 bytes: [0x7a, índice]")
+	var salas: Dictionary = op["salas"]
+	t.eq(String(salas["INS01"]), "STAGE1/R110 func 3", "INS01 é tocado por R110")
+	t.check(String(op["nota_r10d"]).contains("nao tem nenhum opcode 0x7a"),
+		"R10D não tem 0x7a: a cinemática da sala inicial não é FMV")
+
+	# som da tela de título
+	var s: Dictionary = d["som_titulo"]
+	t.eq(String(s["banco_se"]), "C_01",
+		"o banco de SE do título é C_01 (0x801944c0: 0x8007809c(cat=0, banco=1))")
+	t.eq(int(s["banco_id"]), 1, "banco 1 -> file_index 0x104 + 1*2 = 0x106 = SOUND/C_01.VH")
+	t.eq(String(s["bgm"]), "main38", "a BGM é a MAIN38 (índice 0x121)")
+	t.eq(int(s["bgm_indice"]), 0x121, "índice de arquivo 0x121 = SOUND/MAIN38.BGM")
 
 
 # ────────────────────── o fluxo inteiro, do 1º tick até o jogo ──────────────────────
@@ -39,12 +115,18 @@ func _fluxo_inteiro(t: Object) -> void:
 	var bgm: Array[String] = []
 	b.pediu_bgm.connect(func(f: String) -> void: bgm.append(f))
 
+	var parou_bgm := [0]
+	b.pediu_parar_bgm.connect(func() -> void: parou_bgm[0] += 1)
+
 	t.eq(b.passo_atual(), "aviso_fade_in", "o 1º passo é o fade-in do aviso legal")
 	b.avancar_ticks(300)
 	t.eq(b.passo_atual(), "capcom_para_branco", "300 ticks: o aviso acabou, entra o CAPCOM")
 	b.avancar_ticks(240)
-	t.eq(b.passo_atual(), "titulo_espera", "540 ticks: o CAPCOM acabou, entra o título")
-	t.eq(bgm, ["main38"], "a BGM pedida é a MAIN38 (0x801944dc)")
+	# 540 ticks: acabou o switch do CAPCOM -> filme de atração (0x801943a4). Com
+	# `tocar_fmv = false` o passo é atravessado na hora e o fluxo cai no título.
+	t.eq(b.passo_atual(), "titulo_espera", "540 ticks: CAPCOM -> filme de atração -> título")
+	t.eq(parou_bgm[0], 1, "entrar no filme de atração PARA a BGM (1 pedido)")
+	t.eq(bgm, ["main38"], "a BGM pedida é a MAIN38 (0x801944dc), e só DEPOIS do filme")
 	b.avancar_ticks(71)
 	t.eq(b.passo_atual(), "menu", "611 ticks: o menu está no ar")
 	t.eq(b.titulo.fase, Titulo.Fase.MENU, "e o Titulo está na fase MENU")
@@ -66,11 +148,14 @@ func _fluxo_inteiro(t: Object) -> void:
 	b2.pular()
 	t.eq(b2.passo_atual(), "capcom_para_branco", "pular no aviso vai para o logo CAPCOM")
 	b2.pular()
+	# `0x8019432c` sai do switch do CAPCOM, mas `filme_prepara(0xc)` está DEPOIS do switch:
+	# pular o logo cai no filme de atração (atravessado sem `.ogv`) e daí no título.
 	t.eq(b2.passo_atual(), "titulo_espera", "pular no logo vai para a entrada do título")
 	b2.pular()
 	t.eq(b2.passo_atual(), "menu", "pular na entrada do título vai direto para o menu")
 
-	# o atrator: 900 ticks parado no menu levam ao FMV (o original alterna com a PDEMO)
+	# o atrator: 900 ticks parados no menu NÃO tocam o FMV de abertura. No original vão para
+	# o sub 10 (demo jogável); no port, repetem o filme de atração e voltam ao título.
 	var b3 := Boot.new()
 	b3.entrar_no_jogo = false
 	b3.tocar_fmv = false
@@ -79,10 +164,33 @@ func _fluxo_inteiro(t: Object) -> void:
 	b3.pular()
 	b3.pular()
 	t.eq(b3.passo_atual(), "menu", "b3 no menu")
+	var fases3: Array[String] = []
+	b3.fase_mudou.connect(func(n: String) -> void: fases3.append(n))
 	for _i in 900:
 		b3.avancar_ticks(1)
-	t.check(b3.passo_atual() in ["fmv", "jogo"],
-		"900 ticks sem entrada: o atrator leva ao FMV de abertura (0x80196800)")
+	t.check(fases3.has("filme_atracao"),
+		"900 ticks sem entrada: o atrator volta ao filme de atração (roop)")
+	t.check(not fases3.has("fmv"),
+		"e NUNCA passa pelo fmv: 0x8019566c grava ctx[1]=10 (PDEMO), nunca 11")
+	t.check(b3.passo_atual() in ["filme_atracao", "titulo_espera", "titulo_flash",
+			"titulo_fade_in", "menu"],
+		"o atrator fecha o ciclo no título (obtido: %s)" % b3.passo_atual())
+
+	# o FMV de abertura só existe DEPOIS de confirmar NEW GAME e escolher a dificuldade
+	var b5 := Boot.new()
+	b5.entrar_no_jogo = false
+	b5.tocar_fmv = false
+	b5.preparar()
+	b5.pular()
+	b5.pular()
+	b5.pular()
+	var fases5: Array[String] = []
+	b5.fase_mudou.connect(func(n: String) -> void: fases5.append(n))
+	b5.titulo.cursor = Titulo.Item.NOVO_JOGO
+	b5.titulo.confirmar()                           ## abre a dificuldade
+	t.check(not fases5.has("fmv"), "confirmar NEW GAME (só a dificuldade) NÃO dispara o FMV")
+	b5.titulo.confirmar()                           ## escolhe HARD -> aí sim
+	t.check(fases5.has("fmv"), "o FMV entra só depois de escolher a dificuldade (0x801960e8)")
 
 	# EASY liga o bit 0x100 e o port espelha em GameState.difficulty
 	var b4 := Boot.new()
@@ -179,6 +287,31 @@ func _dados_do_boot(t: Object) -> void:
 		"EASY MODE em PT = MODO FACIL")
 	t.eq(String((rot["diff_HARD_MODE"] as Dictionary)["pt"]), "MODO DIFICIL",
 		"HARD MODE em PT = MODO DIFICIL")
+
+	# ── POSIÇÃO X dos rótulos PT: a correção do desalinhamento ──
+	# Âncoras MEDIDAS em `0x801945e4`: borda esquerda do 1º SPRT e borda direita do último
+	# (menu: 68 e 200+60 = 260). Escolha DECLARADA: vãos iguais entre os rótulos.
+	var xs: Array[int] = []
+	var ws: Array[int] = []
+	for k4: String in ["NEW_GAME", "LOAD_GAME", "GAME_CONFIG"]:
+		var e4: Dictionary = rot[k4]
+		if not t.check(e4.has("x_tela"), "%s tem x_tela calculado" % k4):
+			return
+		xs.append(int(e4["x_tela"]))
+		ws.append(int(e4["tinta_w"]))
+	t.eq(xs[0], 68, "o 1º rótulo começa em x=68 (borda esquerda do SPRT NEW GAME)")
+	t.eq(xs[2] + ws[2], 260, "o último termina em 260 (borda direita do SPRT GAME CONFIG)")
+	var vao1 := xs[1] - (xs[0] + ws[0])
+	var vao2 := xs[2] - (xs[1] + ws[1])
+	t.eq(vao1, vao2, "os dois vãos são IGUAIS (era 13 e 32 com a regra antiga)")
+	t.check(vao1 > 0, "e são positivos: os rótulos não se sobrepõem (%d px)" % vao1)
+	# dificuldade: âncoras 80 e 180+54 = 234
+	var hx := int((rot["diff_HARD_MODE"] as Dictionary)["x_tela"])
+	var ex := int((rot["diff_EASY_MODE"] as Dictionary)["x_tela"])
+	var ew := int((rot["diff_EASY_MODE"] as Dictionary)["tinta_w"])
+	t.eq(hx, 80, "MODO DIFICIL começa em x=80 (o mesmo x do SPRT e do title_mapping.xml)")
+	t.eq(ex + ew, 234, "MODO FACIL termina em 234 (borda direita do SPRT EASY MODE)")
+	t.check(ex > hx, "e o FÁCIL fica à direita do DIFÍCIL, como no original")
 	# o que NÃO tem HD em português fica registrado, não escalado do SD
 	var sem: Dictionary = d["sem_hd_pt"]
 	t.check(sem.has("PRESS_ANY_BUTTON"),
@@ -207,9 +340,16 @@ func _passos(t: Object) -> void:
 		nomes.append(String(p["nome"]))
 	t.eq(nomes, ["aviso_fade_in", "aviso_exibicao", "aviso_fade_out",
 			"capcom_para_branco", "capcom_entra_logo", "capcom_exibicao",
-			"capcom_sai_logo", "capcom_para_preto",
+			"capcom_sai_logo", "capcom_para_preto", "filme_atracao",
 			"titulo_espera", "titulo_flash", "titulo_fade_in", "menu", "fmv", "jogo"],
 		"a sequência é a tabela de switch 0x80194004 + o corpo do WARNING")
+	# o filme de atração entra ENTRE o logo CAPCOM e a entrada do título (0x801943a4)
+	t.eq(nomes.find("filme_atracao"), nomes.find("capcom_para_preto") + 1,
+		"filme_atracao vem logo depois de capcom_para_preto (fim do handler 0)")
+	t.eq(nomes.find("titulo_espera"), nomes.find("filme_atracao") + 1,
+		"e antes de titulo_espera (estado 1 é que carrega o título e a MAIN38)")
+	t.eq(int((passos[nomes.find("filme_atracao")] as Dictionary)["ticks"]), 0,
+		"filme_atracao não tem duração em ticks: quem o encerra é o fim do vídeo")
 	# o total até o menu: 300 (aviso) + 240 (CAPCOM) + 71 (entrada do título) = 611 ticks
 	var total := 0
 	for p2: Dictionary in passos:

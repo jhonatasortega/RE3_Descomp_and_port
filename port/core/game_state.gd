@@ -294,6 +294,103 @@ func consume(item_id: int, qtd: int = 1, box: bool = false) -> bool:
 	return true
 
 
+# ──────────────────────────── BAÚ DE ITENS (transferência) ────────────────────────────
+## O baú é o `sce 9` (provado em `port/script_vm/aot.gd`): a tela é o **screen kind 2** da task
+## do menu, e os subestados dela (`0x8009f4e4`) percorrem `inv+0x28` com limite **64** —
+## exatamente os `box_slots` daqui (`exe_items.md §2.1`: MAIN 10 em `+0x00`, BOX 64 em `+0x28`).
+##
+## A REGRA DE TRANSFERÊNCIA não é inventada: é a mesma da janela de OBTER item, que está provada
+## byte a byte (`exe_items.md §2.3`, estado 0 = `0x80069cb8`):
+##   1. tenta **EMPILHAR** — `find_by_id(id)` no destino e só aceita se
+##      `slot.qtd + qtd <= 0x800a0514[id].b1` (o **máximo por item** do descritor);
+##   2. se não empilha, `find_by_id(0)` = **primeiro slot LIVRE**;
+##   3. se não há vaga, a operação FALHA e o item fica onde estava.
+## Diferença declarada: quando o destino tem o mesmo item mas só cabe PARTE, aqui transfere-se o
+## que cabe e o resto fica na origem (é o comportamento do stack-merge `0x8006cf0c`, que clampa
+## em `room = max - qtd`); o EXE do "obter" simplesmente recusa. Sem isso, mover 60 balas para um
+## baú com 200/250 travaria em vez de mover 50.
+enum Transf { OK, VAZIO, CHEIO, PARCIAL }
+
+
+func maximo_do_item(item_id: int) -> int:
+	## `0x800a0514[item_id].b1` via `Itens`. Item sem descritor → 1 (não empilha).
+	return maxi(1, Itens.maximo(item_id))
+
+
+func transferir(idx: int, de_box: bool) -> Transf:
+	## Move o slot `idx` de um lado para o outro (mão↔baú), respeitando o máximo por item.
+	## `de_box = true` → do baú para a mão; `false` → da mão para o baú.
+	var origem := _slots(de_box)
+	if idx < 0 or idx >= origem.size():
+		return Transf.VAZIO
+	var slot: Dictionary = origem[idx]
+	var item_id := int(slot.get("id", 0))
+	if item_id == 0:
+		return Transf.VAZIO
+	var qtd := int(slot.get("qtd", 0))
+	var destino := _slots(not de_box)
+	var mx := maximo_do_item(item_id)
+
+	# 1) EMPILHAR no destino (só faz sentido se o item empilha e há quantidade a somar)
+	if mx > 1 and qtd > 0:
+		for i in destino.size():
+			var d: Dictionary = destino[i]
+			if int(d.get("id", 0)) != item_id:
+				continue
+			var espaco := mx - int(d.get("qtd", 0))
+			if espaco <= 0:
+				continue
+			var move := mini(espaco, qtd)
+			d["qtd"] = int(d.get("qtd", 0)) + move
+			destino[i] = d
+			qtd -= move
+			if qtd <= 0:
+				origem[idx] = _empty_slot()
+				_ajustar_equipado(idx, de_box)
+				return Transf.OK
+			slot["qtd"] = qtd
+			origem[idx] = slot
+			return Transf.PARCIAL
+
+	# 2) SLOT LIVRE no destino
+	var livre := find_by_id(0, not de_box)
+	if livre < 0:
+		return Transf.CHEIO
+	destino[livre] = {"id": item_id, "qtd": qtd, "flags": int(slot.get("flags", 0))}
+	origem[idx] = _empty_slot()
+	_ajustar_equipado(idx, de_box)
+	return Transf.OK
+
+
+func _ajustar_equipado(idx: int, de_box: bool) -> void:
+	## Guardar no baú a arma EQUIPADA tem de desequipar: no EXE a arma equipada é o SLOT
+	## `inv+0x128` (0xff = nenhuma) e o baú não é slot de equipar. Aqui `equipped` é o índice do
+	## slot de mão, então esvaziar esse slot obriga a soltar a arma — senão `equipped_item_id()`
+	## passaria a apontar para o que entrar no lugar.
+	if de_box:
+		return
+	if equipped == idx:
+		equipped = -1
+
+
+func pode_transferir(idx: int, de_box: bool) -> bool:
+	## Pré-visualização para a UI: a transferência aconteceria? (não altera nada)
+	var origem := _slots(de_box)
+	if idx < 0 or idx >= origem.size():
+		return false
+	var item_id := int(origem[idx].get("id", 0))
+	if item_id == 0:
+		return false
+	if find_by_id(0, not de_box) >= 0:
+		return true
+	if maximo_do_item(item_id) <= 1:
+		return false
+	for d: Dictionary in _slots(not de_box):
+		if int(d.get("id", 0)) == item_id and int(d.get("qtd", 0)) < maximo_do_item(item_id):
+			return true
+	return false
+
+
 func compact(box: bool = false) -> void:
 	## `compact 0x8006cd68`: empurra os slots ocupados para o começo, preservando a ordem.
 	var s := _slots(box)

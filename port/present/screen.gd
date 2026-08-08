@@ -666,8 +666,17 @@ func _atualizar_laser() -> void:
 	laser.visible = mostrar
 	if not mostrar:
 		return
+	## A MIRA SAI DA ARMA (o usuário cobrou: saía do peito). O EXE calcula o ponto do cano a partir
+	## do esqueleto em `0x80018d34` e grava em `player+0x124/0x126/0x128`; aqui uso a posição GLOBAL
+	## do anexo da arma (`WeaponAttach` no `bone04`, o punho direito), que é o mesmo ponto na prática,
+	## e caio na altura do peito só se a arma não estiver anexada.
 	var origem := Coords.to_godot_i(player.pos.x, player.pos.y, player.pos.z)
 	origem.y += float(Player.ALTURA_PS1) * 0.75 / Coords.WORLD_SCALE
+	var esq_arma := _achar_skeleton(actor_mesh)
+	if esq_arma != null:
+		var att2: Node3D = esq_arma.get_node_or_null("WeaponAttach") as Node3D
+		if att2 != null:
+			origem = att2.global_position
 	var destino_ps1 := player.pos + Vector3i(
 		PS1Math.rsin(player.facing) * Player.MIRA_ALCANCE >> PS1Math.SHIFT, 0,
 		-PS1Math.rcos(player.facing) * Player.MIRA_ALCANCE >> PS1Math.SHIFT)

@@ -15,7 +15,8 @@ extends SceneTree
 ##
 ## Variáveis:
 ##     BOOT_FASE     passo a capturar: aviso_exibicao | capcom_exibicao | capcom_entra_logo |
-##                   titulo_flash | titulo_fade_in | menu | dificuldade   (default: menu)
+##                   filme_atracao | titulo_flash | titulo_fade_in | menu | dificuldade |
+##                   fmv | jogo   (default: menu)
 ##     BOOT_CURSOR   cursor do menu (0 NEW GAME · 1 LOAD GAME · 2 GAME CONFIG)
 ##     BOOT_TICKS    ticks a avançar DENTRO do passo (para pegar o meio de um fade)
 ##     BOOT_OUT      PNG de saída (default res://_boot_<fase>.png)
@@ -36,7 +37,7 @@ func _initialize() -> void:
 	var packed: PackedScene = load("res://scenes/boot.tscn")
 	_cena = packed.instantiate()
 	_cena.set("entrar_no_jogo", _env("BOOT_ENTRAR", "") != "")
-	_cena.set("tocar_fmv", _fase == "fmv")
+	_cena.set("tocar_fmv", _fase in ["fmv", "filme_atracao"])
 	root.add_child(_cena)
 
 
@@ -80,7 +81,7 @@ func _process(_delta: float) -> bool:
 		_armado = true
 		_armar()
 		return false
-	if _fase == "fmv":
+	if _fase in ["fmv", "filme_atracao"]:
 		# o vídeo precisa de alguns quadros para decodificar antes de valer a captura
 		if _quadros == 3:
 			_posicionar_fmv()

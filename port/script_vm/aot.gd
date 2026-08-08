@@ -42,13 +42,75 @@ extends RefCounted
 
 enum Kind { BOX, QUAD }
 
-## SCE conhecidos que interessam ao gameplay (byte +2 do opcode).
+## ── A TABELA DE DESPACHO POR `sce` — `0x8009e0bc`, 15 entradas ✅ ──
+## Provado em `0x80050ad4..0x80050b08` (e o gêmeo `0x8005065c..0x80050678`): o laço de AOT lê
+## `lbu $v0, ($s0)` = **byte +0 do AOT em RAM** e faz `jalr *(0x8009e0bc + sce*4)`. E o AOT em
+## RAM é `script_pc + 2` (`0x80055c74/78`: `v0 = obj+0x1c; v0 += 2; gs+0x2158[id] = v0`), logo
+## **AOT+0 == byte +2 do opcode == `sce`**. O handler recebe `a0 = aot + 0xc` (payload; = byte
+## +14 do `0x63`) ou `aot + 0x14` quando `sat & 0x80` (forma de 4 pontos).
+##
+##     sce  handler      papel (como foi provado)
+##      0   0x80050d00   copia dois u16 p/ gs+0x780e/0x7810 (marca de AOT tocado)
+##      1   0x80050d28   PORTA "normal" (produtor da troca de sala)
+##      2   0x8005111c   ITEM: grava gs+0x21dc e abre a janela de obter (exe_items.md §2.3)
+##      3   0x8005127c   `jr $ra` — NADA (slot morto)
+##      4   0x80051284   MENSAGEM: `0x8002fd30(0, u16@+2|0x2000, u16@+0, u16@+4<<16)`
+##      5   0x800512bc   EVENTO: inicia THREAD do script (ver `evento_func()`)
+##      6   0x800512fc   FLAG set/clear (mesmo handler do opcode 0x4d — exe_items.md §1.1)
+##      7   0x8005136c   escreve u16@+0 em `*(0x800cc878)+0xa`
+##      8   0x80051388   **SAVE / MÁQUINA DE ESCREVER** — a rotina per-frame `0x800513cc`
+##                       faz `find_by_id(0x81)` em `0x80051404`, e `0x81` = **Ink Ribbon**
+##                       ("posso salvar meu progresso... com uma máquina de escrever")
+##      9   0x800514c4   **BAÚ DE ITENS** — `0x800514cc` grava `2` em `0x800e01c4` = `ctx+0x04`
+##                       (screen kind da task do menu, ctx `0x800e01c0`). É o ÚNICO escritor de
+##                       kind 2 no EXE (varredura de todo `sb/sh/sw ..., 0x1c4(reg)`), e os
+##                       subestados do kind 2 (tabela `0x8009f4e4`) percorrem `inv+0x28` com
+##                       limite **64**: `0x80064820 addiu $v0,$v0,0x28`, `slti $v0,$v0,0x40`
+##                       em `0x80064b88/0x80064bb0/0x80064d74/0x80064e38` e `addiu $v0,$zero,0x3f`
+##                       em `0x80064afc` — que é EXATAMENTE o ITEM BOX (`inv+0x28`, 64 slots).
+##     10   0x80051684   liga `gs+0x2120 |= 0x2000` e guarda o payload em `gs+0x21dc`; o
+##                       consumidor `0x80023fa8` chama `load_overlay_task(1, 0x0c + u16@+0)` =
+##                       overlay **RESULT/SELECT/STAFF_R/TITLE** (menu_overlays.md §4/§7.1)
+##     11   0x800516a4   testa piso/AOT e `0x80078930` (bitmap de modelo carregado)
+##     12   0x80051b40   **DANO**: `player+0xcc -= u16@+2` (`0x80051b9c..0x80051ba8`)
+##     13   0x80051cb0   TRANSIÇÃO de sala: `gs+0x2154 = a0` e `0x800c7960 = 1`
+##     14   0x80051d28   rotina per-frame `0x80051d60` com mensagens 7/8/9
+##
+## ⚠ **CORREÇÃO REGISTRADA**: o enum que o port herdou (`tools/scd_gameplay.py`,
+## `port/data/sce_items.json`, `docs/formatos/exe.md §2.1`) é o do **RE2** e está ERRADO de 8 a
+## 10: dizia `8=SCE_MOVE, 9=SCE_SAVE, 10=SCE_ITEMBOX`. No RE3 NTSC-U é `8=SAVE`, `9=BAÚ`,
+## `10=overlay de fim`. Confirmação independente pelo DADO: `sce 8` e `sce 9` aparecem nas
+## MESMAS 16 salas (15 em comum; só R111 tem 8 sem 9 e só R50B tem 9 sem 8) — máquina de
+## escrever e baú lado a lado na sala de save.
 const SCE_PORTA := 1
 const SCE_PORTA_13 := 13
 const SCE_ITEM := 2
 const SCE_MENSAGEM := 4
+const SCE_EVENTO := 5
 const SCE_FLAG := 6
+const SCE_SAVE := 8                ## ✅ máquina de escrever (procura Ink Ribbon 0x81)
+const SCE_BAU := 9                 ## ✅ baú de itens (screen kind 2 → varre inv+0x28 × 64)
+const SCE_FIM := 10                ## ✅ overlay RESULT/SELECT/STAFF_R/TITLE
+const SCE_DANO := 12               ## ✅ dano por área
+const SCE_TRANSICAO := 13
+## Mantido só para não quebrar quem já usava o nome antigo. NÃO é "move": ver a tabela acima.
 const SCE_MOVE := 8
+
+## ── Bits do `sat` (byte +3), lidos do laço `0x800505ac` ──
+## `0x01`/`0x02` = máscara de QUEM dispara (`a1` do laço: 1 = player, 2 = outros personagens;
+## `0x80050758 and $v0,$v1,$a3`). `0x10` = **exige o pedido de AÇÃO**: o laço roda duas vezes,
+## com `s6 = 0x10` e com `s6 = 0`, e `0x80050760/64` só aceita o AOT cujo `sat & 0x10 == s6`;
+## a passagem `s6 = 0x10` só acontece quando `gs+0x77f4 & 0x00800000` está aceso
+## (`0x80050bc4..0x80050bdc`). `0x20` = testa o PONTO DE SONDA 620 unidades à frente
+## (`0x800505c8 addiu $v0,$zero,0x26c` + rotação por `char+0x6e`, `0x80078690`); `0x40` = testa
+## a POSIÇÃO DO CORPO (`char+0x34/0x3c`); `0x80` = área em 4 pontos (payload em `+0x14`).
+## Distribuição real nos 738 gatilhos: `0x31` (ação+sonda) e `0x41` (automático no corpo)
+## cobrem tudo menos 6 casos — e casa com o jogo: save/baú/mensagem = `0x31`, flag/dano = `0x41`.
+const SAT_ATOR_PLAYER := 0x01
+const SAT_ACAO := 0x10
+const SAT_SONDA := 0x20
+const SAT_CORPO := 0x40
+const SAT_QUAD := 0x80
 
 var id := 0                       ## id do AOT (byte +1) — o motor grava em `player+0xc`
 var sce := 0
@@ -76,10 +138,69 @@ var item_qtd := 0                 ## u16 `payload+2` (era lido como u8)
 var item_flag := 0                ## u16 `payload+4`: BIT de "já pego" — do DADO, não inventado
 var item_om := 0                  ## u8 `payload+6`: slot do objeto/modelo; >= 32 = sem 3D
 var item_flags := 0               ## u8 `payload+7`: bit 0 = anima ao pegar · bit 7 = brilho
+## PAYLOAD cru do AOT (os 6 bytes que o handler recebe em `a0`): `opcode+0x0e` na forma de 2
+## pontos e `opcode+0x16` quando `sat & 0x80`. É o que `sce 4` (mensagem), `sce 5` (evento),
+## `sce 10` (overlay) e `sce 12` (dano) leem. Vazio quando o opcode não foi lido pela VM.
+var payload: PackedByteArray = PackedByteArray()
 
 
 func is_porta() -> bool:
 	return sce == SCE_PORTA or sce == SCE_PORTA_13
+
+
+func is_bau() -> bool:
+	## Baú de itens (`sce 9`, handler `0x800514c4`). Ver a tabela de despacho no topo.
+	return sce == SCE_BAU
+
+
+func is_save() -> bool:
+	## Máquina de escrever (`sce 8`, handler `0x80051388` → `0x800513cc` procura `0x81`).
+	return sce == SCE_SAVE
+
+
+func exige_acao() -> bool:
+	## `sat & 0x10`: o AOT só é despachado na passagem que depende do pedido de AÇÃO.
+	return (sat & SAT_ACAO) != 0
+
+
+func usa_sonda() -> bool:
+	return (sat & SAT_SONDA) != 0
+
+
+func usa_corpo() -> bool:
+	return (sat & SAT_CORPO) != 0
+
+
+func disparado(corpo: Vector2i, sonda: Vector2i) -> bool:
+	## Réplica da ordem do laço `0x800505ac`: primeiro o teste do CORPO (`sat & 0x40`,
+	## `0x800509d4`), e só se ele falhar o teste da SONDA (`sat & 0x20`, `0x80050a24`).
+	## Um AOT sem nenhum dos dois bits NUNCA dispara (o laço cai no `skip` em `0x80050a24`).
+	if not ativo:
+		return false
+	if usa_corpo() and contem(corpo.x, corpo.y):
+		return true
+	if usa_sonda() and contem(sonda.x, sonda.y):
+		return true
+	return false
+
+
+func evento_func() -> int:
+	## `sce 5` (SCE_EVENT, handler `0x800512bc`): o payload é o MESMO descritor do opcode `0x04`
+	## (`evt_exec`) — `u16@+0` = slot de thread (`0xff`/255 = qualquer livre de 2..9) e
+	## `u8@+3` = **índice da função** do script da sala. Sítios: `0x800512dc lhu $a0,($a1)` e
+	## `0x800512e0 lbu $a1,3($a1)` → `0x80052478`, que em `0x8005242c` faz
+	## `PC = script_base + u16[func]` (`a2 = *(0x800e0144)`, `a1 = *(u16*)(a2 + func*2)`).
+	## Devolve -1 quando o AOT não é evento ou o payload não foi lido.
+	if sce != SCE_EVENTO or payload.size() < 4:
+		return -1
+	return payload[3]
+
+
+func evento_slot() -> int:
+	## `u16@+0` do payload: slot de thread pedido (255 = "qualquer livre", 2..9 no motor).
+	if sce != SCE_EVENTO or payload.size() < 2:
+		return -1
+	return payload[0] | (payload[1] << 8)
 
 
 func is_item() -> bool:

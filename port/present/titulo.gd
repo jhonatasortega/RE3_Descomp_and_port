@@ -61,8 +61,19 @@ extends Node2D
 ## • **`PRESS ANY BUTTON` não tem contrapartida HD** (a versão de PC não usa essa tela) e o
 ##   **bloco de copyright de 2 linhas** do PS1 está vazio no atlas PT. Uso a linha única de
 ##   copyright de v=120, que existe. Isto está registrado, não disfarçado.
-## • **Centralização:** os rótulos PT têm largura diferente dos do PS1, então cada um é
-##   centralizado no CENTRO do retângulo do SPRT original (`x + (w_ps1 - w_pt)/2`).
+## • **Posição X dos rótulos (⚠ CORRIGIDO nesta rodada).** A regra antiga — centralizar
+##   cada rótulo no centro do retângulo do `SPRT` original — deixava os itens com vãos
+##   DESIGUAIS e a linha puxada para a esquerda, porque os rótulos PT têm largura
+##   diferente: "COMEÇAR JOGO" tem 53 px de tinta contra os 48 da célula `NEW GAME`, e
+##   "CONFIG" tem 28 contra os 60 de `GAME CONFIG`. Resultado medido daquela regra:
+##   caixas [65,118] [131,184] [216,244] → vãos de **13 e 32 px** (o original tem 16 e 18)
+##   e borda direita em 244 em vez de 260.
+##   A regra NOVA usa duas âncoras MEDIDAS e uma escolha declarada:
+##     · âncoras = borda esquerda do 1º `SPRT` e borda direita do último (`0x801945e4`:
+##       68 e 200+60 = 260 no menu; 80 e 180+54 = 234 na dificuldade);
+##     · **declarado:** os vãos entre os rótulos ficam IGUAIS.
+##   `tools/boot_assets.py` calcula e grava `x_tela` em `rotulos_pt` do JSON — o número
+##   não é recalculado aqui. Menu: 68 / 150 / 232 (vãos de 29). Dificuldade: 80 / 189.
 
 const ESCALA := 4
 const TELA := Vector2i(320, 240)
@@ -271,9 +282,10 @@ func _rotulo(chave_sprite: String, chave_rotulo: String, mod: float,
 	var tw := int(r.get("tinta_w", w))
 	if tw <= 0:
 		tw = w
-	# centraliza o rótulo PT no centro do retângulo do SPRT original (escolha do port)
-	var x := int(s.get("x", 0)) + (int(s.get("w", tw)) - tw) / 2
-	var y := int(s.get("y", 0))
+	# `x_tela` vem de `tools/boot_assets.py` (âncoras de `0x801945e4` + vãos iguais). Sem
+	# ele — JSON antigo — cai na regra velha, para não desenhar em cima de nada.
+	var x := int(r.get("x_tela", int(s.get("x", 0)) + (int(s.get("w", tw)) - tw) / 2))
+	var y := int(r.get("y_tela", int(s.get("y", 0))))
 	var cor := Color(mod, mod, mod, 0.5 if semitransparente else 1.0)
 	draw_texture_rect_region(_atlas, Rect2(x, y, tw, h),
 		Rect2i((u + tx) * ATLAS_ESCALA, v * ATLAS_ESCALA, tw * ATLAS_ESCALA,

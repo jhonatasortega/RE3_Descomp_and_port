@@ -144,20 +144,49 @@ ACOES = {
     "acao_15": dict(cat=0, id=15, conf="DECLARADO", prova=(
         "call site 0x800485e4 (a1=0 -> UI). NÃO PROVADO")),
     # ---- porta: banco cat 4, embutido nos DOOR*.DO1 ----
-    "porta_abrir": dict(cat=4, id=0, conf="MEDIA", prova=(
-        "cat 4 = banco de PORTA: os 76 STAGE*/DOOR??.DO1 embutem um banco VAB (magic "
+    # MEDIDO nesta rodada: o ÚNICO id de cat 4 que o motor toca é o **1**. A máquina de
+    # estados da animação de porta é a tabela de 3 funções `0x800979f0` =
+    # {0x80015498, 0x80015754, 0x80016150}; varrendo os 155 `jal 0x800746c0` do EXE, o único
+    # que cai em 0x80014000..0x80019000 é `0x800161c4` (`a0 = 0x401` -> cat 4, id 1), dentro
+    # do estado 2 (`0x80016150`). Os estados 0 e 1 não pedem SE nenhum. O gatilho é a flag
+    # `0x2000` do `u16@+6` da entrada de animação da porta (0x800163ec -> `sh 1, 0x240(gs)`),
+    # lida de volta em `0x800161b4` antes do pedido.
+    "porta_abrir": dict(cat=4, id=1, conf="MEDIA", prova=(
+        "cat 4 = banco de PORTA: os 76 STAGE*/DOORxx.DOn embutem um banco VAB (magic "
         "0x0001eeee) cujos descritores usam banco 4 em 76/76, e é o recurso que o loader "
         "0x80012818 carrega com a string de depuração 'DOOR SOUND' (0x800103ac, passada em "
-        "a3 por 0x80016534). Call site de cat 4 no EXE: 0x800161c4 (a0=0x401 -> cat 4, "
-        "id 1), na região de setup/animação de porta. A tabela tem só 4 ids (0..3) e 3-4 "
-        "amostras por porta — coerente com abrir/fechar/trancada. QUAL id é abrir e qual é "
-        "fechar NÃO foi medido: 'abrir'=0 e 'fechar'=1 é ORDEM DECLARADA")),
-    "porta_fechar": dict(cat=4, id=1, conf="MEDIA", prova=(
-        "mesmo banco de porta_abrir; o id 1 é o que aparece no call site 0x800161c4 "
-        "(a0=0x401). A associação id->abrir/fechar é DECLARADA, não medida")),
-    "porta_trancada": dict(cat=4, id=2, conf="DECLARADO", prova=(
-        "3º id do banco de porta. Nome DECLARADO por eliminação (abrir/fechar/trancada) — "
+        "a3 por 0x80016534 dentro de 0x8001644c). O **id é MEDIDO**: 0x800161c4 (a0=0x401 "
+        "-> cat 4, id 1) é o ÚNICO pedido de cat 4 do EXE inteiro, no estado 2 da máquina "
+        "de porta 0x800979f0, gatilhado pela flag 0x2000 da entrada de animação. O NOME "
+        "'abrir' é interpretação: que o momento seja abrir e não fechar NÃO foi medido")),
+    "porta_som_0": dict(cat=4, id=0, conf="DECLARADO", prova=(
+        "id 0 do banco de porta — o único VÁLIDO em 76/76 bancos (aponta o tom 1). "
+        "NENHUM call site: não existe pedido de cat 4 com id 0 no EXE. Fica exposto para "
+        "quem quiser experimentar, mas o motor NÃO o toca pela via de porta")),
+    "porta_som_2": dict(cat=4, id=2, conf="DECLARADO", prova=(
+        "3º id do banco de porta; existe em só 4 dos 76 bancos e não tem call site. "
         "NÃO PROVADO")),
+    # ---- porta TRANCADA / destrancar: são cat 2 (banco de SALA), não cat 4 ----
+    # MEDIDO no produtor de porta `0x80050d28` (jump-table de SCE `0x8009e0bc[1]`), que é
+    # quem roda quando o personagem usa a porta. Ele pede 5 SE, TODOS com cat 2:
+    #   desc+0x10 (Key_Type) == 0xfe -> a0=0x226 (0x80050dd8) + mensagem 0x11
+    #   desc+0x10 == 0xff            -> a0=0x216 (0x80050e10) + mensagem 0x12
+    #   tem a chave (0x8006cc8c>=0)  -> a0 = desc+0xe ? 0x204 : 0x225  (0x80050e74)
+    #   não tem a chave              -> a0 = desc+0xe ? 0x205 : 0x216  (0x80050ed8/0x80050f14)
+    # `desc+0xe` é o `Knock_Type` do SCE_DOOR_AOT_SET (0 em 449 das 453 portas).
+    "porta_trancada": dict(cat=2, id=0x16, conf="MEDIA", prova=(
+        "MEDIDO: 0x80050ed8/0x80050f14 no produtor de porta 0x80050d28 pedem a0=0x216 "
+        "(cat 2 = banco de SALA, id 0x16) no caminho 'não tem a chave', e 0x80050e10 "
+        "usa o mesmo id quando Key_Type==0xff (porta que nunca abre). O port não tem "
+        "amostra: o único banco de sala do disco é R000.SND e a tabela de SE dele é toda "
+        "0xffffffff — logo wav_padrao fica nulo (honesto, não inventado)")),
+    "porta_destrancar": dict(cat=2, id=0x25, conf="MEDIA", prova=(
+        "MEDIDO: 0x80050e74 pede a0 = (desc+0xe ? 0x204 : 0x225) no caminho 'tem a chave', "
+        "logo antes de instalar o callback 0x80050fe0. id 0x25 é o caso Knock_Type==0 "
+        "(449 das 453 portas); id 4 é o outro")),
+    "porta_emperrada": dict(cat=2, id=0x26, conf="MEDIA", prova=(
+        "MEDIDO: 0x80050dd8 pede a0=0x226 quando Key_Type==0xfe (10 das 453 portas), "
+        "junto da mensagem 0x11")),
 }
 
 # Banco padrão de cada `cat` quando o port não sabe qual está carregado.
@@ -343,6 +372,146 @@ def parse_porta(nome, caminho):
     info = parse_bytes(nome, b, vb_size, os.path.basename(caminho), "(embutido)")
     info["vb_offset"] = base
     return info, b[base:base + vb_size]
+
+
+# ───────────────── qual banco de porta cada SALA/PORTA usa (MEDIDO) ─────────────────
+# O índice do arquivo `DOORxx` é **campo estático do SCD**: é o `Dtex_Type` do
+# `SCE_DOOR_AOT_SET`, em `descriptor+0xc` (= opcode `0x61`+0x1a / `0x62`+0x22).
+#
+# Prova (disassembly): o loader de SOM de porta `0x8001644c` faz
+#     dtex  = lbu *(*(gs+0x2154) + 0xc)                 # 0x8001647c / 0x80016490
+#     rec   = 0x800971e4 + dtex*12                      # 0x80016498..0x800164b0
+#     fid   = lhu *( *(0x800979d4 + stage*4) + dtex*2 ) # 0x800164e4..0x80016510
+#     lba   = 0x800946a4 + fid*8                        # 0x80016518
+#     jal 0x80012818(a3 = "DOOR SOUND" 0x800103ac)      # 0x80016544
+# e depois `0x8007836c(a0 = 4, a1 = 0x801fc100)` — que é o **cat 4** do motor de SE, com
+# `SND_CTX+0x74 = 4` (`0x80016598`). O loader de TEXTURA (`0x80016208`, a3 = "DOOR TEXTURE")
+# usa o MESMO `dtex` e o mesmo par de tabelas, só com o offset `rec+4` dentro do arquivo.
+#
+# `0x800979d4` = 7 ponteiros (1 por stage) para arrays de **76 u16** (fileid), contíguos em
+# `0x800975b4..0x8009793c` (passo 0x98 = 76*2) — casa 1:1 com os 76 `DOORxx` de cada STAGE.
+#
+# E os 76 `DOORxx.DOn` são **byte-idênticos nos 7 stages** (medido, 76/76): o banco de som de
+# porta depende SÓ do índice `xx`. Por isso o nome `S1_DOORxx` do `re3_se.json` serve para
+# qualquer stage — o prefixo é histórico, não semântico. A instalação de PC confirma: lá os
+# bancos são arquivos soltos `DATA/SOUND/D_00.VH`..`D_4D.VH`, um por índice, sem stage.
+DOOR_TEX_TYPE = 0xC                  # offset do Dtex_Type DENTRO do descriptor
+EXE_DOOR_FILEID_PTRS = 0x800979D4    # 7 ponteiros u32 (1 por exe-stage)
+EXE_DOOR_REC = 0x800971E4            # registro de 12 B por dtex
+N_DOOR = 76                          # DOOR00..DOOR4B
+
+
+def banco_de_dtex(dtex):
+    """Nome do banco no `re3_se.json` para um índice de porta (`Dtex_Type`)."""
+    return "S1_DOOR%02X" % dtex
+
+
+def portas_por_sala():
+    """{sala: [{aot, sce, dtex, banco, ...}]} — o banco de porta de cada porta de cada sala.
+
+    Reusa o extrator de portas já validado (`tools/scd_door_dest.py`, 453/453 destinos) só
+    para varrer o SCD; o campo novo é o `dtex`.
+    """
+    import glob
+    import scd_door_dest as sdd
+    name2si, _si2name = sdd.room_index_map()
+    salas = {}
+    for f in sorted(glob.glob(paths.cd_data("STAGE*", "R*.ARD"))):
+        nome = os.path.splitext(os.path.basename(f))[0]
+        if nome not in name2si:
+            continue
+        rdt = sdd.rdt_of(open(f, "rb").read())
+        so = sdd.script_off(rdt)
+        nf = struct.unpack_from("<H", rdt, so)[0] // 2
+        foffs = list(struct.unpack_from("<%dH" % nf, rdt, so))
+        achadas = []
+        for fi in range(nf):
+            pc = so + foffs[fi]
+            end = so + foffs[fi + 1] if fi + 1 < nf else len(rdt)
+            guard = 0
+            while pc < end and pc + 1 < len(rdt) and guard < 8000:
+                guard += 1
+                op = rdt[pc]
+                if op == 0x01:
+                    break
+                sz = sdd.VM_SIZES.get(op)
+                if sz is None:
+                    break
+                if op in sdd.DOOR_OPCODES and pc + sz <= len(rdt) and rdt[pc + 2] in sdd.DOOR_SCE:
+                    b = bytes(rdt[pc:pc + sz])
+                    d = 2 + sdd.DOOR_PATH[op]
+                    dtex = b[d + DOOR_TEX_TYPE]
+                    achadas.append({
+                        "aot": b[1], "sce": b[2], "opcode": op, "dtex": dtex,
+                        "banco": banco_de_dtex(dtex),
+                        "door_type": b[d + 0xD],      # SCE_DOOR_AOT_SET.Door_Type
+                        "knock": b[d + 0xE],          # Knock_Type: escolhe o par de SE de cat 2
+                        "key_id": b[d + 0xF],
+                        "key_type": b[d + 0x10],      # 0xfe = emperrada, 0xff = nunca abre
+                    })
+                pc += sz
+        salas[nome] = achadas
+    return salas
+
+
+def _exe_bytes():
+    """(bytes do .text, endereço virtual da base) do `SLUS_009.23` (header PS-EXE = 0x800)."""
+    with open(paths.extracted("SLUS_009.23"), "rb") as f:
+        d = f.read()
+    assert d[:8] == b"PS-X EXE", "nao e PS-X EXE"
+    return d[0x800:], struct.unpack_from("<I", d, 0x18)[0]
+
+
+def tabela_fileid_porta():
+    """{stage(0..6): [fileid u16 ...]} lida de `0x800979d4` no EXE.
+
+    Os 7 arrays são CONTÍGUOS: o fim de um é o começo do próximo, e o do stage 6 termina
+    exatamente na tabela de ponteiros. Daí sai o tamanho de cada um — 76 entradas em 6 dos 7
+    stages e **72** no stage 5 (`R6xx`, Mercenaries), que só usa até o índice 41.
+    """
+    text, base = _exe_bytes()
+    ptrs = [struct.unpack_from("<I", text, EXE_DOOR_FILEID_PTRS - base + s * 4)[0]
+            for s in range(7)]
+    fim = ptrs[1:] + [EXE_DOOR_FILEID_PTRS]
+    out = {}
+    for s, (p, q) in enumerate(zip(ptrs, fim)):
+        out[s] = list(struct.unpack_from("<%dH" % ((q - p) // 2), text, p - base))
+    return out
+
+
+def gerar_portas_salas():
+    """Escreve `<out>/data/porta_banco.json` (sala -> banco de som de cada porta)."""
+    salas = portas_por_sala()
+    fid = tabela_fileid_porta()
+    n = sum(len(v) for v in salas.values())
+    usados = sorted({p["dtex"] for v in salas.values() for p in v})
+    dados = {
+        "_meta": {
+            "descricao": "Banco de som de PORTA (cat 4) por sala/porta do RE3 PS1. Gerado "
+                         "por tools/exe_audio.py --portas-salas.",
+            "PROVA": "dtex = SCE_DOOR_AOT_SET.Dtex_Type = descriptor+0xc (opcode 0x61 +0x1a, "
+                     "0x62 +0x22). O loader de som de porta 0x8001644c lê exatamente esse "
+                     "byte (0x8001647c) e indexa 0x800979d4[stage] (76 u16 de fileid) e "
+                     "0x800971e4 + dtex*12, carregando com a string 'DOOR SOUND' "
+                     "(0x800103ac) e abrindo o VAB como cat 4 (0x8007836c com a0=4).",
+            "STAGE_IRRELEVANTE": "os 76 STAGE*/DOORxx.DOn são byte-idênticos nos 7 stages "
+                                 "(medido 76/76) -> o banco depende só de dtex. O prefixo "
+                                 "'S1_' dos nomes em re3_se.json é histórico.",
+            "chave": "salas[<sala>] = lista de portas na ordem em que o SCD as registra; "
+                     "'aot' é o id do AOT (byte +1 do opcode), que é como o motor as indexa.",
+            "portas": n, "dtex_usados": len(usados),
+        },
+        "dtex_para_banco": {str(i): banco_de_dtex(i) for i in range(N_DOOR)},
+        "fileid_por_stage": {str(k): v for k, v in fid.items()},
+        "salas": salas,
+    }
+    out = paths.data("porta_banco.json")
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    with open(out, "w", encoding="utf-8") as f:
+        json.dump(dados, f, ensure_ascii=False, indent=1)
+    print("%s  (%d portas em %d salas, %d indices de porta usados)"
+          % (out, n, sum(1 for v in salas.values() if v), len(usados)))
+    return dados
 
 
 def coletar(portas=False):
@@ -630,6 +799,51 @@ def verificar():
         "portas: esperados 159 descritores com 12 invalidos, achei %d com %d"
         % (n_desc_porta, n_inval))
 
+    # ── o banco de porta NÃO depende do stage: os 76 DOORxx sao byte-identicos nos 7 ──
+    import hashlib
+
+    def sha_arquivo(p):
+        h = hashlib.sha1()
+        with open(p, "rb") as f:                     # em blocos: a maquina do dono e' apertada
+            for pedaco in iter(lambda: f.read(1 << 16), b""):
+                h.update(pedaco)
+        return h.hexdigest()
+
+    for xx in range(N_DOOR):
+        shas = set()
+        for st in range(1, 8):
+            p = paths.cd_data("STAGE%d" % st, "DOOR%02X.DO%d" % (xx, st))
+            shas.add(sha_arquivo(p) if os.path.isfile(p) else "(falta %s)" % p)
+        chk(len(shas) == 1,
+            "DOOR%02X difere entre os 7 stages (%d conteudos distintos)" % (xx, len(shas)))
+
+    # ── dtex (Dtex_Type) de TODAS as portas do jogo cai na faixa dos 76 DOORxx ──
+    salas = portas_por_sala()
+    n_p = sum(len(v) for v in salas.values())
+    chk(n_p == 453, "esperadas 453 portas (sce in {1,13}), achei %d" % n_p)
+    fora = [(s, p["aot"], p["dtex"]) for s, v in salas.items() for p in v
+            if not 0 <= p["dtex"] < N_DOOR]
+    chk(not fora, "dtex fora de 0..%d em %s" % (N_DOOR - 1, fora[:5]))
+    for s, v in salas.items():
+        for p in v:
+            chk(banco_de_dtex(p["dtex"]) in dict(portas),
+                "%s aot %d: banco %s nao existe" % (s, p["aot"], p["banco"]))
+
+    # ── e a tabela do EXE que o loader usa: 1 array de fileids CONTIGUOS por stage ──
+    fid = tabela_fileid_porta()
+    chk(len(fid) == 7, "esperados 7 arrays de fileid de porta, achei %d" % len(fid))
+    usa = {}
+    for s, v in salas.items():
+        usa.setdefault(int(s[1]) - 1, set()).update(p["dtex"] for p in v)
+    for s, arr in sorted(fid.items()):
+        chk(len(arr) in (72, N_DOOR) and all(a > 0 for a in arr),
+            "stage %d: array de fileid de porta invalido (%d entradas)" % (s, len(arr)))
+        chk(arr == list(range(arr[0], arr[0] + len(arr))),
+            "stage %d: fileids de porta deviam ser contiguos (%s...)" % (s, arr[:4]))
+        chk(max(usa.get(s, {0})) < len(arr),
+            "stage %d: usa dtex %d mas o array tem so %d entradas"
+            % (s, max(usa.get(s, {0})), len(arr)))
+
     print("verificacao: %d ok, %d falha" % (ok, falha))
     return ok, falha
 
@@ -658,7 +872,11 @@ def main(argv):
     if "--portas" in argv:
         extrair_portas()
         return 0
+    if "--portas-salas" in argv:
+        gerar_portas_salas()
+        return 0
     gerar()
+    gerar_portas_salas()
     return 0
 
 

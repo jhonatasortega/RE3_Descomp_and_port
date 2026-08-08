@@ -31,11 +31,16 @@ Rotinas (a0=ctx, a1=buffer de primitivas, a2=tabela de retangulos, a3=empacotado
     0x8006e9d4  posiciona POLY_FT4  + AddPrim        a3 = cnt | base_idx<<8 | ot<<16
     0x8006eaf0  posiciona TILE      + AddPrim        a3 = cnt | base_idx<<8 | ot<<16
 
+O ECG (os batimentos) do painel de condicao NAO passa por essas 6 rotinas: ele e um sexto
+primitivo, `LINE_F2` (code 0x40), montado em `0x8006e84c` e desenhado em `0x8006c484`.
+Ver `docs/decomp/notes/menu_ecg.md` e o subcomando `ecg` abaixo.
+
 Uso:
     python tools/status_layout.py rects            # dump das 2 tabelas de retangulo
     python tools/status_layout.py calls            # sitios de montagem/posicionamento
     python tools/status_layout.py slots            # tabela VRAM de icone por slot
     python tools/status_layout.py sld              # offsets de ITEMA.SLD por item_id
+    python tools/status_layout.py ecg              # ECG: cor, ponteiros e forma de onda
     python tools/status_layout.py json <saida>     # tudo em JSON
 """
 import sys, os, struct, json
@@ -59,6 +64,19 @@ RECT_B_END = 0x800A0010
 ICON_SLOT_VRAM = 0x800A004C  # (u16 x, u16 y) VRAM por slot de icone
 SLD_OFFSETS = 0x8009F678    # u32 offset em ITEMA.SLD por item_id
 ITEMI_FLAGS = 0x8009F568    # u8 por item_id (byte de flags do pedido de CD)
+
+# --- ECG do painel de condicao (provado; ver docs/decomp/notes/menu_ecg.md) ---
+ECG_MONTA = 0x8006E84C      # monta 32 LINE_F2 (code 0x42 = 0x40|semitrans) em 0x801af0e8
+ECG_DESENHA = 0x8006C484    # escreve xy/rgb e AddPrim, chamada em 0x8006c33c
+ECG_BUFFER = 0x801AF0E8     # 32 colunas x 2 buffers x 16 B = 0x400 -> termina em 0x801af4e8
+ECG_COR = 0x800A0150        # 6 bytes por condicao: r,g,b + dr,dg,db (decaimento do rastro)
+ECG_ONDA_PTR = 0x800A0174   # u32 por condicao -> tabela de (desloc_y, altura) por coluna
+ECG_N_COND = 6
+ECG_ONDA_BYTES = 160        # 80 pares; so os indices 0..73 sao alcancaveis (guarda k < 0x4a)
+ECG_X = 0x4B                # 0x8006c518: x = base[0].x + 0x4b + k
+ECG_Y = 0x25                # 0x8006c51c: y = base[0].y + 0x25 + onda[k]
+ECG_K_LIMITE = 0x4A         # 0x8006c554
+ECG_FASE_FIM = 0x51         # 0x8006e32c: fase >= 0x51 -> fase = -0x20 (0x8006e334)
 
 BUILDERS = {
     0x8006E600: ("SPRT",     "build"),
@@ -235,6 +253,52 @@ def cmd_sld(e):
         print("   id %3d  off=%8d  %s" % (i, v, d))
 
 
+def ecg_tables(e):
+    """Devolve (cores, ondas): cores = [(r,g,b,dr,dg,db)] x6, ondas = {endereco: bytes}."""
+    cores = [tuple(e.bytes_at(ECG_COR + i * 6, 6)) for i in range(ECG_N_COND)]
+    ptrs = [e.u32(ECG_ONDA_PTR + i * 4) for i in range(ECG_N_COND)]
+    ondas = {}
+    for p in ptrs:
+        if p not in ondas:
+            ondas[p] = e.bytes_at(p, ECG_ONDA_BYTES)
+    return cores, ptrs, ondas
+
+
+def cmd_ecg(e):
+    print("== ECG do painel de condicao (B1 = 0x8009f89c) ==")
+    print("   monta   0x%08x  32 x LINE_F2 code 0x42 (semitrans) em 0x%08x" % (ECG_MONTA, ECG_BUFFER))
+    print("   desenha 0x%08x  x = base.x + %d + k   y = base.y + %d + onda[k]" %
+          (ECG_DESENHA, ECG_X, ECG_Y))
+    print("   guarda  0 <= k < 0x%02x (%d colunas)   fase de -0x20 a 0x%02x-1 = %d quadros" %
+          (ECG_K_LIMITE, ECG_K_LIMITE, ECG_FASE_FIM, ECG_FASE_FIM + 0x20))
+    print()
+    cores, ptrs, ondas = ecg_tables(e)
+    nomes = ["FINE", "CAUTION", "CAUTION2", "DANGER", "POISON", "VIRUS"]
+    print("== 0x%08x: cor do rastro (base r,g,b + decaimento dr,dg,db) ==" % ECG_COR)
+    for i, c in enumerate(cores):
+        print("   cond %d %-9s base=(%3d,%3d,%3d) delta=(%3d,%3d,%3d)  cauda(i=0)=(%3d,%3d,%3d)"
+              % (i, nomes[i], c[0], c[1], c[2], c[3], c[4], c[5],
+                 c[0] - c[3] * 31, c[1] - c[4] * 31, c[2] - c[5] * 31))
+    print()
+    print("== 0x%08x: ponteiro da forma de onda por condicao ==" % ECG_ONDA_PTR)
+    for i, p in enumerate(ptrs):
+        print("   cond %d %-9s -> 0x%08x" % (i, nomes[i], p))
+    print()
+    for p in sorted(ondas):
+        w = ondas[p]
+        usados = ECG_K_LIMITE
+        print("== onda 0x%08x (%d B = %d pares; %d alcancaveis) ==" %
+              (p, len(w), len(w) // 2, usados))
+        print("   y :", " ".join("%3d" % w[k * 2] for k in range(usados)))
+        print("   h :", " ".join("%3d" % w[k * 2 + 1] for k in range(usados)))
+        y0 = [ECG_Y + w[k * 2] for k in range(usados)]
+        y1 = [ECG_Y + w[k * 2] + w[k * 2 + 1] for k in range(usados)]
+        print("   tela: x %d..%d   y %d..%d   (linha de base y=%d)" %
+              (ECG_X, ECG_X + usados - 1, min(y0), max(y1), ECG_Y + w[0]))
+        print("   hex :", w.hex())
+        print()
+
+
 def cmd_json(e, out):
     tr = Tracer(e)
     starts = func_starts(e)
@@ -249,6 +313,16 @@ def cmd_json(e, out):
                            for i in range(20)],
         "sld_offsets": [e.u32(SLD_OFFSETS + i * 4) for i in range(135)],
         "calls": [],
+    }
+    cores, ptrs, ondas = ecg_tables(e)
+    data["ecg"] = {
+        "monta": ECG_MONTA, "desenha": ECG_DESENHA, "buffer": ECG_BUFFER,
+        "n_colunas": 32, "n_colunas_flash": 28,
+        "x_origem": ECG_X, "y_origem": ECG_Y, "k_limite": ECG_K_LIMITE,
+        "fase_fim": ECG_FASE_FIM, "fase_inicio": -0x20,
+        "cor": [list(c) for c in cores],
+        "onda_ptr": ptrs,
+        "onda": {"0x%08x" % p: ondas[p].hex() for p in sorted(ondas)},
     }
     for tgt, (kind, role) in BUILDERS.items():
         for s in call_sites(e, tgt):
@@ -272,6 +346,8 @@ if __name__ == "__main__":
         cmd_slots(e)
     elif cmd == "sld":
         cmd_sld(e)
+    elif cmd == "ecg":
+        cmd_ecg(e)
     elif cmd == "json":
         cmd_json(e, sys.argv[2])
     else:

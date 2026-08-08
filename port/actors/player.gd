@@ -323,8 +323,12 @@ func clipe_atual() -> String:
 			##   `mira04` = hold ALTA · `mira06` = hold BAIXA · `mira07` 32 quadros = TIRO + recuo
 			## (o quadro do tiro do timing `0x8009cf28` — 12 no handgun — cai dentro desses 32).
 			## Ver `docs/decomp/notes/plw.md` §9.
-			if tiro_pendente >= 0 or recuo > 0:
-				return "mira07"
+			## CORREÇÃO (achado do usuário): eu usava `mira07` como "tiro + recuo", rótulo que o
+			## agente deduziu da altura do punho. **É a RECARGA** — 32 quadros, quase 1 s, é tempo
+			## de recarregar, não de um tiro. E casa com o EXE: o tiro **não tem clipe próprio**,
+			## ele sai num QUADRO DENTRO da animação de mira (a tabela `0x8009cf28` guarda esse
+			## quadro: 12 no handgun). Então atirar MANTÉM a pose de mira.
+			## `mira07` fica reservado para a recarga, quando ela existir.
 			if mira_sub == Mira.LEVANTAR:
 				return "mira00"
 			if mira_alto > 0:
@@ -363,8 +367,23 @@ func _sair_da_mira() -> void:
 
 
 func _tick_mira(pad: Pad) -> void:
-	## Rotina 7 do EXE, sub-estado em `player+6`. O facing fica travado (o `T1 r7` é stub).
+	## Rotina 7 do EXE, sub-estado em `player+6`. O `T1 r7` é stub, ou seja **o player não ANDA**
+	## mirando — mas GIRAR mirando é o que o jogo faz (e o usuário cobrou: "não consigo manter a
+	## mira com wsad"). Então: A/D giram no lugar, W/S escolhem a altura da mira (alta/baixa) quando
+	## não há alvo travado. **Declarado**: o giro durante a mira não foi medido no EXE (lá o facing é
+	## forçado ao alvo no fim do sub 3, `0x8003afc8`).
 	_set_acao(Acao.MIRANDO)
+	var esq_m := pad.pressed(Pad.HELD_LEFT)
+	var dir_m := pad.pressed(Pad.HELD_RIGHT)
+	if esq_m != dir_m:
+		facing = PS1Math.wrap_angle(facing + (GIRO_POR_FRAME if esq_m else -GIRO_POR_FRAME))
+	if mira_alvo < 0:
+		if pad.pressed(Pad.FWD):
+			mira_alto = 1                      ## W = mira ALTA
+		elif pad.pressed(Pad.BACK):
+			mira_alto = -1                     ## S = mira BAIXA
+		elif pad.just_released(Pad.FWD) or pad.just_released(Pad.BACK):
+			mira_alto = 0
 	mira_quadro += 1
 	if recuo > 0:
 		recuo -= 1

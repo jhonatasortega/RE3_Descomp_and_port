@@ -604,8 +604,8 @@ conseguem dar o primeiro passo (100%)**.
 |---|---|---|---|
 | 0 | `0x8004f098` | 632 | **círculo** inscrito: raio `(f2-f0)/2`, centro no meio. Bloqueia se o trajeto cruza o **diâmetro perpendicular ao movimento** ou se o **destino** está dentro (usa `sqrt` em `0x80087ff4`). |
 | 1, 7 | `0x8004f3c8` | 3163 | as **duas diagonais**: `(f0,f3)-(f2,f1)` e `(f0,f1)-(f2,f3)`. Consequência real: **raspar um canto não colide** — aproximação do próprio jogo. |
-| 2 | `0x8004f498` | 484 | linha média em Z + 2 diagonais deslocadas de `(f3-f1)/2` em X |
-| 3 | `0x8004f5b4` | 373 | linha média em X + 2 diagonais deslocadas de `(f2-f0)/2` em Z |
+| 2 | `0x8004f498` | 484 | linha média em Z + 2 diagonais deslocadas de `(f3-f1)/2` em X (aproximação poligonal da CÁPSULA da §3.7.2) |
+| 3 | `0x8004f5b4` | 373 | linha média em X + 2 diagonais deslocadas de `(f2-f0)/2` em Z (idem, espelhado) |
 | 4 | `0x8004f6cc` | 17 | cruz "+" das duas linhas médias |
 | 5 | `0x8004f034` | 3 | uma diagonal `(f0,f1)-(f2,f3)` |
 | 6 | `0x8004f7a8` | 463 | **"L" de 2 arestas**; o canto vem de `bits & 0x30` — e é por isso que os tipos observados são exatamente **6, 22, 38 e 54**. A 3ª diagonal devolve `2`, e o chamador do player **descarta o 2** (`0x8004ec58`). |
@@ -659,17 +659,22 @@ break — um tick pode deslizar em vários colliders):
   diagonal contra parede alinhada em X, só o X é corrigido. Correção > 2×raio → flag `0x100`
   e o chamador **restaura a posição** (parada seca).
 
-**Tabela `0x8009dfec` lida (16 ponteiros) — e duas correções que saíram dela:**
+**Tabela `0x8009dfec` lida (16 ponteiros) — e três correções que saíram dela:**
 
 | forma | resposta | forma | resposta |
 |---|---|---|---|
 | 0 | `0x8004c408` radial | 8 | `0x8004c960` |
 | 1 | `0x8004c960` caixa | 9/10 | `0x8004ce2c` (rampa, só Y) |
-| 2 | `0x8004c57c` | 11/12 | `0x8004d6b0` |
-| 3 | `0x8004c6ec` | 13 | `0x8004ded4` |
+| **2** | **`0x8004c57c` cápsula em X** | 11/12 | `0x8004d6b0` |
+| **3** | **`0x8004c6ec` cápsula em Z** | 13 | `0x8004ded4` |
 | **4** | **`0x8004bb4c` losango** | 14 | `0x8004deb0` |
 | **5** | **`0x8004c960` caixa** | 15 | `0x8004e38c` |
 | 6 | `0x8004d194` "L" | 7 | `0x8004c960` |
+
+O despacho fica em `0x8004b134`..`0x8004b158`: `a0 = ator`, **`a1 = raio` (um só, não dois)**,
+`a2 = registro`, `a3 = posição anterior empacotada` (`0x14`<<16 | `0x18`, montada em
+`0x8004afa4`); a tabela é indexada por `forma << 2` a partir de `0x8009dfec`. O valor de retorno
+só alimenta a contabilidade do delta em `0x8004b2a8`; não muda decisão.
 
 1. A **forma 5 empurra como caixa** (o port a tratava como "sem resposta"). São 3 registros.
 2. A **forma 4 é um LOSANGO** inscrito na caixa inflada, não "as linhas médias". `0x8004bb4c`
@@ -687,6 +692,7 @@ break — um tick pode deslizar em vários colliders):
    O **predicado** da mesma forma (`0x8004f6cc`) é outra coisa: testa as duas linhas MÉDIAS
    (uma cruz — `0x8004f748` vertical em `cx`, `0x8004f770` horizontal em `cz`). Não é
    incoerência de leitura: são duas rotinas diferentes no jogo, e a do predicado é a barata.
+3. As **formas 2 e 3 são CÁPSULAS** (stadium), não "a linha média" — ver §3.7.2.
 - Caso "já estava dentro" (`0x8004c85c`): escapa pela face CONTRA o movimento (ou a mais
   próxima, se parado), com teto de 400 (`0x8004cc68`); acima disso rejeita sem mover.
 - `0x8004fe70`/`0x8005003c` **não são resposta**: são a confirmação VERTICAL do predicado
@@ -702,8 +708,90 @@ func 30 escreve `idx=13` numa sala de 13 registros (overrun real do jogo).
 Implementação no port: `port/room/collision.gd` (`resolver()` + `Resolvido`), consumo em
 `actors/player.gd::_mover`, opcode em `script_vm/vm.gd` (0x6E), reset por visita em
 `Collision.reset_estado()` (o PS1 relê o RDT do CD a cada porta). Aproximações declaradas:
-resposta radial para a forma 0 (a real é `0x8004c408`, não desassemblada) e "menor fuga" no
-caso-dentro (bloco `0x8004ccb0` lido em estrutura).
+"menor fuga" no caso-dentro (bloco `0x8004ccb0` lido em estrutura) e a raiz inteira
+(`0x80087ff4` é tabela de 12 bits de fração; o port usa `sqrt` truncado).
+
+#### §3.7.2 — As formas 2 e 3 são CÁPSULAS (2026-08-08)
+
+`0x8004c57c` (forma 2, **484 registros em 117 salas**) e `0x8004c6ec` (forma 3, **373 em 106**)
+desassembladas por inteiro. **Nenhuma das duas responde**: as duas são DESPACHANTES de 3 vias.
+
+Geometria (forma 2, em `0x8004c58c`..`0x8004c5ac`; a forma 3 é o espelho em
+`0x8004c6fc`..`0x8004c71c`):
+
+```
+span = f3 − f1                     (forma 3: f2 − f0)      ; lhu − lhu
+h    = sext16(span) >> 1           ; sll 0x10 + sra 0x11 — MEIO SPAN TRANSVERSAL
+hi   = f2 − h   (0x8004c5a8)       lo = f0 + h   (0x8004c5ac)
+```
+
+O ponto vem de `ator+0x08/+0x10`, **ou** — se `+0x0a & 0x1000` — dos globais `0x800deb64/68`,
+onde o laço do resolver já gravou a posição GIRADA 45° (`0x8004b108/10`). Aí o código monta o
+seletor com **dois sinais do MESMO eixo** (`0x8004c5ec`..`0x8004c608`):
+
+```
+cod = (sinal(X − hi) << 1) | sinal(X − lo)          (forma 3: em Z)
+```
+
+e despacha (`0x8004c610`..`0x8004c63c`):
+
+| cod | condição | destino |
+|---|---|---|
+| 2 | `lo ≤ X < hi` | `0x8004c960` com o registro **ORIGINAL** → **CAIXA CHEIA** |
+| 3 | `X < lo` | quadrado temporário em `0x800deb48` = `(f0, f1, f0+span, f1+span)` → `0x8004c408` |
+| 0 | `X ≥ hi` | temporário `(f2−span, f1, f2, f3)` → `0x8004c408` |
+| 1 | `hi ≤ X < lo` | `j 0x8004c6dc` — **sai sem mexer em nada** |
+
+`0x8004c408` tira do temporário `raio = (f2′−f0′) >> 1 = h` e `centro = (f0′+raio, f1′+raio)`
+(`0x8004c454`..`0x8004c468`): as pontas são **círculos de raio h** em `(f0+h, f1+h)` e
+`(f2−span+h, f1+h)`. Com `raio_ator` somado, o alcance é `h + raio` — exatamente a caixa
+inflada. **Isto é uma cápsula**: retângulo de cantos arredondados inscrito na caixa inflada.
+Se `+0x0a & 0x1000`, o chamador passa `a1` NEGATIVO (`negu` em `0x8004c6d0`/`0x8004c840`), e é
+esse sinal que faz `0x8004c430` ler o ponto dos globais e des-rotacionar a correção com o mesmo
+181/256 (`0x8004c4f8`..`0x8004c534`).
+
+**A resposta radial `0x8004c408` (forma 0 e as pontas das cápsulas), instrução por instrução:**
+
+```
+d   = SquareRoot0(dx² + dz²)                  ; 0x80087ff4 (LZCR da GTE + tabela 0x800a3b80)
+pen = (raio_col + raio_ator) − d ;  pen ≤ 0 → return 0     (0x8004c4a0)
+Δx  = (dx ± 8)·pen / d      Δz = (dz ± 8)·pen / d          (0x8004c4a8..0x8004c4ec)
+x += Δx ; z += Δz                                          (0x8004c54c..0x8004c558)
+```
+
+Dois achados aqui: o **viés de 8** acompanha o sinal de `dx`/`dz` (o par `bgtz` + dois `addiu`);
+e **não existe teto de rejeição** — não há um único `slti 0x191` em `0x8004c408`..`0x8004c578`,
+então a resposta radial nunca acende `0x100`. Além disso, como a forma 0 é chamada pela tabela
+com `a1` POSITIVO, ela lê o ponto CRU e **ignora o bit `0x1000`** (sem efeito no dado: 0 dos 632
+registros forma 0 tem esse bit). O centro do círculo é `(f0+raio, f1+raio)` — o `raio` sai do
+span de **X** nos dois eixos, então em registro não-quadrado o centro em Z **não** é o meio da
+caixa (97 dos 632 são não-quadrados; o port usava o meio da caixa, corrigido).
+
+**Correções de rumo registradas:**
+
+1. O port respondia formas 2/3 como "só a linha média" — uma parede fina de ±raio em torno de um
+   eixo. **O volume inteiro do móvel ficava andável**: era o "entulho/mureta sem colisão".
+   Medido em R30B (25 registros forma 2/3 ligados): a área que empurra vai de 18,9% para 36,6%
+   da grade — **1,9×** (`port/dev/plot_capsula.gd`, painel antes/depois).
+2. A minha resposta radial da forma 0 era invenção em dois pontos: empurrava para "borda + 1"
+   (em vez de `(d±8)·pen/d`) e rejeitava acima de `2·raio` (teto que não existe).
+3. A hipótese "chanfro a 45°" para a forma 2 está **descartada**: o meio span de Z aplicado no X
+   não é chanfro, é o raio das duas pontas redondas.
+
+**O que fica declarado (não provado):**
+
+- `d == 0` na radial: o EXE faz `div` por zero (o R3000 não gera exceção, deixa LO indefinido).
+  O port empurra 1 unidade em cada eixo, por ser o menos destrutivo. Nunca observado no jogo.
+- A raiz inteira: `0x80087ff4` é tabela com 12 bits de fração; o port usa `sqrt` truncado — pode
+  diferir em uma unidade.
+- O código 1 (span transversal > longo) devolve `v0 = 1` sem mover, porque o `sltiu` de
+  `0x8004c614` sobrou em `v0`. **Zero dos 857 registros forma 2/3 das 169 salas** cai nesse caso,
+  então é curiosidade fixada em teste, não comportamento exercitado.
+
+**Sanidade contra o predicado:** `0x8004f498` (forma 2) foi conferido e a descrição antiga da
+§3.6 está CERTA — linha média em Z (`0x8004f518`) + diagonal `(lo,f1)→(hi,f3)` (`0x8004f554`) +
+diagonal `(lo,f3)→(hi,f1)` (`0x8004f578`), com o mesmo `h = span/2` (`0x8004f4f0`). É a
+aproximação poligonal barata da mesma cápsula; `Rect.segmentos()` já a implementa e não mudou.
 
 #### §3.7.1 — Correções do veredito adversarial (2026-08-02)
 

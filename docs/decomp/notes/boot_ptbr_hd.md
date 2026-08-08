@@ -13,17 +13,27 @@
 > [`tools/title_sprites.py`](../../../tools/title_sprites.py), que já existiam.
 >
 > **Código:** `port/present/boot.gd`, `port/present/titulo.gd`, `port/present/video.gd`,
-> `port/scenes/boot.tscn`. **Teste:** `port/dev/tests/test_boot.gd` (131 asserts).
+> `port/scenes/boot.tscn`. **Teste:** `port/dev/tests/test_boot.gd` (201 asserts).
 > **Sondas:** `port/dev/diag_video.gd`, `port/dev/shot_boot.gd`.
+>
+> **§7 e §8 são desta rodada:** a **tabela de filmes `0x8009ca64`** (o reprodutor de FMV do
+> RE3 é uma tarefa do EXE, não um overlay) e as **sete correções** que o dono apontou depois
+> de jogar a abertura — inclusive o vídeo que faltava antes do menu.
 
 ---
 
 ## 1. O que a cena faz
 
 ```
-aviso legal (5,01 s)  ->  logo CAPCOM (4,00 s)  ->  TÍTULO navegável
-   ->  dificuldade  ->  ETC/INIT_TBL.DAT  ->  FMV opn (90,6 s, legenda PT-BR)  ->  R10D
+aviso legal (5,01 s)  ->  logo CAPCOM (4,00 s)  ->  FILME DE ATRAÇÃO roop (15,4 s)
+   ->  TÍTULO navegável  ->  dificuldade  ->  ETC/INIT_TBL.DAT
+   ->  FMV opn (90,6 s, legenda PT-BR)  ->  R10D
 ```
+
+> **⚠ O `filme roop` é NOVO nesta rodada** e é o "vídeo que faltava antes do menu".
+> `0x801943a4` chama `filme_prepara(0xc)` no FIM do handler 0 do `TITLE.BIN` — depois do
+> logo CAPCOM, depois do reset (`0x80194374`) e depois do pulo (`0x8019432c`) — e o código
+> **espera o filme acabar** (`0x801943ac` gira em `0x800cc858 & 0x10000`). Detalhe em §7.
 
 Tudo em **ticks de tarefa**, que é a unidade que o binário conta. Nada foi arredondado:
 
@@ -37,10 +47,11 @@ Tudo em **ticks de tarefa**, que é a unidade que o binário conta. Nada foi arr
 | `capcom_exibicao` | 120 | `0x8019427c` st4, contador `0x78` | 2,00 |
 | `capcom_sai_logo` | 30 | `0x80194294` st6 | 0,50 |
 | `capcom_para_preto` | 30 | `0x801942d4` st8 | 0,50 |
+| `filme_atracao` | — | `0x801943a4` `filme_prepara(0xc)`; 231 quadros a 15 fps | 15,40 |
 | `titulo_espera` | 6 | `0x80194b08` sub1 (`ctx+0x14` = 160, −30 por chamada) | 0,10 |
 | `titulo_flash` | 5 | `0x80194b08` sub1, `fade(T=5)` `abr=1` | 0,08 |
 | `titulo_fade_in` | 60 | `0x80194b08` sub2, `fade(T=0x3c)` `abr=2` | 1,00 |
-| **até o menu** | **611** | | **10,19** |
+| **até o menu** | **611** + o filme | | **10,19** + 15,40 |
 | `atrator_timeout` | 900 | `0x8019454c` `*(u16*)(ctx+0x16) = 0x384` | 15,02 |
 
 Conferido em execução real: `godot --path port --rendering-driver opengl3 --quit-after 2400
@@ -332,7 +343,228 @@ ou seja, `boot.tscn` → `game.tscn` → sala inicial, sem passo intermediário 
 
 ---
 
-## 7. EM ABERTO / NÃO MEDIDO nesta rodada
+## 7. O REPRODUTOR DE FMV — a tabela `0x8009ca64` (achado desta rodada)
+
+Ponto de partida: **o `SLUS_009.23` não tem decodificador MDEC**. Varri os registradores
+`0x1f801820`/`0x1f801824` nos dados e **todos** os 17 `lui rX, 0x1f80` do código (são
+scratchpad `0x1f800000` e libgpu `0x1f801814`); nos 17 overlays, zero. Então o filme não é
+tocado por nenhum `.BIN` — é uma **tarefa do EXE**:
+
+| Endereço | Papel | Como se prova |
+|---|---|---|
+| `0x800321c4` | **`filme_prepara(a0 = índice)`** — o ÚNICO ponto de entrada | `0x800321f0` monta `rec = 0x8009ca64 + a0*0x18` (`sll 1; addu; sll 3` = ×24) |
+| `0x80032478` | `0x800cc858 \|= 0x18000` | `lui a1,1; ori a1,0x8000` + `or`/`sw` |
+| `0x800324a0` | tick do filme, no laço de quadro | `jal 0x800324a0` em `0x80029370` (único chamador) |
+| `0x8009cbb4` | 3 handlers de estado `{0x800325a4, 0x800327a4, 0x80032ad4}` | `0x800324e8` `lw` indexado por `*(u8*)0x800dcd9c` |
+| `0x80032638` | volume do filme | `lhu 0x12(ctx)` → `0x8003331c` |
+| `0x80032644` | liga a entrada de **CD/XA no SPU a `0x7fff`** | `0x80074658(1)` → `SpuSetCommonAttr` `0x8007f198` |
+
+A tabela começa **exatamente onde termina a de overlays** (`0x8009c944 + 24 × 12 =
+0x8009ca64`) e tem **14 registros de 24 bytes**:
+
+| off | tipo | conteúdo | prova |
+|---|---|---|---|
+| `+0x00` | u32 | **índice de arquivo do `.STR`** | os valores são `0x53a…0x546`, e na tabela de arquivos `0x800946a4` esses são os **únicos 13 registros com `flags = 0xff`**; os LBA batem 1:1 com o índice do jPSXdec (`tools/re3.idx`) |
+| `+0x04` | u16 | **quadros a tocar** | é `(quadros do jPSXdec) − 5` em **13/13** vídeos |
+| `+0x06` | u16 | `0x00ff` em 14/14 | **NÃO DECODIFICADO** |
+| `+0x08` | u16 | `0x0900`/`0x0100`/`0x0000`/`0x09f0` → `ctx+0x24` | **NÃO DECODIFICADO** (`0x8003247c`) |
+| `+0x0a` | u16 | `0x140` = **320** = largura | `0x8003239c` |
+| `+0x0c`/`+0x0e` | u16 | **x = 0, y = 40** | `0x800323b8`/`0x800323c4`; e **40 + 160 + 40 = 240** — o quadro `320×160` do `.STR` centralizado na tela |
+| `+0x10` | u16 | acréscimo de endereço do buffer | **NÃO DECODIFICADO** (`0x800322e8`) |
+| `+0x12` | u16 | flags: bit `0x200` → buffer `0x80100000`, senão `0x80194000`; bit `0x008` → caminho extra de SPU | `0x80032204` / `0x8003222c` |
+| `+0x14` | u16 | **volume 0…127** | `0x80032428`: `vol × *(s16*)0x800e0dda / 127` (magic `0x81020409`, `sra 6` → `2^38/127`) → `0x8003331c` |
+
+### 7.1 Os 14 registros
+
+| idx | `.STR` (PS1) | `.mp4` (pacote HD) | quadros | jPSXdec | vol | `+0x08` | buffer |
+|---:|---|---|---:|---:|---:|---|---|
+| 0 | `OPN` | `opn` | 1345 | 1350 | 127 | `0900` | `0x80100000` |
+| 1..9 | `INS01`..`INS09` | `ins01`..`ins09` | 387…237 | −5 | 127/110 | `0100` | `0x80194000` |
+| 10 | `ENDA` | `enda` | 808 | 813 | 127 | `0000` | `0x80100000` |
+| 11 | `ENDB` | `endb` | 835 | 840 | 127 | `0000` | `0x80100000` |
+| **12** | `ROOPNE` | **`roop`** | **231** | 236 | **90** | `0900` | `0x80100000` |
+| 13 | `ROOPNE` | `roop` | **945** | 236 | 100 | `09f0` | `0x80100000` |
+
+O registro **13 é o mesmo `ROOPNE` com 945 quadros = 63,0 s**, isto é ≈ 4 voltas de 231.
+É o único cujo `+0x04` não é "jPSXdec − 5", e o único com `+0x08 = 0x09f0` — **leitura, não
+medição**: parece o laço longo de atração. Quem o pede é `0x801964bc` (sub 6).
+
+> **`snl` não existe no PS1.** O índice do jPSXdec lista **13** `.STR` em `CD_DATA/ZMOVIE/`
+> (`ENDA`, `ENDB`, `INS01..INS09`, `OPN`, `ROOPNE`) e nenhum `SNL`. O `zmovie/snl.mp4`
+> (3,31 s) do pacote de PC é extra — não entra no fluxo recompilado. O `ddraw.dll` do
+> Classic REbirth tem o de-para de nomes `roop`/`roop_ne`, `enda`/`enda_ne`,
+> `endb`/`endb_ne`, `ins06`/`ins06_ne` em `+0x2fe1a0`, o que confirma `roop ≡ ROOPNE`.
+
+### 7.2 Quem pede cada filme
+
+**Do `TITLE.BIN`** (4 sítios, `a0` constante recuperado por back-walk):
+
+| sítio | idx | filme | quando |
+|---|---:|---|---|
+| `0x801943a4` | `0xc` | **`roop`** | fim do handler 0, **antes** do estado 1. Pulado só no Mercenaries (`0x8019439c` testa o bit `0x80`). `0x801943ac` espera o bit `0x10000` limpar |
+| `0x801960e8` | `0` | `opn` | NEW GAME: depois da dificuldade + `INIT_TBL` + `load_overlay_task(1, ovl 5 = OPENING)` |
+| `0x801964bc` | `0xd` | `roop` (945 q.) | sub 6 (`0x8019644c`), depois de um fade-out de 12 ticks |
+| `0x80196ed8` | `0` | `opn` | sub 11 (`0x80196800`), depois de carregar o OPENING |
+
+**Do `ENDING.BIN`:** `0x8019430c` e `0x80194354`.
+
+**Do script de sala — opcode SCD `0x7a`:** handler `0x80055520`, **2 bytes**
+(`0x80055538 lbu a0, 1(PC)` → `jal 0x800321c4` → `PC += 2`). Varredura das 129 salas:
+
+| filme | sala e função |
+|---|---|
+| `INS01` | `STAGE1/R110` func 3 |
+| `INS02` | `STAGE2/R217` funcs 6 e 14 |
+| `INS03` | `STAGE1/R11C` func 2 |
+| `INS04` | `STAGE2/R215` funcs 18, 20, 21 e 23 |
+| `INS05` | `STAGE2/R215` func 52 |
+| `INS06` | `STAGE3/R30D` func 8 |
+| `INS07` | `STAGE4/R417` func 7 |
+| `INS08` | `STAGE4/R415` func 9 |
+| `INS09` | `STAGE5/R508` func 4 |
+
+**`R10D` não tem nenhum opcode `0x7a`** (as 49 funções varridas). Consequência para o item
+"cutscene in-game" (§8.7): a cinemática da sala inicial **não é FMV**.
+
+---
+
+## 8. ⚠ SETE COISAS QUE ESTAVAM ERRADAS (e o que foi feito)
+
+O dono testou a abertura e apontou sete problemas. O que cada um era, de verdade:
+
+### 8.1 Faltava o vídeo antes do menu — **CORRIGIDO**
+
+Era o `ROOPNE`/`roop`, registro 12 (§7.2). O port ganhou o passo `filme_atracao` entre
+`capcom_para_preto` e `titulo_espera`, e `tools/video_ogv.py roop` gerou o `.ogv`
+(15,5 s → 9,7 MB em 151 s de encode). Confirmado por render: a captura de
+`BOOT_FASE=filme_atracao BOOT_FMV_T=8` sai com o Nemesis, não com preto.
+
+### 8.2 O som do menu — **banco corrigido, BGM confirmada**
+
+`0x801944c0` chama `0x8007809c(a0 = 0, a1 = (0x800cc858 & 0x80) ? 0xb : 1)`. E
+`0x8007809c(cat, banco)` resolve `file_index = tab[cat] + banco*2` com a tabela de bases
+`0x800110b0` (`04 01 03 01 da 00 d9 00`, passo 4). Conferido contra a tabela de arquivos:
+
+```
+cat 0 -> 0x104 = SOUND/C_00.VH   =>  banco 1 -> 0x106 = SOUND/C_01.VH   ✔
+cat 1 -> 0x0da = SOUND/A_01.VH   (o `.VB` sai do par: 0x103 / 0x0d9)
+```
+
+➜ **a tela de título usa o banco `C_01`, não o `C_00`** (e o Mercenaries usa `C_0B`).
+Ressalva honesta: os 5 WAV de UI de `C_01` são **byte-idênticos** aos de `C_00` (comparei os
+arquivos extraídos), então o som **audível** é o mesmo — o que muda é a declaração.
+
+**BGM = `main38`, confirmado no índice de arquivo.** `0x801944dc` é
+`cd_read_file(0x121, 0x801f7e00, 1, "OPTION BGM")` e `0x121` **é** `SOUND/MAIN38.BGM` na
+tabela de arquivos (`MAIN38.VB` = `0x122`). O rótulo de depuração "OPTION BGM" continua
+sendo só um rótulo — **eu não consigo conferir de ouvido**. E ela é carregada no estado 1,
+ou seja **depois** do filme de atração: é por isso que o port pede a trilha no
+`titulo_espera` e não antes.
+
+### 8.3 Itens do menu descentralizados — **CORRIGIDO**
+
+A regra antiga ("centralizar cada rótulo PT no centro do retângulo do `SPRT` original")
+produzia, com as larguras medidas no atlas HD:
+
+| item | tinta PT | caixa antiga | caixa nova |
+|---|---:|---|---|
+| COMEÇAR JOGO | 53 | `[65, 118]` | `[68, 121]` |
+| CARREG. JOGO | 53 | `[131, 184]` | `[150, 203]` |
+| CONFIG | 28 | `[216, 244]` | `[232, 260]` |
+
+Vãos: **13 e 32 px** antes, **29 e 29** agora. A borda direita volta de 244 para 260.
+
+A regra nova tem **duas âncoras medidas e uma escolha declarada**:
+
+* âncoras = a borda esquerda do 1º `SPRT` e a borda direita do último (`0x801945e4`:
+  **68** e **200 + 60 = 260** no menu; **80** e **180 + 54 = 234** na dificuldade);
+* **declarado:** os vãos entre os rótulos ficam **iguais**.
+
+`tools/boot_assets.py:layout_rotulos()` calcula e grava `x_tela` em `rotulos_pt`;
+`titulo.gd` só lê. Na dificuldade o resultado é `MODO DIFICIL` em x=80 — o **mesmo** x que
+`title_mapping.xml` declara para `heavy mode`, o que é uma segunda fonte concordando.
+
+### 8.4 O FMV do NEW GAME começava antes de clicar — **CORRIGIDO, e a causa era o atrator**
+
+O disparo por `escolheu_novo_jogo` já estava no lugar certo. O que tocava o `opn` sem
+clique era **o atrator**: o port mandava o timeout de 900 ticks para o FMV.
+
+No original o timeout vai para o **sub 10** (`0x8019566c` grava `ctx[1] = 0xa`), que é a
+**demo jogável**: `ETC/PDEMO00/01/02.DAT` (índices `0x41`/`0x42`/`0x43`, 3620 B cada) em
+rodízio por `*(u8*)0x800c79af`, carregados em `0x80192000`, tarefa `0x80031bdc`; no fim ele
+põe `*(u8*)ctx = 4` (`0x801967e4`) e o handler 4 (`0x801954d0`) carrega o banco de SE da
+área e entrega ao jogo. O **sub 11** (`0x80196800`) — o que carrega o OPENING e chama
+`filme_prepara(0)` — **não é alcançado pelo timeout**: varri **todas** as escritas em
+`ctx+1` dentro do `TITLE.BIN` e nenhuma grava 11.
+
+**DECLARADO:** sem reprodutor de PDEMO, o port repete o **filme de atração** e volta ao
+título. O que ele não faz mais é tocar o `opn` — esse é do NEW GAME.
+
+### 8.5 O som do menu continuava durante o vídeo — **CORRIGIDO (declarado)**
+
+`boot.gd` emite `pediu_parar_bgm` ao entrar em qualquer filme e volta a pedir `main38`
+quando o fluxo retorna ao título. **DECLARADO:** no binário, `filme_prepara` liga a entrada
+de CD/XA no SPU a `0x7fff` (`0x80032644` → `0x80074658(1)`) e ajusta o volume pelo campo
+`+0x14`, mas **eu não localizei o sítio que para o SEQ da BGM**. No caminho normal isso nem
+aparece: quando o `roop` roda, a `MAIN38` ainda não foi carregada.
+
+### 8.6 Faltava a cutscene depois do vídeo do menu — **IDENTIFICADA, não implementada**
+
+⚠ **Correção grave a este doc e ao `video.gd`:** `OPENING.BIN` (ovl 5) **não é o tocador do
+filme** — é um **slideshow de imagens paradas**, o prólogo do RE3. Provas:
+
+* as duas únicas strings do overlay são `OPENING0_DAT` e `OPENING1_DAT`
+  (`0x801c2204`/`0x801c2284`: `cd_read_file(0x3d/0x3e, 0x80100000, 0, …)`);
+* `ETC/OPENING0.DAT` (457 504 B) = **9 TIM de 8 bpp** (256×256, 128×256, 256×256, 256×240,
+  192×240, 256×240, 192×240, 192×192, 192×192) e `ETC/OPENING1.DAT` (307 322 B) = **2 TIM de
+  320×240 16 bpp**. Renderizados: `OPENING1[0]` é o **logo da Umbrella sobre uma rua de
+  Raccoon City** e `OPENING1[1]` é a **Jill carregando a arma no apartamento**;
+* `0x801c22a0` monta **2 × 10 `SPRT`** (`SetSprt 0x8008f6b4`, `GetClut`, `GetTPage`) — é
+  desenho de sprite, não blit de vídeo;
+* `0x801c2eb4` chama `0x8002fd30(a0 = 0x00b90022, a1 = 0x3000)` = **início de stream de
+  áudio (XA)** — a narração do prólogo;
+* o overlay sai quando `*(u16*)0x800cc834 & 0x900` (`0x801c2120`), isto é é **pulável**.
+
+Contrapartida HD achada por NCC em miniatura cinza contra os 1316 `hires/bgd`:
+**`bgd/CB8189B6.webp` = 0,9998** para a Jill (par verdadeiro) e **`bgd/B6306D2E.webp` =
+0,9449** para a rua com a Umbrella. As 9 imagens de 8 bpp casam mal (0,38…0,79) porque são
+**recortes** de fotos maiores que o original faz panorâmica — o HD tem a foto inteira.
+
+**Correção da atribuição das legendas.** Este doc (§4.2) dizia que `prologue.xml` legenda o
+`opn.mp4`, com a justificativa "a soma cabe no vídeo" (47,18 s de fala em 90,62 s — sobram
+43 s sem legenda). O `exe_audio.md` §8, por um caminho independente, mediu um encaixe muito
+mais apertado: **`prologue.xml` = 1414 quadros = 47,13 s contra `MAIN06` 46,86 s (0,58 %)** e
+**`epilogue.xml` = 1431 = 47,70 s contra `MAIN07` 47,696 s (0,06 %)**. `MAIN06`/`MAIN07`
+**não existem no disco do PS1** (lá só há `MAIN33/38/39/3D`) — são a narração de prólogo e
+epílogo que a versão de PC guarda como WAV e o PS1 toca por XA. Fecha com o
+`0x8002fd30` do `OPENING.BIN`. Some-se que `opn.mp4` **é dublado** e `MAIN06` **não é**
+(`localizacao_ptbr.md` §3): o pacote legendou justamente o que ficou em inglês.
+
+➜ **`prologue.xml` legenda o PRÓLOGO (slideshow + narração `main06`), não o `opn.mp4`.**
+Isto **não** foi mexido no código nesta rodada (não estava entre os sete pedidos e mudaria
+o comportamento visível sem o dono pedir): fica como engate, com os números aqui.
+
+**Por que não implementei o slideshow:** faltam a linha do tempo e o movimento. O
+despachante é `0x801c2084` sobre `*(u8*)0x8014b02a` (um byte dentro do próprio
+`OPENING1.DAT` carregado) com 4 estados em `0x801c2f70`, e as fotos são **panoramizadas**.
+Sem medir isso, qualquer duração e qualquer pan seriam invenção.
+
+### 8.7 A cutscene in-game de R10D — **INVESTIGADA: não é FMV**
+
+`R10D.ARD` tem **49 funções de script** e **nenhum opcode `0x7a`** (§7.2) — logo a
+cinemática de abertura da sala é **de motor** (script + câmera + animação), como o dono
+suspeitava. Não existe arquivo `R10D_2` em nenhum `STAGE*` do disco (só `R10D.ARD/.BIN/
+.BSS`) e o `.ARD` traz **um** SCD, então "`R10D_2`" **não é uma variante de arquivo**;
+continua sendo informação do usuário, não medida.
+
+Candidatas pelo tamanho e pela mistura de opcodes (as funções longas com `0x47` seguido de
+`0x42`/`0x20`/`0x41` — o padrão de "põe entidade em x,y,z" — e com `0x55`/`0x56`/`0x80`/
+`0x88`/`0x8e`/`0x8f`): **func 7 (174 instruções), func 13 (99), func 8 (102), func 11 (94),
+func 18 (94)**. Nomear qual delas é "a primeira cutscene" exigiria rodar a VM — **não medi**.
+
+---
+
+## 9. EM ABERTO / NÃO MEDIDO nesta rodada
 
 1. **`ETC/INIT_TBL.DAT` (2312 B) continua fechado.** O port carrega e CONFERE o arquivo
    (tamanho + `sha1 bffeebee91922ed9b7171c460d8aba52d0428117`; 419 bytes não-zero), mas o
@@ -351,8 +583,19 @@ ou seja, `boot.tscn` → `game.tscn` → sala inicial, sem passo intermediário 
 8. **`LOAD GAME` e `GAME CONFIG` não abrem tela.** `MEM_CARD.BIN` tem os textos e **zero
    coordenada** (`menu_titulo.md` §5); `OPTION.BIN` não tem **nenhuma** opção medida (§4). O
    port imprime o motivo em vez de inventar a tela.
-9. **A demo de atração (`PDEMO00/01/02.DAT`) não existe no port.** O original alterna demo
-   jogável e FMV no timeout; o port só tem o FMV.
+9. **A demo de atração (`PDEMO00/01/02.DAT`) não existe no port.** ⚠ **Corrigido o texto
+   anterior**, que dizia "o original ALTERNA demo jogável e FMV no timeout": o timeout vai
+   **só** para a demo (§8.4). O port repete o filme de atração — declarado.
+9.1 **O prólogo (slideshow do `OPENING.BIN`) não está no port** (§8.6): faltam a linha do
+   tempo (`0x801c2084` sobre `*(u8*)0x8014b02a`, 4 estados em `0x801c2f70`) e o movimento de
+   panorâmica das fotos.
+9.2 **A cinemática de motor de `R10D` não está no port** (§8.7): 5 funções candidatas, mas
+   qual é a cutscene exige rodar a VM de script.
+9.3 **`prologue.xml` está desenhado sobre o `opn.ogv` e não deveria** (§8.6). A evidência
+   numérica aponta `MAIN06`; a troca ficou como engate para não mudar comportamento visível
+   sem o dono pedir.
+9.4 **Campos `+0x06`, `+0x08` e `+0x10`** do registro de filme (§7) — não decodificados. E o
+   `+0x04 = 945` do registro 13 é leitura ("laço longo"), não medição.
 10. **Cursor inicial = 1 (`LOAD GAME`)** segue como o binário diz (`0x801945b4`) e segue
     contra-intuitivo — item §10.2 de `menu_titulo.md`, ainda sem confirmação em emulador.
 11. **Mercenários:** os assets (fundo `81AA5030` e todos os rótulos PT do atlas: "COMEÇAR JOGO",

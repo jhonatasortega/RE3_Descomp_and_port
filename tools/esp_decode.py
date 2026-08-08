@@ -60,12 +60,45 @@ LAYOUT DO ARQUIVO (provado; ver docs/decomp/notes/esp_efeitos.md)
       +0x16 u16  tpage_or -> OR no tpage (bits 5-6 = modo de semi-transparencia)
       +0x2c/+0x2e         sobrescritos pelo argumento `param` de esp_spawn
 
+QUEM CRIA OS EFEITOS DA SALA (provado; ver docs/decomp/notes/esp_efeitos.md §11)
+--------------------------------------------------------------------------------
+  Nao e o carregador da sala: e o **opcode SCD `0x70`**, handler `0x80056004`
+  (jump-table `0x8009e0f8` + 0x70*4 = `0x8009e2b8`), 16 bytes, que chama
+  `esp_spawn` (`0x8001b484`) direto. Layout lido do handler:
+
+      +0x00 u8  0x70
+      +0x01 u8  TIPO do banco     -> id & 0xff          (0x80056074 `lbu v1,1(s0)`)
+      +0x02 u8  EFEITO            -> (id >> 8) & 0xff   (0x8005602c/0x80056048)
+      +0x03 u8  VARIANTE (nibble) -> (id >> 24) & 0xf   (0x8005603c..0x80056044)
+      +0x04 s8  ancora_tipo   } argumentos de `0x80055e38`, que devolve a MATRIX*
+      +0x05 s8  ancora_indice }  passada como `a2` de esp_spawn
+      +0x06 u16 param_hi      -> slot+0x2e = ESCALA base do sprite
+      +0x08 s16 ofs.x   }  SVECTOR passado como `a3` (deslocamento local)
+      +0x0a s16 ofs.y   }
+      +0x0c s16 ofs.z   }
+      +0x0e u16 param_lo      -> slot+0x2c
+      (`sw zero,0x10(sp)` = rotacao NULL; `s0 += 0x10` = 16 B de avanco)
+
+  `0x80055e38(ancora_tipo, ancora_indice)`: jump-table de 7 casos em `0x80010bc8`
+  quando `ancora_tipo >= 0`, mais um caminho empacotado quando o bit 7 esta ligado.
+      caso 0 -> `0x80098970`  = MATRIZ IDENTIDADE COM TRANSLACAO ZERO (lida do EXE:
+                 `00 10 00 00 00 00 | 00 00 00 10 00 00 | 00 00 00 00 00 10 |
+                  00 00 | 00 00 00 00 00 00 00 00 00 00 00 00`)
+                 => com ancora 0 o `ofs` do opcode E A POSICAO ABSOLUTA DE MUNDO.
+      caso 1 -> `[0x800ccd94] + 0x20`   (matriz de personagem)
+      caso 2 -> `[0x800ccd98] + 0x20`
+      caso 3 -> `[0x800ccd9c + i*4] + 0x20`
+      caso 4 -> `0x800cea60 + i*0x194 + 0x20`  = matriz do OBJETO DE SALA i
+      caso 5 -> retorno tardio (0x80055ffc)    caso 6 -> NULL
+
 USO
 ---
     python tools/esp_decode.py scan                 # CORE00.ESP
     python tools/esp_decode.py scan --room STAGE1/R101
     python tools/esp_decode.py scan --all-rooms     # resumo de tipos por sala
     python tools/esp_decode.py dump port/assets/ESP # PNGs + esp_core00.json
+    python tools/esp_decode.py dump --room STAGE1/R10D    # PNGs dos bancos da SALA
+    python tools/esp_decode.py spawns --room STAGE1/R10D  # instancias do opcode 0x70
 """
 import os
 import sys
@@ -305,12 +338,17 @@ def png(path, w, h, rgba):
 
 def cut_sprite(pixinfo, clut, tpage, clut_word, u, v, size):
     """Recorta um sprite `size`x`size` 4bpp da imagem do TIM."""
+    cols = clut_row(clut, unpack_clut(clut_word)["vram_y"])
+    return recortar_sprite(pixinfo, cols, tpage, u, v, size)
+
+
+def recortar_sprite(pixinfo, cols, tpage, u, v, size):
+    """Recorta um sprite `size`x`size` 4bpp de um bloco de VRAM, com as 16 cores dadas."""
     tp = unpack_tpage(tpage)
     assert tp["tp"] == 0, "esperava 4bpp"
-    # x, em pixels de 4bpp, da origem da tpage dentro da imagem do TIM
+    # x, em pixels de 4bpp, da origem da tpage dentro do bloco
     page_px = (tp["vram_x"] - pixinfo["x"]) * 4
     page_py = tp["vram_y"] - pixinfo["y"]
-    cols = clut_row(clut, unpack_clut(clut_word)["vram_y"])
     stride = pixinfo["w_words"] * 2          # bytes por linha
     out = bytearray()
     for yy in range(size):
@@ -340,6 +378,117 @@ def room_esp(ard_path):
     # esp_register recebe (data = r+off[17], offtab = r+off[18])
     return {"rdt": r, "data_off": off[17], "offtab_off": off[18],
             "vram_off": off[19]}
+
+
+def room_vram(rdt, vram_off):
+    """Blocos de VRAM que a sala sobe para o ESP: `off[19]` do RDT.
+
+    Formato (esp_init_room 0x8001b1e8 -> 0x8001b2a4, que chama LoadImage 0x8008b2ac):
+        u32 n; u32 rel[n];        rel[i] = offset RELATIVO a off[19]
+        cada bloco: u16 x, u16 y, u16 w, u16 h, depois w*2*h bytes de pixel
+    `x`,`y`,`w` estao em UNIDADES DE 16 BITS de VRAM (como no RECT do LoadImage);
+    `h` em linhas. Devolve dicts no mesmo formato que `load_tim` usa em `cut_sprite`.
+    """
+    n = u32(rdt, vram_off)
+    if not 1 <= n <= 32:
+        raise ValueError("n de blocos de VRAM implausivel: %d" % n)
+    rels = struct.unpack_from("<%dI" % n, rdt, vram_off + 4)
+    out = []
+    for i, rel in enumerate(rels):
+        p = vram_off + rel
+        x, y, w, h = struct.unpack_from("<4H", rdt, p)
+        out.append({"index": i, "x": x, "y": y, "w_words": w, "h": h,
+                    "data": rdt[p + 8:p + 8 + w * 2 * h], "pmode": 0,
+                    "rel": rel})
+    return out
+
+
+def bloco_de_pixels(blocos, vram_x, vram_y, largura16, altura):
+    """Bloco que contem o retangulo (em unidades de 16 bits) pedido; None se nenhum."""
+    for b in blocos:
+        if (b["x"] <= vram_x and vram_x + largura16 <= b["x"] + b["w_words"]
+                and b["y"] <= vram_y and vram_y + altura <= b["y"] + b["h"]):
+            return b
+    return None
+
+
+def linha_clut_vram(blocos, vram_x, vram_y):
+    """As 16 cores BGR555 da CLUT que mora em (vram_x, vram_y) da VRAM da sala."""
+    b = bloco_de_pixels(blocos, vram_x, vram_y, 16, 1)
+    if b is None:
+        return None
+    o = (vram_y - b["y"]) * b["w_words"] * 2 + (vram_x - b["x"]) * 2
+    return [u16(b["data"], o + 2 * i) for i in range(16)]
+
+
+# ------------------------------------------- quem cria os efeitos: opcode SCD 0x70
+OP_ESP_SPAWN = 0x70            # handler 0x80056004, 16 B, chama esp_spawn
+OP_GOSUB = 0x19                # handler grava PC = func_offset[byte+1] (desce JA)
+OP_EVT_EXEC = (0x03, 0x04)     # inicia OUTRA thread (roda depois, nao aqui)
+OP_IF = 0x06                   # if_begin: empilha o alvo do else
+OP_ELSE = 0x07
+OP_ENDBLOCK = 0x08
+
+
+def spawns_da_sala(ard_path):
+    """Le TODAS as instancias do opcode `0x70` do script da sala.
+
+    Devolve (lista_de_instancias, alcance), onde `alcance[f]` diz como a funcao `f`
+    e atingida a partir da funcao 0 (a que o load da sala inicia: `0x80052ad0` passa
+    `a0=1, a1=0` para `0x80052478`, e `0x80052af8` roda o loop da VM):
+        "init"   = corrente de `gosub` (0x19) desde a f0 -> roda na ENTRADA da sala
+        "thread" = alcancada por `evt_exec` (0x03/0x04) -> roda depois, em outra thread
+        None     = nao alcancada pelo que este parser ve
+    Cada instancia leva `bloco` = profundidade de `if` aberto naquele ponto
+    (0 = incondicional dentro da funcao).
+    """
+    import scd_decode as SCD
+    res, _unk, _rdt, _so = SCD.decode_room(ard_path)
+
+    # --- grafo de chamadas: gosub (desce ja) e evt_exec (outra thread) ---
+    gosubs = {}
+    threads = {}
+    for fi, _start, insns, _ok in res:
+        gosubs[fi] = []
+        threads[fi] = []
+        for _rel, op, sz, b in insns:
+            if op == OP_GOSUB and sz == 2 and len(b) >= 2:
+                gosubs[fi].append(b[1])
+            elif op in OP_EVT_EXEC and len(b) >= 4 and b[2] == OP_GOSUB:
+                threads[fi].append(b[3])
+    alcance = {}
+    fila = [(0, "init")]
+    while fila:
+        f, como = fila.pop(0)
+        if f in alcance and (alcance[f] == "init" or como == "thread"):
+            continue
+        alcance[f] = como
+        for g in gosubs.get(f, []):
+            fila.append((g, como))
+        for g in threads.get(f, []):
+            fila.append((g, "thread"))
+
+    saida = []
+    for fi, _start, insns, _ok in res:
+        prof = 0
+        for rel, op, sz, b in insns:
+            if op == OP_IF:
+                prof += 1
+            elif op in (OP_ELSE, OP_ENDBLOCK):
+                prof = max(0, prof - 1)
+            if op != OP_ESP_SPAWN or sz != 16 or len(b) != 16:
+                continue
+            saida.append({
+                "func": fi, "off": rel, "bloco": prof,
+                "alcance": alcance.get(fi),
+                "tipo": b[1], "efeito": b[2], "variante": b[3] & 0xF,
+                "ancora_tipo": s8(b[4]), "ancora_indice": s8(b[5]),
+                "escala": u16(b, 6),
+                "pos": list(struct.unpack_from("<3h", b, 8)),
+                "param_lo": u16(b, 14),
+                "bruto": b.hex(" "),
+            })
+    return saida, alcance
 
 
 # -------------------------------------------------------------------- saidas
@@ -403,6 +552,239 @@ def anim_seq(bk, start, limit=64):
     return " ".join(out)
 
 
+def sequencia_anim(bk, start, limit=64):
+    """Igual a `anim_seq`, mas ESTRUTURADO: percorre a tabela A como `esp_anim_step`.
+
+    Devolve {"quadros": [{a, b, px, ticks, ox, oy}], "fim": "loop"|"morre"|"congela",
+             "loop_para": int|None, "ticks_total": int}
+    """
+    quadros = []
+    fim = "?"
+    loop_para = None
+    i = start
+    while len(quadros) < limit:
+        if i >= len(bk["atab"]):
+            fim = "fora-da-tabela-A"
+            break
+        a = bk["atab"][i]
+        c = a["ctl_dur"]
+        if c == 0x00:
+            fim = "morre"
+            break
+        if c == 0xFE:
+            fim = "congela"
+            break
+        if c == 0xFF:
+            fim = "loop"
+            loop_para = a["b_index"]
+            break
+        b = bk["btab"][a["b_index"]] if a["b_index"] < bk["B"] else {"ox": 0, "oy": 0}
+        quadros.append({"a": i, "b": a["b_index"], "px": a["size"], "ticks": c,
+                        "ox": b["ox"], "oy": b["oy"], "n_prims": a["n_prims"]})
+        i += 1
+    return {"quadros": quadros, "fim": fim, "loop_para": loop_para,
+            "ticks_total": sum(q["ticks"] for q in quadros)}
+
+
+NOME_PNG_SALA = "ESP/sala/%s/t%02x_A%02d_B%02d_v%d_%dx%d.png"
+
+
+def dump_sala(sala, outdir, variantes=4, so_usados=False):
+    """Recorta em PNG os quadros dos bancos de ESP de UMA sala.
+
+    Os pixels NAO vem de nenhum TIM: vem dos blocos de VRAM que a propria sala sobe
+    (`off[19]` do RDT), que e o que `esp_init_room` manda para o `LoadImage`.
+    Com `so_usados` recorta apenas os quadros que as instancias do opcode `0x70` da
+    propria sala pedem (banco, efeito e variante) — e o que o port precisa desenhar.
+    Devolve o registro de metadados da sala (o que vai para port/data/esp_sala.json).
+    """
+    ard = os.path.join(CD_DATA, sala + ".ARD")
+    info = room_esp(ard)
+    if not info:
+        return None
+    r = info["rdt"]
+    sub = r[info["data_off"]:]
+    esp = parse_esp(sub, info["offtab_off"] - info["data_off"])
+    blocos = room_vram(r, info["vram_off"])
+    nome_sala = os.path.basename(sala)
+    dstdir = os.path.join(outdir, "sala", nome_sala)
+    os.makedirs(dstdir, exist_ok=True)
+
+    inst, _alc = spawns_da_sala(ard)
+    reg = {
+        "arquivo": sala + ".ARD",
+        "tipos": esp["types"],
+        "vram": [{"x": b["x"], "y": b["y"], "w16": b["w_words"], "h": b["h"]}
+                 for b in blocos],
+        "bancos": {},
+        "instancias": inst,
+        "n_png": 0,
+    }
+    for bk in esp["banks"]:
+        tp, cl = bk["tpage"], bk["clut"]
+        # quais (entrada A, variante) as instancias desta sala realmente pedem
+        precisa = None
+        if so_usados:
+            precisa = set()
+            for x in inst:
+                if x["tipo"] != bk["type"]:
+                    continue
+                ef = bk["effects"].get(x["efeito"])
+                if not ef or "erro" in ef:
+                    continue
+                for sl in ef["slots"]:
+                    for fr in sl["frames"]:
+                        if not fr["flag_draw"]:
+                            continue
+                        for q in sequencia_anim(bk, fr["a_start"])["quadros"]:
+                            precisa.add((q["a"], x["variante"]))
+        # --- os PNG: um por (entrada da tabela A, variante de CLUT) ---
+        feitos = set()
+        vars_ok = set()
+        for ai, a in enumerate(bk["atab"]):
+            if a["ctl_dur"] in (0x00, 0xFE, 0xFF) or a["size"] == 0:
+                continue
+            if a["b_index"] >= bk["B"]:
+                continue
+            b = bk["btab"][a["b_index"]]
+            # retangulo pedido, em unidades de 16 bits de VRAM (4 texels de 4bpp cada)
+            x16 = tp["vram_x"] + (b["u"] >> 2)
+            w16 = ((b["u"] & 3) + a["size"] + 3) >> 2
+            px = bloco_de_pixels(blocos, x16, tp["vram_y"] + b["v"], w16, a["size"])
+            if px is None:
+                continue
+            for var in range(variantes):
+                if precisa is not None and (ai, var) not in precisa:
+                    continue
+                cw = cl["raw"] + var * 0x40
+                cols = linha_clut_vram(blocos, unpack_clut(cw)["vram_x"],
+                                       unpack_clut(cw)["vram_y"])
+                if cols is None:
+                    continue
+                chave = (ai, a["b_index"], var, a["size"])
+                if chave in feitos:
+                    continue
+                try:
+                    rgba = recortar_sprite(px, cols, tp["raw"], b["u"], b["v"],
+                                           a["size"])
+                except Exception:                # noqa: BLE001
+                    continue
+                arq = "t%02x_A%02d_B%02d_v%d_%dx%d.png" % (
+                    bk["type"], ai, a["b_index"], var, a["size"], a["size"])
+                png(os.path.join(dstdir, arq), a["size"], a["size"], rgba)
+                feitos.add(chave)
+                vars_ok.add(var)
+                reg["n_png"] += 1
+
+        usa_efeito = None
+        if so_usados:
+            usa_efeito = {x["efeito"] for x in inst if x["tipo"] == bk["type"]}
+        efeitos = {}
+        for e in sorted(bk["effects"]):
+            if usa_efeito is not None and e not in usa_efeito:
+                continue
+            ef = bk["effects"][e]
+            if "erro" in ef:
+                efeitos[str(e)] = {"erro": ef["erro"]}
+                continue
+            slots = []
+            for sl in ef["slots"]:
+                for fr in sl["frames"]:
+                    abr = ((tp["raw"] | fr["tpage_or"]) >> 5) & 3
+                    seq = sequencia_anim(bk, fr["a_start"])
+                    slots.append({
+                        "handler": fr["handler"], "flags": fr["flags"],
+                        "desenha": fr["flag_draw"],
+                        "semitransp": fr["flag_semitrans"],
+                        "segue_matriz": fr["flag_follow_mtx"],
+                        "quad_matriz": fr["flag_mtx_quad"],
+                        "fisica": fr["flag_physics"], "anima": fr["flag_anim"],
+                        "escala_x": fr["scale_x"], "escala_y": fr["scale_y"],
+                        "a_start": fr["a_start"],
+                        "vel": fr["vel"], "acc": fr["acc"],
+                        "tpage_or": fr["tpage_or"], "abr": abr,
+                        "aditivo": abr == 1,
+                        "anim": seq,
+                    })
+            efeitos[str(e)] = {"n_slots": ef["n_slots"], "slots": slots}
+        reg["bancos"][str(bk["type"])] = {
+            "indice": bk["index"], "offset": bk["offset"],
+            "A": bk["A"], "B": bk["B"],
+            "clut": cl["raw"], "clut_vram": [cl["vram_x"], cl["vram_y"]],
+            "tpage": tp["raw"], "tpage_vram": [tp["vram_x"], tp["vram_y"]],
+            "abr_banco": tp["abr"],
+            "variantes": sorted(vars_ok),
+            "efeitos": efeitos,
+        }
+    return reg
+
+
+def folha_prova_sala(sala, outdir, cel=60, variante=0):
+    """Folha de contato: uma LINHA por banco da sala, uma coluna por quadro do efeito 0.
+
+    Serve de prova visual do que cada banco e (fogo, explosao, faisca...). O fundo e
+    escuro e os sprites entram SOMANDO, que e o `abr = 1` da maioria dos efeitos.
+    """
+    ard = os.path.join(CD_DATA, sala + ".ARD")
+    info = room_esp(ard)
+    if not info:
+        return None
+    r = info["rdt"]
+    esp = parse_esp(r[info["data_off"]:], info["offtab_off"] - info["data_off"])
+    blocos = room_vram(r, info["vram_off"])
+    linhas = []
+    for bk in esp["banks"]:
+        eff = sorted(bk["effects"])
+        if not eff:
+            continue
+        ef = bk["effects"][eff[0]]
+        if "erro" in ef or not ef["slots"]:
+            continue
+        seq = sequencia_anim(bk, ef["slots"][0]["frames"][0]["a_start"])
+        if seq["quadros"]:
+            linhas.append((bk, seq["quadros"]))
+    if not linhas:
+        return None
+    W = cel * max(len(q) for _, q in linhas)
+    H = cel * len(linhas)
+    buf = bytearray(W * H * 4)
+    for i in range(W * H):
+        buf[i * 4:i * 4 + 4] = bytes((24, 24, 32, 255))
+    for li, (bk, quadros) in enumerate(linhas):
+        tp, cl = bk["tpage"], bk["clut"]
+        cw = cl["raw"] + variante * 0x40
+        cols = linha_clut_vram(blocos, unpack_clut(cw)["vram_x"],
+                               unpack_clut(cw)["vram_y"])
+        if cols is None:
+            continue
+        for ci, q in enumerate(quadros):
+            a = bk["atab"][q["a"]]
+            b = bk["btab"][a["b_index"]]
+            x16 = tp["vram_x"] + (b["u"] >> 2)
+            w16 = ((b["u"] & 3) + a["size"] + 3) >> 2
+            px = bloco_de_pixels(blocos, x16, tp["vram_y"] + b["v"], w16, a["size"])
+            if px is None:
+                continue
+            rgba = recortar_sprite(px, cols, tp["raw"], b["u"], b["v"], a["size"])
+            ox = ci * cel + (cel - a["size"]) // 2
+            oy = li * cel + (cel - a["size"]) // 2
+            for yy in range(a["size"]):
+                for xx in range(a["size"]):
+                    s = (yy * a["size"] + xx) * 4
+                    if rgba[s + 3] == 0:
+                        continue
+                    o = ((oy + yy) * W + (ox + xx)) * 4
+                    for k in range(3):
+                        buf[o + k] = min(255, buf[o + k] + rgba[s + k])
+    nome_sala = os.path.basename(sala)
+    dstdir = os.path.join(outdir, "sala", nome_sala)
+    os.makedirs(dstdir, exist_ok=True)
+    caminho = os.path.join(dstdir, "_prova_bancos_v%d.png" % variante)
+    png(caminho, W, H, buf)
+    return {"caminho": caminho, "linhas": [hex(bk["type"]) for bk, _ in linhas],
+            "colunas": [len(q) for _, q in linhas]}
+
+
 def dump(outdir):
     os.makedirs(outdir, exist_ok=True)
     data = open(CORE_ESP, "rb").read()
@@ -458,16 +840,115 @@ def dump(outdir):
     print("%d PNG + esp_core00.json em %s" % (npng, outdir))
 
 
+JSON_SALA = os.path.join(ROOT, "port", "data", "esp_sala.json")
+
+
+def salas_com_esp():
+    """Nomes 'STAGEn/Rxxx' de todas as salas cujo RDT declara ESP."""
+    out = []
+    for p in sorted(glob.glob(os.path.join(CD_DATA, "STAGE*/R*.ARD"))):
+        if room_esp(p):
+            out.append(os.path.relpath(p, CD_DATA).replace("\\", "/")[:-4])
+    return out
+
+
+def gravar_json_sala(regs, caminho=JSON_SALA):
+    """Grava port/data/esp_sala.json MESCLANDO com o que ja estava la.
+
+    Assim `dump --all-rooms` (todas as salas, so os quadros usados) e depois
+    `dump --room STAGE1/R10D --todos-quadros` (uma sala inteira, para inspecao)
+    convivem no mesmo arquivo em vez de um apagar o outro.
+    """
+    antigas = {}
+    if os.path.exists(caminho):
+        try:
+            with open(caminho, encoding="utf-8") as f:
+                antigas = json.load(f).get("salas", {})
+        except Exception:                        # noqa: BLE001
+            antigas = {}
+    antigas.update(regs)
+    regs = dict(sorted(antigas.items()))
+    meta = {
+        "_fonte": {
+            "exe": "SLUS_009.23 base 0x80010000",
+            "bancos": "RDT off[17] (dados) / off[18] (tabela de offsets, lida de tras "
+                      "para frente) / off[19] (blocos de VRAM) — esp_init_room 0x8001b148",
+            "instancias": "opcode SCD 0x70, handler 0x80056004 (16 B), que chama "
+                          "esp_spawn 0x8001b484; ancora via 0x80055e38",
+            "ancora_0": "0x80098970 = matriz identidade com translacao ZERO -> com "
+                        "ancora_tipo 0 o campo `pos` do opcode E a posicao de mundo",
+            "png": "assets/ESP/sala/<SALA>/t{tipo:02x}_A{a:02d}_B{b:02d}_v{var}_{px}x{px}.png",
+            "ticks": "duracao dos quadros em ticks de 30 Hz (tabela A, campo ctl_dur)",
+        },
+        "salas": regs,
+    }
+    os.makedirs(os.path.dirname(caminho), exist_ok=True)
+    with open(caminho, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=1)
+    return caminho
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["scan", "dump"])
+    ap.add_argument("cmd", choices=["scan", "dump", "spawns"])
     ap.add_argument("out", nargs="?", default="port/assets/ESP")
     ap.add_argument("--room")
+    ap.add_argument("--salas", help="lista separada por virgula (STAGE1/R10D,...)")
     ap.add_argument("--all-rooms", action="store_true")
+    ap.add_argument("--todos-quadros", action="store_true",
+                    help="dump: recorta TODOS os quadros de todos os bancos da sala "
+                         "(o padrao com --all-rooms/--salas e so os que o 0x70 pede)")
+    ap.add_argument("--folha", action="store_true",
+                    help="dump: gera tambem a folha de contato de prova por sala")
     args = ap.parse_args()
 
+    if args.cmd == "spawns":
+        alvos = ([args.room] if args.room
+                 else (args.salas.split(",") if args.salas else salas_com_esp()))
+        for sala in alvos:
+            inst, alc = spawns_da_sala(os.path.join(CD_DATA, sala + ".ARD"))
+            print("== %s ==  %d instancias do opcode 0x70" % (sala, len(inst)))
+            for x in inst:
+                print("   f%-3d +0x%04x bloco=%d %-6s tipo=0x%02x ef=0x%02x var=%d "
+                      "ancora=(%d,%d) esc=0x%04x pos=(%d,%d,%d)" % (
+                          x["func"], x["off"], x["bloco"], x["alcance"] or "-",
+                          x["tipo"], x["efeito"], x["variante"],
+                          x["ancora_tipo"], x["ancora_indice"], x["escala"],
+                          x["pos"][0], x["pos"][1], x["pos"][2]))
+            del alc
+        return
+
     if args.cmd == "dump":
-        dump(args.out if args.out else "port/assets/ESP")
+        outdir = args.out if args.out else "port/assets/ESP"
+        if not os.path.isabs(outdir):
+            outdir = os.path.join(ROOT, outdir)
+        if args.room or args.salas or args.all_rooms:
+            alvos = ([args.room] if args.room
+                     else (args.salas.split(",") if args.salas else salas_com_esp()))
+            # uma sala so: dump completo (para inspecao). Muitas: so o que o 0x70 usa.
+            so_usados = not args.todos_quadros and len(alvos) > 1
+            regs = {}
+            n = 0
+            for sala in alvos:
+                reg = dump_sala(sala, outdir, so_usados=so_usados)
+                if reg is None:
+                    print("%s: sem ESP" % sala)
+                    continue
+                regs[os.path.basename(sala)] = reg
+                n += reg["n_png"]
+                print("%-14s %d bancos · %d PNG · %d instancias 0x70" % (
+                    sala, len(reg["bancos"]), reg["n_png"],
+                    len(reg["instancias"])))
+                if args.folha:
+                    f = folha_prova_sala(sala, outdir)
+                    if f:
+                        print("               folha %s  linhas=%s colunas=%s" % (
+                            os.path.relpath(f["caminho"], ROOT), f["linhas"],
+                            f["colunas"]))
+            print("%d salas · %d PNG · gravado %s" % (
+                len(regs), n, os.path.relpath(gravar_json_sala(regs), ROOT)))
+            return
+        dump(outdir)
         return
 
     if args.all_rooms:

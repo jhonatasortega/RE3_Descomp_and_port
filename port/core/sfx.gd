@@ -17,9 +17,18 @@ extends Node
 ##
 ## `cat` **é o id do banco VAB** (a mesma função `0x800750e4` busca `cat` e o banco do
 ## descritor na tabela de 8 slots `0x800e0664`): **0 = `C_xx`** (jogador/UI/global),
-## **1 = `A_xx`** (área), **2 = `R###.SND`** (sala), **4 = porta** (banco embutido em cada
-## `STAGE*/DOORxx.DO1` — é o recurso que o loader `0x80012818` puxa com a string de
+## **1 = `A_xx`**, **2 = `R###.SND`** (sala), **4 = porta** (banco embutido em cada
+## `STAGE*/DOORxx.DOn` — é o recurso que o loader `0x80012818` puxa com a string de
 ## depuração `"DOOR SOUND"` de `0x800103ac`).
+##
+## Quem carrega cada banco (medido nesta rodada — o carregador é `0x8007809c`, com
+## `fileid = *(0x800110b0 + cat*4) + banco*2`):
+##   • **cat 0** — room-loader `0x800493ec` em `0x800495d0`: `C_02` (Jill) ou `C_08`
+##     (`*(gs+0x784e) >= 8`). É banco de **PERSONAGEM**.
+##   • **cat 1** — `0x80043eb4`, com `a1 = lbu *(player+0x46)` = **ARMA EQUIPADA** (o mesmo
+##     byte que indexa a jump-table por arma em `0x8009dcd4`). Ou seja `A_01..A_14` é banco
+##     de **ARMA**, não de "área" como dizia o doc antigo.
+##   • **cat 4** — loader de porta `0x8001644c`, `dtex = *(descriptor+0xc)`.
 ##
 ## O descritor dá o índice do TOM (`byte1 >> 4`); o `vag` do tom é a amostra. Como
 ## `re3_sfx.py` descarta o VAG#1 (bloco mudo do SPU), **`vag k` => `<banco>_{k-2}.wav`**.
@@ -32,8 +41,14 @@ extends Node
 ## Detalhe e resíduo: `docs/decomp/notes/exe_audio.md`.
 
 const DADOS := "re3_se.json"
+const PORTAS := "porta_banco.json"              ## sala -> índice de porta (Dtex_Type) por AOT
 const SFX_DIR := "SOUND/SFX"
 const VOZES := 8                                ## pool de players (o SPU do PS1 tem 24 vozes)
+## Nome do banco de porta para um índice `Dtex_Type`. O `S1_` é histórico: os 76
+## `STAGE*/DOORxx.DOn` são byte-idênticos nos 7 stages (medido em 76/76).
+const NOME_BANCO_PORTA := "S1_DOOR%02X"
+## Banco `cat 0` que o room-loader carrega para a Jill — MEDIDO (ver `definir_banco_area`).
+const BANCO_JOGADOR := "C_02"
 
 ## Ações nomeadas com confiança ALTA — o que a UI pode usar sem ressalva.
 const ACOES_MENU := ["menu_mover", "menu_cancelar", "menu_confirmar",
@@ -47,6 +62,7 @@ var _prox := 0
 var _cache: Dictionary = {}                     ## rel -> AudioStreamWAV
 var _banco_area := ""                           ## banco C_ da área atual (ver definir_banco_area)
 var _banco_porta := ""                          ## banco da porta em uso (ver definir_banco_porta)
+var _portas: Dictionary = {}                    ## sala -> [{aot, dtex, ...}] (porta_banco.json)
 var _volume_db := 0.0
 var _ultimo := ""                               ## último rel tocado (harness/teste)
 
@@ -83,7 +99,34 @@ func carregar() -> bool:
 	_acoes = a if a is Dictionary else {}
 	var b: Variant = _dados.get("bancos")
 	_bancos = b if b is Dictionary else {}
+	# Banco de porta por sala/AOT (opcional: sem ele a porta cai no banco padrão).
+	var p: Variant = AssetIO.json(PORTAS)
+	if p is Dictionary:
+		var s: Variant = (p as Dictionary).get("salas")
+		_portas = s if s is Dictionary else {}
 	return true
+
+
+func dtex_da_porta(room_id: String, aot: int) -> int:
+	## Índice `Dtex_Type` da porta `aot` da sala, ou -1. É campo ESTÁTICO do SCD
+	## (`descriptor+0xc`) e é o mesmo byte que o loader `0x8001644c` usa para achar o
+	## `DOORxx.DOn` de onde vem o banco de som (`cat 4`).
+	var v: Variant = _portas.get(room_id)
+	if not (v is Array):
+		return -1
+	for e: Variant in v as Array:
+		if e is Dictionary and int((e as Dictionary).get("aot", -1)) == aot:
+			return int((e as Dictionary).get("dtex", -1))
+	return -1
+
+
+func usar_porta_da_sala(room_id: String, aot: int) -> bool:
+	## Seleciona o banco da porta `aot` da sala e devolve true se achou.
+	var dt := dtex_da_porta(room_id, aot)
+	if dt < 0:
+		return false
+	definir_banco_porta(dt)
+	return _banco_porta != ""
 
 
 func pronto() -> bool:
@@ -129,26 +172,59 @@ func impacto_ataque() -> bool:
 
 
 func porta_abrir() -> bool:
-	## Som principal da porta. `cat 4` = banco embutido no `DOORxx.DO1` daquela porta.
-	## O id 0 é o único **válido nas 76 portas** — por isso é o "principal".
-	## Se a porta atual foi informada (`definir_banco_porta`), usa o som DELA.
+	## Som da transição de porta. **O id é MEDIDO**: `cat 4 / id 1`.
+	##
+	## Dos 155 `jal 0x800746c0` do EXE, o único que cai na região de porta
+	## (`0x80014000..0x80019000`) é `0x800161c4`, com `a0 = 0x401` → cat 4, id 1. Ele está no
+	## estado 2 da máquina de estados da animação de porta (tabela de 3 funções `0x800979f0`
+	## = `{0x80015498, 0x80015754, 0x80016150}`); os estados 0 e 1 **não pedem SE nenhum**.
+	## O gatilho é a flag `0x2000` do `u16@+6` da entrada de animação (`0x800163ec` grava
+	## `*(gs+0x240) = 1`, relido em `0x800161b4`).
+	##
+	## Ou seja: o motor toca **um só** som do banco de porta, e é o id 1. Que o momento seja
+	## "abrir" e não "fechar" é interpretação — o NOME segue DECLARADO.
 	return _tocar_porta("porta_abrir")
 
 
 func porta_fechar() -> bool:
-	## SE id 1 do banco da porta (existe em 64 das 76). "fechar" é ordem DECLARADA.
-	return _tocar_porta("porta_fechar")
+	## **NÃO EXISTE** no motor: só há UM pedido de cat 4 em todo o EXE (o id 1, em
+	## `porta_abrir`). Mantido para não quebrar quem chamava; toca o mesmo som.
+	return porta_abrir()
 
 
 func porta_trancada() -> bool:
-	## SE id 2 do banco da porta — existe em só 4 das 76. Nome DECLARADO.
-	return _tocar_porta("porta_trancada")
+	## Porta trancada. É **cat 2 (banco de SALA)**, não o banco da porta: o produtor de porta
+	## `0x80050d28` (jump-table de SCE `0x8009e0bc[1]`) pede `a0 = 0x216` em `0x80050ed8` /
+	## `0x80050f14` no caminho "não tem a chave" e em `0x80050e10` quando `Key_Type == 0xff`.
+	##
+	## O port **não tem a amostra**: o único banco de sala no disco é `R000.SND` e a tabela de
+	## SE dele é toda `0xffffffff`. Devolve false — sem inventar som de outro banco.
+	return tocar_acao("porta_trancada")
 
 
-func definir_banco_porta(nome: String) -> void:
-	## Diz qual porta está sendo usada, no formato `S<stage>_DOOR<xx>` (ex.: "S1_DOOR03").
-	## Cada `DOORxx.DO1` traz o próprio banco de som — é o que dá porta de madeira ≠ portão
-	## de metal. Vazio = cai no padrão do `re3_se.json`.
+func porta_destrancar() -> bool:
+	## Destrancou com a chave: `cat 2 / id 0x25` (`0x80050e74`, caminho "tem a chave";
+	## `Knock_Type != 0` usa o id 4). Mesma ressalva de amostra que `porta_trancada`.
+	return tocar_acao("porta_destrancar")
+
+
+func definir_banco_porta(porta: Variant) -> void:
+	## Diz qual porta está sendo usada. Aceita:
+	##   • o **índice** `Dtex_Type` (int 0..75) — é o que o SCD guarda e o que
+	##     `data/porta_banco.json` publica por sala/AOT;
+	##   • o nome do banco (`"S1_DOOR03"`, `"DOOR03"`).
+	##
+	## Cada `DOORxx.DOn` traz o próprio banco de som — é o que dá porta de madeira ≠ portão de
+	## metal. Os 76 arquivos são **byte-idênticos nos 7 stages** (medido), então o índice basta:
+	## o prefixo `S1_` do nome no `re3_se.json` é histórico, não semântico.
+	## Vazio/inválido = cai no padrão do `re3_se.json`.
+	var nome := ""
+	if porta is int:
+		nome = NOME_BANCO_PORTA % int(porta)
+	elif porta is String:
+		nome = porta as String
+		if nome.begins_with("DOOR"):
+			nome = "S1_" + nome
 	_banco_porta = nome if _bancos.has(nome) else ""
 
 
@@ -221,10 +297,20 @@ func tocar_arquivo(rel: String) -> bool:
 	return true
 
 
-func definir_banco_area(nome: String) -> void:
-	## Diz qual banco `C_xx` está "carregado" (o original troca por área). Vazio = padrão.
-	## Enquanto o de-para área->banco não estiver medido, isto fica sob controle de quem
-	## carrega a sala. **declarado: escolha do port, não medida.**
+func definir_banco_area(nome := BANCO_JOGADOR) -> void:
+	## Diz qual banco `C_xx` (cat 0) está carregado. **Agora é MEDIDO**, e o que ele seleciona
+	## é o PERSONAGEM, não a área:
+	##
+	## O room-loader `0x800493ec` chama o carregador de banco `0x8007809c` em `0x800495d0`
+	## com `a0 = 0` (cat 0) e `a1 = 8` quando `*(gs+0x784e) >= 8`, senão `a1 = 2`
+	## (`0x800494f0` / `0x800495a4`). Em `0x8007809c`, `a1` é o **número do banco**:
+	## `fileid = *(0x800110b0 + cat*4) + a1*2`, e `0x800110b0` = `{0x104, 0x103, 0xda, 0xd9}`
+	## → `C_xx.VH = 0x104 + xx*2`, `A_xx.VH = 0xda + xx*2`. Os dois intervalos são contíguos
+	## e não se sobrepõem (`A_01`=0xdc … `A_14`=0x102, `C_00`=0x104 … `C_0D`=0x11e), o que
+	## confere com a ordem dos arquivos no disco.
+	##
+	## Logo: **`C_02` = banco do jogador (Jill)** e `C_08` = o outro conjunto (`>= 8`, os
+	## Mercenaries têm PLD/PLW próprios). O port só joga com a Jill → `C_02`.
 	_banco_area = nome if _bancos.has(nome) else ""
 
 

@@ -644,7 +644,28 @@ não foi rastreado até o fim.
 `+0x712` que é copiado para o estado global.
 
 `0x80196800` faz `INIT_SUB.DAT` (`0x80196d6c`) + `OMAKE BGM` (`0x80196d90`) + `INIT_TBL.DAT`
-(`0x80196e00`) e `load_overlay_task(1, ovl 5 = OPENING)` (`0x80196ec8`).
+(`0x80196e00`), `load_overlay_task(1, ovl 5 = OPENING)` (`0x80196ec8`) e
+`filme_prepara(0)` = `ZMOVIE/OPN.STR` (`0x80196ed8`).
+
+> ### ⚠ CORREÇÃO (rodada de agosto): o timeout NÃO alterna demo e filme
+> `0x8019566c` grava **`ctx[1] = 0xa`** e mais nada: o timeout vai **só** para a demo
+> jogável. O sub 11 (`0x80196800`) **não é alcançado por ele** — varri todas as escritas em
+> `ctx+1` dentro do `TITLE.BIN` e **nenhuma grava 11**. Quem o alcança ficou **NÃO
+> LOCALIZADO**.
+>
+> ### ⚠ O QUE ESTA SEÇÃO NÃO VIU: há um FILME antes do título
+> `0x801943a4` chama **`filme_prepara(0xc)`** no **fim do handler 0** (logo depois do bloco
+> `0x80194388`/`0x8019438c`, onde os caminhos "acabou o CAPCOM", "pulou" e "reset"
+> convergem) e `0x801943ac` espera o bit `0x10000` de `0x800cc858` limpar. O índice `0xc` é
+> `CD_DATA/ZMOVIE/ROOPNE.STR` na tabela de filmes `0x8009ca64`. Só é pulado quando o bit
+> `0x80` (Mercenaries) está ligado (`0x8019439c`). O reprodutor de FMV é uma **tarefa do
+> EXE** (`0x800321c4` prepara, `0x800324a0` faz o tick a partir de `0x80029370`) — não há
+> MDEC em nenhum overlay. Tabela, campos e de-para completo em
+> [`boot_ptbr_hd.md`](boot_ptbr_hd.md) §7.
+>
+> ### ⚠ `OPENING.BIN` (ovl 5) não é o tocador do filme
+> É um **slideshow de imagens paradas** (o prólogo): carrega `ETC/OPENING0.DAT` (9 TIM 8 bpp)
+> e `OPENING1.DAT` (2 TIM 320×240) e monta 2×10 `SPRT`. Ver `boot_ptbr_hd.md` §8.6.
 
 ### 3.8 `0x800cc858` — os bits que eu medi
 

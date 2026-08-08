@@ -209,7 +209,12 @@ OPCODE_SEM = {
  0x74:("motion/anim trigger","MOTION_TRIG 0x8001b894; 5B"), 0x75:("motion/anim trigger","0x8001b894; 2B"),
  0x76:("motion/anim trigger","0x8001b894; 3B"), 0x77:("entity update","12B"),
  0x78:("sub-dispatch por byte@+2","tabela 0x80010bb0[b]; 6B"), 0x79:("? (0x80011df4)","4B"),
- 0x7a:("? (0x800321c4)","2B"), 0x7b:("map data write","0x80078498; 6B"), 0x7c:("?","1B"),
+ # 0x7a = TOCA FMV. `0x80055520` le o byte 1 e chama `filme_prepara 0x800321c4(a0=idx)`,
+ # que indexa a tabela de 14 registros de 0x18 B em `0x8009ca64` (+0x00 = indice de arquivo
+ # do `.STR`, +0x04 = quadros, +0x14 = volume). idx: 0=OPN, 1..9=INS01..INS09, 10=ENDA,
+ # 11=ENDB, 12/13=ROOPNE. Ver docs/decomp/notes/boot_ptbr_hd.md §7.
+ 0x7a:("toca FMV","filme_prepara 0x800321c4; tabela 0x8009ca64; 2B"),
+ 0x7b:("map data write","0x80078498; 6B"), 0x7c:("?","1B"),
  0x7d:("sce_em_set (spawn char de combate)","handler 0x80056a2c; 24B (ver sce_em_set.md)"),
  0x7e:("?","2B"),
  # 0x7f e om_set: instala o OBJETO 3D de cenario no pool de 32 (gs+0x4328). E daqui que sai a
