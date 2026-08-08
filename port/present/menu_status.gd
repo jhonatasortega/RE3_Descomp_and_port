@@ -245,6 +245,7 @@ var mensagem_linha := 0                 ## primeira linha visível do texto de e
 var _datilo := 0
 const DATILO_POR_TICK := 2              ## caracteres por tick de 30 Hz
 static var _itens_json: Dictionary = {}
+var _ecg: Ecg = null                     ## onda do painel de condição (ver `present/ecg.gd`)
 var _pronto := false
 
 
@@ -293,6 +294,9 @@ func carregar(state: GameState) -> bool:
 
 
 func alternar() -> void:
+	var som_a := _sfx()
+	if som_a != null:
+		som_a.menu_abrir()                    ## `0x800746c0` id 9 = abrir/fechar a tela
 	## Botão de menu: abre com animação de 6 quadros, fecha com outros 6.
 	if not _pronto:
 		return
@@ -332,6 +336,8 @@ func avancar() -> void:
 	# máquina de escrever do texto de exame
 	if mensagem != "" and _datilo < mensagem.length():
 		_datilo = mini(_datilo + DATILO_POR_TICK, mensagem.length())
+	if _ecg != null:
+		_ecg.avancar()                        ## a onda anda no tick de 30 Hz
 	# piscada do cursor: sobe/desce de 2 em 2 com clamp em 0x3f
 	if _piscada_sobe:
 		_piscada += CURSOR_PASSO
@@ -476,10 +482,17 @@ func _draw() -> void:
 			t, Color.WHITE, 0, 1, Vector2i(lar_j, alt_j))
 	# A palavra da condição também é SPRITE do STMOJIU (só EN/RU no pack), então vai como texto em
 	# PT. As cores são as do jogo: FINE verde, CAUTION amarelo/laranja, DANGER vermelho.
+	## ECG: a onda vem de `ecg.gd` (tabelas `0x800a0cbc`+, 32 colunas, origem (75,37) — tudo medido
+	## no EXE). Só desenha com a cortina fechada, junto do resto do texto.
+	if _ecg == null:
+		_ecg = Ecg.new()
+	if t >= 1.0:
+		_ecg.desenhar(self, condicao())
 	var cnd := condicao()
 	var cx: int = int(CONDICAO[cnd][4])
 	var cy: int = int(CONDICAO[cnd][5])
-	Texto.desenhar(self, CONDICAO_PT[cnd], Vector2i(cx, cy - 3), 0, CONDICAO_COR[cnd])
+	if t >= 1.0:                              ## idem: sem texto durante a cortina
+		Texto.desenhar(self, CONDICAO_PT[cnd], Vector2i(cx, cy - 3), 0, CONDICAO_COR[cnd])
 	_desenhar_botoes(t)
 	_desenhar_equipada(t)
 	if arquivo == null or not arquivo.aberto:
@@ -654,6 +667,8 @@ func _desenhar_submenu(t: float) -> void:
 		d.position.y = 120.0 + (d.position.y - 120.0) * t
 		d.size.y *= t
 	draw_rect(d, Color(COR_JANELA.r, COR_JANELA.g, COR_JANELA.b, t), false, 2.0)
+	if t < 1.0:
+		return                                ## sem rótulo enquanto a caixa cresce
 	for i in sub_itens.size():
 		var y: int = SUB_LINHA_Y[i] if i < SUB_LINHA_Y.size() else SUB_LINHA_Y[-1] + 20 * i
 		var destacado := i == sub_sel
@@ -1025,6 +1040,12 @@ func _desenhar_botoes(t: float) -> void:
 		# por um azul escuro (8,0,80) dá PRETO. A banda é chapada, então o que importa é a cor; a
 		# textura só serviria para dar a borda, que a moldura já desenha. Declarado.
 		_caixa(Rect2(float(p[0]), float(p[1]), float(p[2]), 16.0), cor, t)
+	## O TEXTO NÃO ACOMPANHA A CORTINA: os painéis são encolhidos para o meio da tela por `t`, mas
+	## `Texto.desenhar` desenha em coordenada fixa — durante abrir/fechar as palavras ficavam
+	## soltas fora dos painéis (o que o usuário viu). No PS1 a tela é montada de uma vez e a
+	## cortina é escala; aqui a solução honesta é **não desenhar texto enquanto a cortina anda**.
+	if t < 1.0:
+		return
 	for i in BOTOES.size():
 		var r: Array = BOTOES[i]
 		var txt: String = BOTOES_TEXTO_PT[i]
