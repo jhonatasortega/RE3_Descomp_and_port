@@ -69,25 +69,32 @@ func run(t: Object) -> bool:
 	t.eq(juntos, 15, "15 salas têm baú E máquina de escrever (R50B só baú, R111 só save)")
 
 	# ───────────────── 2. gatilho: AOT + sonda de 620 + botão de ação ─────────────────
+	# A sala de referência é a **R100** — a 1ª sala de save do jogo, e a caixa abaixo é o que a VM
+	# monta rodando as 9 funções do `R100.scd` (medido em `port/dev/diag_bau.gd`, que faz a mesma
+	# varredura nas 16 salas e acha 1 baú em cada). Não use uma sala de cabeça: `R11B` nem existe
+	# na lista, e `R111` é a única sala com máquina de escrever SEM baú.
 	var vm := ScriptVM.new()
 	var gs := GameState.new()
-	t.check(vm.carregar_sala("R11B"), "R11B carrega (sala de save com baú)")
+	t.check(vm.carregar_sala("R100"), "R100 carrega (1ª sala de save do jogo)")
 	vm.modo = ScriptVM.Modo.EXECUCAO
 	vm.state = gs
 	for fi in vm.func_offsets.size():
 		vm.executar(fi)
 	var baus := vm.baus()
-	t.eq(baus.size(), 1, "a VM instalou 1 baú na R11B", "%d AOTs na sala" % vm.aots.size())
+	t.eq(baus.size(), 1, "a VM instalou 1 baú na R100", "%d AOTs na sala" % vm.aots.size())
 	if baus.is_empty():
 		return true
 	var b0: Aot = baus[0]
+	t.eq(b0.id, 2, "o baú da R100 é o AOT 2")
 	t.eq(b0.sce, Aot.SCE_BAU, "o AOT é sce 9")
 	t.eq(b0.sat, 0x31, "SAT 0x31")
 	t.check(b0.exige_acao(), "exige o botão de ação (sat & 0x10)")
 	t.check(b0.usa_sonda(), "testa o ponto de sonda (sat & 0x20)")
 	t.check(not b0.usa_corpo(), "NÃO testa a posição do corpo (sat & 0x40 apagado)")
 	t.eq(b0.kind, Aot.Kind.BOX, "área em AABB (opcode 0x63)")
-	t.eq(b0.box, Rect2i(-15391, -11709, 2160, 1330), "a caixa do baú da R11B (bytes do SCD)")
+	t.eq(b0.box, Rect2i(-28902, -23031, 1940, 2530), "a caixa do baú da R100 (bytes do SCD)")
+	# e o baú CONTINUA montado depois das 9 funções: nenhum `aot_reset 0x65` o apaga
+	t.check(b0.ativo, "o baú fica ativo depois de toda a montagem da sala")
 
 	# centro da caixa; o jogador fica 620+ ao SUL dela e olha para o norte (facing 0)
 	var cx := b0.box.position.x + b0.box.size.x / 2
@@ -100,8 +107,15 @@ func run(t: Object) -> bool:
 	t.check(vm.bau_de_acao(pos, 2048) == null, "de costas (facing 2048 = +Z) NÃO pega")
 	var longe := Vector3i(cx, 0, cz + 20000)
 	t.check(vm.bau_de_acao(longe, 0) == null, "longe não pega")
-	# corpo DENTRO da caixa mas de costas: não pega, porque `sat 0x31` não tem o bit de corpo
-	t.check(vm.bau_de_acao(Vector3i(cx, 0, cz), 2048) == null,
+	# corpo DENTRO da caixa mas de costas: não pega, porque `sat 0x31` não tem o bit de corpo.
+	# O ponto tem de ficar na borda SUL de dentro (`z = fim - 10`): a caixa do baú da R100 tem
+	# 2530 de profundidade, então do CENTRO a sonda de 620 para +Z ainda cai dentro dela e o
+	# teste não provaria nada. Da borda, a sonda sai da caixa e só o corpo está dentro.
+	var borda := Vector3i(cx, 0, b0.box.position.y + b0.box.size.y - 10)
+	t.check(b0.contem(borda.x, borda.z), "a borda escolhida está DENTRO da caixa")
+	t.check(not b0.contem(ScriptVM.sonda_de(borda, 2048).x, ScriptVM.sonda_de(borda, 2048).y),
+		"e a sonda de costas dali sai da caixa")
+	t.check(vm.bau_de_acao(borda, 2048) == null,
 		"corpo dentro da caixa mas de costas não abre (sat sem o bit 0x40)")
 	# AOT desativado (aot_reset 0x65) não dispara
 	b0.ativo = false
@@ -127,17 +141,23 @@ func run(t: Object) -> bool:
 	t.eq(gs.find_by_id(0x03), 0, "a arma voltou para o 1º slot livre da mão")
 
 	# ───────────────── 5. EMPILHAR respeitando o máximo do descritor ─────────────────
+	# Duas coisas diferentes que o mesmo `transferir` tem de fazer, e a ORDEM importa
+	# (`exe_items.md §2.3`): 1º tenta empilhar num slot do mesmo item; só se não sobrar espaço
+	# procura slot LIVRE. Para exercitar o "não cabe" é obrigatório encher o resto do baú — com
+	# 63 slots vazios o certo é a transferência ir para um slot livre, e não falhar.
 	var max_bala := gs.maximo_do_item(0x15)
 	t.check(max_bala > 1, "Hand Gun Bullets empilha", "max = %d" % max_bala)
 	gs.reset()
 	gs.add_item(0x15, 30, 0x0001)                      ## mão: 30 balas
+	for i in range(1, 64):                             ## baú lotado, menos o slot 0
+		gs.box_slots[i] = {"id": 0x41, "qtd": 1, "flags": 0}
 	gs.box_slots[0] = {"id": 0x15, "qtd": max_bala - 10, "flags": 0x0001}
 	t.eq(gs.transferir(0, false), GameState.Transf.PARCIAL,
 		"só cabem 10 no baú -> transferência PARCIAL")
 	t.eq(gs.box_slots[0]["qtd"], max_bala, "o baú fica no máximo exato do descritor")
 	t.eq(gs.main_slots[0]["qtd"], 20, "as 20 que não cabem FICAM na mão")
 	t.eq(gs.transferir(0, false), GameState.Transf.CHEIO,
-		"com o baú cheio e sem slot livre, a operação falha")
+		"com a pilha no máximo e sem slot livre, a operação falha")
 	t.eq(gs.main_slots[0]["qtd"], 20, "e nada é perdido")
 
 	# empilhar até caber tudo -> OK e o slot de origem some
@@ -145,6 +165,16 @@ func run(t: Object) -> bool:
 	t.eq(gs.transferir(0, false), GameState.Transf.OK, "cabendo tudo, é OK")
 	t.eq(gs.main_slots[0]["id"], 0, "o slot da mão foi liberado")
 	t.eq(gs.box_slots[0]["qtd"], max_bala - 30, "e o baú somou as 20")
+
+	# com o baú NÃO lotado, a pilha cheia não é impedimento: vai para o 1º slot livre
+	gs.reset()
+	gs.add_item(0x15, 30, 0x0001)
+	gs.box_slots[0] = {"id": 0x15, "qtd": max_bala, "flags": 0x0001}
+	t.eq(gs.transferir(0, false), GameState.Transf.OK,
+		"pilha no máximo mas com slot livre -> vai para o slot livre")
+	t.eq(gs.box_slots[0]["qtd"], max_bala, "a pilha cheia não muda")
+	t.eq(gs.box_slots[1], {"id": 0x15, "qtd": 30, "flags": 0x0001},
+		"e as 30 abrem uma segunda pilha no slot 1")
 
 	# ───────────────── 6. baú CHEIO (64 slots) e slot vazio ─────────────────
 	gs.reset()

@@ -73,6 +73,16 @@ extends RefCounted
 ##    E o único leitor de `0x800d1f2c & 0x10` em toda a máquina de estados é `0x800350f8`
 ##    (passe de colisão) mais estes dois — não há outro consumidor.
 ##
+## d) **O que a flag faz na COLISÃO** (o outro consumidor, e é o que torna o subir possível):
+##    no laço de colisão entidade↔entidade, o caminho que EMPURRA o personagem para fora do
+##    obstáculo (`0x80035130`: `entry+0x2e |= 0x100`) é PULADO quando as quatro condições
+##    coincidem — `entry+2 == 0` (`0x800350e0`), o obstáculo tem o bit `0x100`
+##    (`0x800350ec  andi $a3,0x100`, `$a3` = flags do OUTRO corpo), `gs+0x77f4 & 0x10` aceso
+##    (`0x800350f8..0x80035104`), `player+0x12d == 0` (`0x8003510c`) e
+##    `(player+0xba & 0x7fff) == 0` (`0x8003511c..0x80035128`). Isto é: **a flag desliga a parede
+##    daquele obstáculo**, e é por isso que a animação de subir consegue levar a Jill para cima
+##    em vez de esbarrar. Repare que é o MESMO bit `0x100` do `be_flg` de §4.
+##
 ## ══════════════════ 3. A ANIMAÇÃO (provada) ══════════════════
 ## r9 é o par `move 0x8003b1c4` + `anim 0x8003b244`. O `anim` despacha por `player+6` numa
 ## tabela de **8** subestados em `0x800107d0`, e os `player+0xc8` que ele escreve são:
@@ -97,19 +107,46 @@ extends RefCounted
 ## por render. O papel real das duas está PROVADO aqui: são o par de **subir/descer em objeto**
 ## da rotina 9. A pendência "validar 'subir em item'" listada no STATUS daquele doc fecha.
 ##
-## ══════════════════ 4. O QUE FALTA (honesto) ══════════════════
-## O R10D tem 3 objetos `om` (opcode `0x7f`, função 4, slots 0/1/2) em
-## `(11844,-180,-9306)`, `(15408,-180,-9306)` e `(-14550,0,-12625)` — **nenhum** na captura do
-## dono. Os campos que marcam o objeto como escalável (`om+0xae & 0x10`, `om+0xba & 0x8000`)
-## são de RUNTIME: o descritor de 40 B do `0x7f` não os carrega, quem os escreve é o script
-## (member-set) ou o carregador de modelo. Então **qual om é a lixeira não sai do dado estático**
-## — do mesmo jeito que a espécie do inimigo não sai (ver `sce_em_set.md §2.1`).
-## O que EXISTE no dado, e é o melhor limite: na colisão do R10D o retângulo #9
-## `(-4128,-15823)..(-3328,-10197)` (800 de largura, `forma 8`, `topo -3600`, `nivel 1`) contém
-## EXATAMENTE a posição da captura e é 1800 unidades mais ALTO que os vizinhos #7/#10
-## (`forma 1/7`, `topo -1800`) — a geometria de um degrau para subir. Por isso o gatilho aqui é
-## **data-driven**: `pontos` é uma lista de caixas escaláveis, e a candidata do R10D entra como
-## **declarada / NÃO PROVADA** em `PONTOS_DECLARADOS`.
+## ══════════════════ 4. QUAL OBJETO É ESCALÁVEL — SAI DO DADO ESTÁTICO ✅ ══════════════════
+## O agregador `0x80036570` só conta os 6 quadros se o objeto em contato passar por DOIS bits de
+## `entry+0` (ver `ObjetoSala.escalavel()` para os sítios):
+##
+##     0x8003659c  andi 0x4000 ; bnez -> desiste     (aceso  = NÃO escalável)
+##     0x800365a4  andi 0x100  ; beqz -> desiste     (apagado = NÃO escalável)
+##
+## e `entry+0 = u16@+0x0c | 1` do opcode `0x7f` (`0x800565cc..0x800565d8`) — **dado estático**.
+## Varredura dos **674** `0x7f` do jogo (`port/dev/diag_subir.gd` e o bloco 3 do teste): passam
+## **11 declarações / 7 objetos**, todos com `be_flg` `0x0101` ou `0x0301`:
+##
+##     R210 f0  slot 5  (-14000,   0, -20975)   0x0301
+##     R210 f0  slot 5  (-21720,   0, -21035)   0x0301
+##     R219 f0  slot 3  (-21720,   0, -21035)   0x0301
+##     R315 f13 slot 7  (-27589,   0, -23328)   0x0101
+##     R406 f17 slot 0  (-23690, 900, -25131)   0x0101   (declarado 4× na mesma função)
+##     R50D f17 slot 0  (-18946,   0, -15456)   0x0101
+##     R50D f17 slot 1  ( -7974,   0,  -8467)   0x0101
+##     R50D f17 slot 2  (   102,   0, -24937)   0x0101
+##
+## ══════════════════ 5. CONCLUSÃO SOBRE O R10D (negativa, e provada) ══════════════════
+## O R10D tem 3 objetos `0x7f` (função 4, slots 0/1/2) em `(11844,-180,-9306)`,
+## `(15408,-180,-9306)` e `(-14550,0,-12625)`, e **os três têm `be_flg = 0x6001`**: bit `0x4000`
+## ACESO e bit `0x100` APAGADO — reprovam nos DOIS testes de `0x80036570`. Somando:
+##
+##   • nenhum objeto do R10D é escalável pelo critério do próprio motor;
+##   • nenhum deles fica perto da captura do dono (`x=-3678, z=-12960`);
+##   • o único AOT da sala é `sce 5` = `evt_exec(func 11)`, uma CENA, e a caixa dele nem contém
+##     a posição da captura (§1).
+##
+## Logo **não existe "subir na lixeira" no R10D no dado do jogo**. O que existe de subir está nas
+## 5 salas da tabela acima. A máquina de estados abaixo é a rotina 9 de verdade e funciona
+## nessas salas; para o R10D só funcionaria com um ponto inventado, e por isso o port **não
+## inventa**: `carregar_sala()` instala o que o SCD declara, e quem quiser forçar usa
+## `adicionar_ponto()` explicitamente.
+##
+## 🟡 O que continua NÃO PROVADO: a EXTENSÃO e a ALTURA do objeto escalável. O descritor de 40 B
+## do `0x7f` tem posição e rotação, **não tem escala nem caixa**; a extensão real vem da malha
+## MD1 do RDT e a altura do topo, do piso de destino. Aqui as duas são constantes DECLARADAS
+## (`RAIO_DECLARADO`, `ALTURA_DECLARADA`) e estão marcadas como tal.
 
 ## Quadros de contato antes de acender a flag: `sltiu $v0, $v0, 6` em `0x800365c8`.
 const FRAMES_CONTATO := 6
@@ -153,20 +190,18 @@ enum Sub { ENTRA = 0, ALINHA = 1, INICIA_SUBIDA = 2, SUBINDO = 3, INICIA_TOPO = 
 const SFX_INICIO := 0x10200            ## `0x8003b224` (r9 move, entra em `sub 6`)
 const SFX_IMPACTO := 0x1022C           ## `0x8003b3e8` (`sub 5` com `player+0xc9 == 1`)
 
-## ── Pontos escaláveis DECLARADOS por sala (NÃO PROVADO) ──
-## Formato: `{ "R10D": [ {"caixa": Rect2i(x, z, w, d), "y_topo": int, "nota": String} ] }`
-## A caixa é testada contra o PONTO DE SONDA de 620 unidades à frente (a mesma sonda dos AOT de
-## ação, `0x800505c8`), porque subir exige estar de frente para o objeto. `y_topo` é a altura em
-## que o personagem termina (o `topo` do retângulo de colisão).
-const PONTOS_DECLARADOS := {
-	## Candidata do R10D: o retângulo #9 da colisão da sala — 800 de largura, `topo -3600`
-	## (1800 acima dos vizinhos), e contém a posição da captura do dono (-3678,-12960).
-	## **DECLARADO, NÃO PROVADO**: o marcador real (`om+0xae & 0x10`) é runtime e não está no
-	## descritor de 40 B do `0x7f`. Se um dia o `om` da lixeira for identificado, isto sai.
-	"R10D": [{"caixa": Rect2i(-4128, -15823, 800, 5626), "y_topo": -3600,
-		"nota": "rect #9 da colisao (forma 8, topo -3600, nivel 1) — degrau de 1800"}],
-}
+## ── Extensão e altura do objeto escalável: DECLARADAS (o `0x7f` não as carrega) ──
+## `RAIO_DECLARADO` é a meia-extensão da caixa de contato em torno da posição do objeto e
+## `ALTURA_DECLARADA` é quanto o personagem sobe. Escolhi 620 para o raio pelo único motivo
+## defensável: é a MESMA distância da sonda de ação do motor (`0x26c` em `0x800505c8`), então
+## "estou de frente e ao alcance" tem um só número no port. **NÃO PROVADO** — a extensão de
+## verdade é a malha MD1 do RDT (`offset_table[10]`) e a altura, o piso de destino.
+const RAIO_DECLARADO := 620
+const ALTURA_DECLARADA := 1800
 
+## Ponto escalável: `{ "caixa": Rect2i(x, z, w, d), "y_topo": int, "nota": String }`. A caixa é
+## testada contra o PONTO DE SONDA de 620 unidades à frente (a mesma sonda dos AOT de ação,
+## `0x800505c8`), porque subir exige estar de frente para o objeto.
 var pontos: Array[Dictionary] = []      ## pontos escaláveis da sala corrente
 var flag := false                       ## espelho de `0x800d1f2c & 0x10` (recalculada por quadro)
 var contato := 0                        ## `om+0xc0` — quadros de contato acumulados
@@ -177,17 +212,44 @@ var sfx_pendente := 0                   ## id de SFX a tocar neste quadro (0 = n
 var quadros_no_sub := 0
 
 
-func carregar_sala(room_id: String) -> int:
-	## Instala os pontos escaláveis DECLARADOS da sala. Devolve quantos.
+func zerar() -> void:
 	pontos = []
 	flag = false
 	contato = 0
 	ativo = false
 	sub = Sub.ENTRA
 	ponto_atual = {}
-	var lista: Variant = PONTOS_DECLARADOS.get(room_id, [])
-	for p: Dictionary in lista:
-		pontos.append(p.duplicate(true))
+	sfx_pendente = 0
+	quadros_no_sub = 0
+
+
+func carregar_sala(room_id: String) -> int:
+	## Instala os pontos escaláveis da sala rodando o SCD dela numa VM própria e filtrando os
+	## objetos `0x7f` por `ObjetoSala.escalavel()` (a porta estática de `0x80036594..0x800365a8`).
+	## Devolve quantos. **Não inventa nada**: sala sem objeto escalável devolve 0.
+	zerar()
+	var vm := ScriptVM.new()
+	if not vm.carregar_sala(room_id):
+		return 0
+	vm.modo = ScriptVM.Modo.EXECUCAO
+	vm.state = GameState.new()
+	for fi in vm.func_offsets.size():
+		vm.executar(fi)
+	return carregar_objetos(vm.objetos)
+
+
+func carregar_objetos(objetos: Dictionary) -> int:
+	## Mesma coisa quando quem já rodou o script é o `world.gd` (evita montar a sala duas vezes).
+	zerar()
+	for k in objetos:
+		var o: ObjetoSala = objetos[k]
+		if not o.escalavel():
+			continue
+		adicionar_ponto(
+			Rect2i(o.pos.x - RAIO_DECLARADO, o.pos.z - RAIO_DECLARADO,
+				RAIO_DECLARADO * 2, RAIO_DECLARADO * 2),
+			o.pos.y - ALTURA_DECLARADA,
+			"om %d be_flg=0x%04x (bit 0x100 aceso, 0x4000 apagado)" % [o.slot, o.be_flg])
 	return pontos.size()
 
 
@@ -328,8 +390,15 @@ func resumo() -> String:
 # ═════════════════════════════════════════════════════════════════════════════════
 # O QUE ENGATAR NO `port/actors/player.gd` (não editei — é seu)
 # ═════════════════════════════════════════════════════════════════════════════════
+# 0. ⚠ ANTES DE TUDO: **o R10D não tem objeto escalável** (§5) — ligar isto não vai fazer a Jill
+#    subir na lixeira da abertura, porque essa lixeira não existe como objeto escalável no dado.
+#    As salas onde ligar isto MOSTRA algo são **R210, R219, R315 e R50D** (R50D com 3 pontos).
+#    Para ver funcionando: entre no R50D e ande contra o `om 0` em `(-18946, 0, -15456)`.
+#
 # 1. Um campo:            `var subir := SubirObjeto.new()`
-#    e no load da sala:   `subir.carregar_sala(room_id)`   (ou o `world.gd` chama e repassa)
+#    e no load da sala:   `subir.carregar_sala(room_id)`
+#    ou, se o `world.gd` já rodou o script da sala (o normal, para não montar duas vezes):
+#                         `subir.carregar_objetos(vm.objetos)`
 #
 # 2. No fim do tick, ANTES de decidir a rotina do próximo quadro (é onde r1/r2 fazem isso):
 #        subir.detectar(pos, facing, rotina, pad.pressed(Pad.FWD) or pad.pressed(Pad.BACK))

@@ -82,10 +82,64 @@ func run(t: Object) -> bool:
 	t.eq(SubirObjeto.CLIPES[6], "anim06", "seq 6 -> clipe anim06 do PL00.glb")
 	t.eq(SubirObjeto.CLIPES[7], "anim07", "seq 7 -> clipe anim07")
 
+	# ───────── 2b. QUAL objeto é escalável: a porta ESTÁTICA de `be_flg` ─────────
+	# `entry+0 = u16@+0x0c | 1` do opcode `0x7f` (`0x800565cc..0x800565d8`), e o agregador
+	# `0x80036570` reprova quem tem o bit `0x4000` aceso (`0x8003659c`) ou o bit `0x100` apagado
+	# (`0x800365a4`). Como os dois bits são dado do SCD, a lista de objetos escaláveis do jogo é
+	# uma varredura — e é isso que este bloco trava, porque é o resultado que DERRUBA a hipótese
+	# da "lixeira do R10D".
+	t.eq(ObjetoSala.BE_ESCALAVEL, 0x100, "bit 0x100 exigido (0x800365a4 beqz)")
+	t.eq(ObjetoSala.BE_NAO_ESCALAVEL, 0x4000, "bit 0x4000 proíbe (0x8003659c bnez)")
+	var r10d_om := vm.objetos
+	t.eq(r10d_om.size(), 3, "o R10D tem 3 objetos 0x7f")
+	var r10d_escalaveis := 0
+	for k in r10d_om:
+		var o: ObjetoSala = r10d_om[k]
+		t.eq(o.be_flg, 0x6001, "om %d do R10D tem be_flg 0x6001" % o.slot)
+		if o.escalavel():
+			r10d_escalaveis += 1
+	t.eq(r10d_escalaveis, 0,
+		"NENHUM objeto do R10D é escalável (0x6001 = bit 0x4000 aceso e 0x100 apagado)")
+
+	# a varredura do jogo inteiro: 4 salas sobrevivem à montagem completa (R406 declara o objeto
+	# escalável em UM ramo da função 17 e o reescreve com be_flg 0x0001 no fim, por isso não entra)
+	var salas_com_ponto: Array[String] = []
+	var por_sala: Dictionary = {}
+	for id in _listar_salas():
+		var v2 := ScriptVM.new()
+		if not v2.carregar_sala(id):
+			continue
+		v2.modo = ScriptVM.Modo.EXECUCAO
+		v2.state = GameState.new()
+		for fi in v2.func_offsets.size():
+			v2.executar(fi)
+		var n := 0
+		for k in v2.objetos:
+			if (v2.objetos[k] as ObjetoSala).escalavel():
+				n += 1
+		if n > 0:
+			salas_com_ponto.append(id)
+			por_sala[id] = n
+	t.eq(salas_com_ponto, ["R210", "R219", "R315", "R50D"] as Array[String],
+		"as salas com objeto escalável do jogo")
+	t.eq(por_sala, {"R210": 1, "R219": 1, "R315": 1, "R50D": 3},
+		"quantos objetos escaláveis por sala")
+	t.check(not salas_com_ponto.has("R10D"), "e o R10D NÃO está entre elas")
+
 	# ───────────── 3. detector: 6 quadros, de frente, andando ─────────────
 	var s := SubirObjeto.new()
-	t.eq(s.carregar_sala("R10D"), 1, "R10D tem 1 ponto escalável declarado")
-	t.eq(s.carregar_sala("R100"), 0, "R100 não tem nenhum (não invento pontos)")
+	t.eq(s.carregar_sala("R10D"), 0, "R10D não instala nenhum ponto (não invento a lixeira)")
+	t.eq(s.carregar_sala("R100"), 0, "R100 também não")
+	t.eq(s.carregar_sala("R50D"), 3, "R50D instala 3 pontos (om 0/1/2, be_flg 0x0101)")
+	t.eq(s.carregar_sala("R315"), 1, "R315 instala 1 ponto (om 7)")
+	# e o ponto sai da POSIÇÃO do objeto, com raio declarado
+	var p315: Dictionary = s.pontos[0]
+	t.eq(p315["caixa"], Rect2i(-27589 - SubirObjeto.RAIO_DECLARADO,
+		-23328 - SubirObjeto.RAIO_DECLARADO,
+		SubirObjeto.RAIO_DECLARADO * 2, SubirObjeto.RAIO_DECLARADO * 2),
+		"a caixa é o raio declarado em torno da posição do om")
+	t.eq(p315["y_topo"], -SubirObjeto.ALTURA_DECLARADA,
+		"e o topo é a altura declarada acima do Y do om (Y negativo = para cima)")
 
 	# ponto sintético: caixa 1000×1000 na origem, o ator ao sul dela olhando ao norte
 	s = SubirObjeto.new()
@@ -166,6 +220,20 @@ func run(t: Object) -> bool:
 	t.eq(s.y_destino(), -3600, "o destino em Y é o `topo` do ponto")
 
 	return true
+
+
+func _listar_salas() -> Array[String]:
+	var saida: Array[String] = []
+	for st in range(1, 8):
+		var d := DirAccess.open("res://data/STAGE%d" % st)
+		if d == null:
+			continue
+		for f in d.get_files():
+			var nome := f.trim_suffix(".remap")
+			if nome.ends_with(".scd"):
+				saida.append(nome.trim_suffix(".scd"))
+	saida.sort()
+	return saida
 
 
 func _opcodes_da_funcao(vm: ScriptVM, fi: int) -> Dictionary:

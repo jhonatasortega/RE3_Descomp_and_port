@@ -7,7 +7,7 @@ extends RefCounted
 ## Por isso aqui se reproduz a FÓRMULA do EXE, não uma abstração conveniente.
 ##
 ## ── Bancos de flags (provado em 3 rotinas do EXE; docs/decomp/notes/exe_items.md §1) ──
-## `0x8009e3f8` é uma tabela de **16 ponteiros de banco**. Um flag é o par `(bank, bit)`:
+## `0x8009e3f8` é uma tabela de **50 ponteiros de banco**. Um flag é o par `(bank, bit)`:
 ##
 ##     word = bank_ptr[bank] + ((bit >> 3) & 0x1c)     ; word de 32 bits
 ##     mask = 0x80000000 >> (bit & 0x1f)               ; bits gravados MSB-first
@@ -25,7 +25,22 @@ extends RefCounted
 ## `count` em `+0x12a`, `cursor` em `+0x128`, arma equipada em `+0x129`.
 ## `find_by_id(0)` devolve o primeiro slot LIVRE (usado pelo "pegar item").
 
-const N_BANKS := 16
+## ⚠ **CORREÇÃO (era 16)**: a tabela `0x8009e3f8` tem **50** ponteiros, não 16. Lidos do
+## `SLUS_009.23`, as 50 entradas são todas RAM válida (`0x800cc858`, `0x800d1f2c`, `0x800ccba0`,
+## `0x800d1fa0`, `0x800d1fc0`, `0x800d1fc8`, `0x800d1fe8`, `0x800d2008`, `0x800d2028`,
+## `0x800d20cc`, depois `0x800d204c..0x800d20c8` de 4 em 4, e no fim `0x800cc854`, `0x800dbb58`,
+## `0x800ccbac`, `0x800d20d4`, `0x800d2048`, `0x800d258c`, `0x800d25ac`, `0x800d1f30`); a entrada
+## **50 é `0x5b2a5a59`**, que não é endereço — a tabela acaba ali. Isso é o que
+## `docs/decomp/notes/scd_opcodes.md` ("Tabela de 50 ponteiros para bancos de flags") já dizia.
+## Com 16, o `CHECK 0x4c` das salas de save gritava `banco inválido` para os bancos **39, 47 e
+## 48** que o bytecode realmente usa, e a condição virava `false` em silêncio.
+##
+## 🟡 O TAMANHO de cada banco NÃO é uniforme no EXE: os ponteiros 11..41 estão a 4 bytes um do
+## outro (1 word = 32 bits cada), enquanto 3..10 estão a `0x20` (8 words). O port aloca 8 words
+## para TODOS — é um superconjunto: o `& 0x1c` do EXE satura o índice de word em 7, então nenhum
+## `(bank, bit)` legítimo cai fora, e o único efeito é que bits altos de um banco pequeno não
+## transbordam para o vizinho como transbordariam no PS1. **Divergência declarada.**
+const N_BANKS := 50
 const BITS_PER_BANK := 256                 ## consequência do `& 0x1c` (8 words de 32 bits)
 const WORDS_PER_BANK := BITS_PER_BANK / 32
 const BANK_PROGRESS := 1                    ## `0x800d1f2c` — flags de progresso de jogo
@@ -46,7 +61,7 @@ const MAIN_SLOTS := 10
 const BOX_SLOTS := 64
 const N_VARS := 256                         ## variáveis de script (o switch usa var u8)
 
-## Flags: 16 bancos × 8 words. Guardado como Array[int] (int de 64 bits do GDScript) para
+## Flags: 50 bancos × 8 words. Guardado como Array[int] (int de 64 bits do GDScript) para
 ## que a máscara `0x80000000` não estoure o sinal de um int32.
 var _flags: Array[int] = []
 var _vars: Array[int] = []

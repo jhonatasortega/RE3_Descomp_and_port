@@ -57,6 +57,43 @@ func visivel() -> bool:
 	return (be_flg & 1) != 0 and (attr & 32) == 0
 
 
+## ── Bits de `be_flg` que marcam o objeto como **ESCALÁVEL** (subir em cima) ✅ ──
+## O `be_flg` não é só "visível". Ele é o `entry+0` do struct de 404 B, e o agregador do
+## "subir em objeto" (`0x80036570`, chamado uma vez por quadro em `0x80036550`, logo depois do
+## laço de objetos) usa DOIS bits dele como porta de entrada, lidos direto de `entry+0`:
+##
+##     0x80036594  lw   $v1, ($a0)          ; $a0 = o objeto em contato (`*0x800dd4b0`)
+##     0x8003659c  andi $v0, $v1, 0x4000
+##     0x800365a0  bnez $v0, 0x80036638     ; bit 0x4000 ACESO  -> desiste
+##     0x800365a4  andi $v0, $v1, 0x100
+##     0x800365a8  beqz $v0, 0x80036638     ; bit 0x100 APAGADO -> desiste
+##     ... 6 quadros de contato ...  0x800365fc  ori $v0, $v0, 0x10 ; gs+0x77f4 |= 0x10
+##
+## e esse bit `0x10` de `gs+0x77f4` (= `0x800d1f2c`) é o ÚNICO gatilho da **rotina 9**
+## (subir/descer): r1/r2 o leem em `0x800397b0`/`0x80039b58` e escrevem `player+4 = 0x901`.
+##
+## Como `entry+0 = u16@+0x0c | 1` (`0x800565cc..0x800565d8`), **os dois bits são DADO ESTÁTICO
+## do SCD** — dá para dizer quais objetos do jogo são escaláveis sem rodar o jogo. Varredura dos
+## **674** opcodes `0x7f` do jogo: só **11 declarações** (7 objetos distintos, em **R210, R219,
+## R315, R406 e R50D**) passam, com `be_flg` `0x0101` ou `0x0301`; os outros 663 caem no
+## `0x6001` (558×), `0x0001`, `0x6011`, `0x8001` etc. Ver `docs/decomp/notes/menu_bau.md §3`.
+const BE_NAO_ESCALAVEL := 0x4000        ## `0x8003659c` — aceso reprova
+const BE_ESCALAVEL := 0x0100            ## `0x800365a4` — apagado reprova
+
+
+func escalavel() -> bool:
+	## O objeto passa na porta ESTÁTICA do "subir em cima" (`0x80036594..0x800365a8`).
+	## ⚠ É condição **necessária, não suficiente**: `0x80036c60` ainda exige, no MESMO quadro,
+	## `entry+0xae & 0x10` e `entry+0xba & 0x8000`, e esses dois são de RUNTIME — o handler do
+	## `0x7f` (`0x80056510`, lido inteiro) **não escreve `+0xae` nem `+0xba`**, e a varredura de
+	## todo `sb/sh` com offset literal `0xae`/`0xba` no EXE não achou nenhum escritor no caminho
+	## de objeto de cenário (os que existem são do player em `0x8004b7c4`, do menu em
+	## `0x8006exxx` e de personagens em `0x8001dxxx`). Também não há `sw` para `+0xac`/`+0xb8`
+	## que os cubra de raspão. **De onde vêm continua NÃO PROVADO** — pode ser cópia em bloco de
+	## dado do RDT. Para o port isso não muda a resposta prática: a porta estática já é decisiva.
+	return (be_flg & BE_ESCALAVEL) != 0 and (be_flg & BE_NAO_ESCALAVEL) == 0
+
+
 func resumo() -> String:
 	return "om %d pos%s rot%s floor=%d be_flg=0x%04x%s" % [
 		slot, pos, rot, floor_id, be_flg, "" if visivel() else " (oculto)"]
