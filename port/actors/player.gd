@@ -309,14 +309,22 @@ func clipe_atual() -> String:
 		Acao.GIRANDO, Acao.QUICKTURN:
 			return "arm00"
 		Acao.MIRANDO:
-			## Poses do EXE: sub 0 levanta = anim **13**; mirando = **14/15/16** por tier e **17**
-			## no tier 3 (`0x8003ac48`+). A promoção "alvo alto" 15→19 / 16→20 (`0x8003ac90`,
-			## `player+0xc7 & 0x20`) usa os clipes do PLD, os únicos que gravam 19/20 no EXE.
-			if mira_sub == Mira.LEVANTAR:
-				return "arm13"
-			if mira_tier >= 3:
-				return "arm17"
-			return ["arm14", "arm15", "arm16"][mira_tier]
+			## ── POR QUE A POSE DE MIRA AINDA É O IDLE ARMADO (e não `arm13..arm17`) ──
+			## O EXE grava em `player+0xc8` os índices **13** (levantar), **14/15/16** (mira por
+			## tier), **17** (tier 3) e **19/20** (promoção de alvo alto). Eu havia mapeado direto
+			## para os clipes `arm13..arm17`, que são as **seqs 13..17 do BANCO 0** do `.PLW` — e o
+			## banco 0 é o de LOCOMOÇÃO de corpo inteiro. Resultado: a Jill mirava **ajoelhada**
+			## (o usuário apontou: "essa pose de mirar ajoelhada não é a padrão do game").
+			##
+			## As poses de mira estão nos **bancos 1 e 2** do `.PLW` (bank1 = 7 ossos/8 seqs,
+			## bank2 = 9 ossos/8 seqs, os "overlays parciais de mira/gesto" —
+			## `docs/formatos/animacoes_player.md` §9-11 e `decomp/notes/plw.md` §5), e os três
+			## slots do EXE `player+0xf4/0xf8/0x100` são justamente os três bancos. O
+			## `pld2gltf.py::build_armed_clips` **só extrai o banco 0**, então esses clipes ainda
+			## não existem no `.glb`.
+			## Até extrair os bancos 1/2 e compor o overlay, a mira usa o **idle armado**, que é a
+			## pose de pé com a arma na mão — errado no braço, certo no corpo. Declarado.
+			return "arm02"
 		_:
 			return "arm02"
 
