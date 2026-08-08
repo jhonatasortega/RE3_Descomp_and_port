@@ -7,6 +7,16 @@
 > Base do player-struct: **`0x800ccbc4`** (deref robusto `*(u32*)0x800ccd94`), como no `docs/formatos/exe.md`.
 > Marcações: ✅ provado no binário · 🎯 confirmado externamente (GameShark) · 🟡 inferido/incerto.
 
+> ⚠ **LEIA [`recuo_tiro.md`](recuo_tiro.md) ANTES do §1 e do §2 deste arquivo.** Três coisas daqui
+> foram corrigidas ali, com endereços: (a) o disparo **tem clipe próprio** — as seqs 1/3/5 do banco
+> 2 do `.PLW` (`mira01/03/05`, 20 quadros) — e o tiro sai no **quadro 0** dele (`0x80040fac`), não
+> num quadro do meio da animação de mira; (b) os 3 bytes de `0x8009cf28` são **limiares de corte**,
+> não "o quadro do disparo" (o `byte2 = 12` do handgun é o quadro a partir do qual soltar o botão
+> corta o recuo, `0x8003f3dc`); (c) a máquina de mira/tiro do gameplay é a **rotina 5**
+> (`0x8003e2ac` → `0x8003eb28` → tabela `0x8009d030` de 11 subestados por `player+6`), e a rotina 7
+> só é alcançada com o **bit 31 de `player+0`** aceso — bit cujo *setter* NÃO foi achado, o que põe
+> o §1.3 em xeque. Conferência automática: `python tools/exe_recuo.py`.
+
 ---
 
 ## 0. CORREÇÃO IMPORTANTE ao `exe.md` — `player+0xcc` é HP, não "momentum"  🎯✅
