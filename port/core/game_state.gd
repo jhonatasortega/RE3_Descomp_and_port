@@ -107,6 +107,18 @@ func equipped_qtd() -> int:
 	return int(main_slots[equipped].get("qtd", 0))
 
 
+func gastar_municao_equipada(n: int = 1) -> int:
+	## Gasta `n` da arma EQUIPADA e devolve o que sobrou. O disparo do EXE decrementa a munição da
+	## arma equipada no mesmo quadro do tiro (rotina 7 sub 3, `0x8003adc0`); o slot **não** é
+	## liberado ao zerar — arma sem bala continua no inventário (é o clique seco).
+	if equipped < 0 or equipped >= main_slots.size():
+		return 0
+	var slot: Dictionary = main_slots[equipped]
+	var q := maxi(0, int(slot.get("qtd", 0)) - n)
+	slot["qtd"] = q
+	return q
+
+
 func reset() -> void:
 	_flags = []
 	_flags.resize(N_BANKS * WORDS_PER_BANK)
@@ -233,6 +245,10 @@ func find_by_id(item_id: int, box: bool = false) -> int:
 ## flag que a decomp ainda não isolou (`menu_texto.md §6`: só `0x800d212c` apareceu na varredura),
 ## então aqui é um conjunto próprio do save — declarado, não inventado.
 var arquivos_lidos: Dictionary = {}
+
+## DIFICULDADE escolhida no boot. O port usa isso para a MIRA (pedido do usuário): fácil tem laser
+## e auto-mira, difícil não trava alvo. Ver `Player.Dificuldade`. **Declarado: regra do port.**
+var dificuldade := 1                      ## 0 fácil · 1 normal · 2 difícil
 
 
 func marcar_arquivo_lido(item_id: int) -> void:

@@ -32,6 +32,12 @@ const AIM_B := 0x400
 ## mesmo botão de confirmar. Declarado como provisório até P7-03 fixar o mapeamento.
 const ACAO := 0x20000
 
+## TIRO — bit **do port**, não do PS1: o usuário pediu que o **botão esquerdo do mouse só sirva
+## para menu e para atirar**, e que porta/item continuem no botão de ação. No PS1 os dois são o
+## mesmo botão (o EXE lê a máscara `0x500` no sub 3 da rotina 7), então separar é escolha do port,
+## declarada. O teclado mantém E/Enter como AÇÃO e ganha o clique esquerdo como gatilho.
+const TIRO := 0x40000
+
 ## MENU (abre a tela de status/inventário). No PS1 é o botão de menu, lido pelo `log_edge & 0x4000`
 ## da própria task do menu (`0x8006dfdc`) — ou seja, é um bit do pad LÓGICO, não o START (que é o
 ## `raw_edge & 0x0800` da pausa). O bit aqui é do layout do port; o teclado usa **I** e **ESC**.
@@ -91,12 +97,12 @@ func poll() -> int:
 	return mask
 
 
-## MOUSE: **botão direito = MIRA, botão esquerdo = TIRO.** No PS1 mirar é segurar R1 (`AIM`) e
-## atirar é o botão de ação enquanto mira, então o de-para é direto: direito → `AIM`,
-## esquerdo → `ACAO`. Fica junto com o teclado (Espaço e E continuam valendo).
+## MOUSE: **botão direito = MIRA, botão esquerdo = TIRO** (pedido do usuário: o esquerdo só serve
+## para menu e para atirar — porta e item ficam no botão de AÇÃO, senão o mesmo clique atirava e
+## abria porta). O teclado mantém Espaço = mira e E/Enter = ação.
 const MOUSEMAP := {
 	MOUSE_BUTTON_RIGHT: AIM,
-	MOUSE_BUTTON_LEFT: ACAO,
+	MOUSE_BUTTON_LEFT: TIRO,
 }
 
 

@@ -58,6 +58,59 @@ var status := 0                            ## bits de `gs+0x255e`
 func envenenado_get() -> bool:
 	return (status & 0x0200) != 0
 var equipped_weapon := 0                  ## `player+0x46`; 0 = desarmada (sem mira)
+
+## ── MIRA E TIRO (rotina 5 → rotina 7 do EXE) ──
+## Fonte: `docs/decomp/notes/exe_combat.md` §1-2 (o `aim_shoot` está 100% decompilado lá) e as
+## tabelas em `data/re3_aim_shoot.json` (`tools/exe_aim_shoot.py`).
+##
+## A rotina 7 (`0x8003a7d8`) tem SUB-ESTADO em `player+6`:
+##   0 `0x8003a88c` levanta a arma (anim 13, toca SFX) → sub 1
+##   1 `0x8003a8cc` interpola o pitch (`player+0xc0 -= 0x28`, clamp 0) → sub 2
+##   2 `0x8003a90c` mira e faz AUTO-LOCK; pose 14/15/16 por tier (17 no tier 3) e
+##     `player+0x6e = (tier << 9) + 0x800`
+##   3 `0x8003adc0` segura e ATIRA; no fim volta para a rotina 5 (rearme)
+## `T1 r7` é stub (`jr $ra`): **durante a mira o player não anda** — o facing fica travado.
+enum Mira { LEVANTAR, PITCH, MIRANDO_ALVO, FOGO }
+const MIRA_PITCH_PASSO := 0x28            ## `player+0xc0 -= 0x28` (sub 1)
+const MIRA_ARCO := 0x1000                 ## clamp do arco do auto-lock (~90°)
+const MIRA_ALCANCE := 3000                ## meia-extensão do descritor `0x80098064`
+const MIRA_LARGURA := 1000                ## idem, largura
+const MIRA_ALTURA := 1600                 ## idem, altura
+const LEVANTAR_QUADROS := 6               ## duração do sub 0 (declarado: não medi o nº de quadros)
+var mira_sub: Mira = Mira.LEVANTAR
+var mira_tier := 0                        ## 0..3 pela elevação do alvo (auto-lock)
+var mira_pitch := 0                       ## `player+0x6e` = (tier << 9) + 0x800 (sub 2)
+## `player+0xc0` = OFFSET de mira, que o sub 1 interpola para 0 de 0x28 em 0x28. São campos
+## DIFERENTES do pitch: o `+0xc0` sai da rotina do ponto do cano (`0x80018d34`) e eu havia
+## juntado os dois, o que travava o sub 1 por 52 ticks. O valor INICIAL do `+0xc0` não foi
+## medido — uso 3 passos (declarado).
+var mira_offset := 0
+const MIRA_OFFSET_INICIAL := 0x28 * 3
+var mira_alvo := -1                       ## índice do spawn travado (`player+0x170`)
+## ── DIFICULDADE E MIRA (pedido do usuário; **declarado: regra do port, não medida no EXE**) ──
+##   FACIL   → mira LASER visível + AUTO-MIRA: o travamento gruda no inimigo e o tiro vai nele;
+##   NORMAL  → sem laser, com travamento (é o comportamento do original);
+##   DIFICIL → sem laser e **sem travar**: o tiro sai na direção em que o corpo está.
+## O auto-lock do EXE (`0x800445c8` em laço por `0x8001e900`) não tem chave de dificuldade que eu
+## tenha achado; a diferença por modo é opção do port.
+enum Dificuldade { FACIL, NORMAL, DIFICIL }
+var dificuldade: Dificuldade = Dificuldade.NORMAL
+
+
+func mira_com_laser() -> bool:
+	return dificuldade == Dificuldade.FACIL
+
+
+func mira_trava() -> bool:
+	return dificuldade != Dificuldade.DIFICIL
+var mira_quadro := 0                      ## quadro dentro da animação de mira
+var tiro_pendente := -1                   ## quadro em que o tiro sai (do timing por arma)
+var recuo := 0                            ## quadros de recuo/rearme
+var municao_vazia := false                ## clique seco (sem munição)
+## Alvos possíveis: Callable() -> Array[Vector3i] (posições dos inimigos, unidades PS1).
+var alvos: Callable = Callable()
+signal atirou(alvo: int, de: Vector3i, para: Vector3i)
+signal mirou(alvo: int, tier: int)
 var frame_da_acao := 0                    ## ticks na ação atual (indexa a tabela de pose)
 var quickturn_restante := 0
 var _qt_armado := false                   ## borda do gatilho de quick-turn
@@ -135,8 +188,10 @@ func tick(pad: Pad) -> void:
 		return
 
 	if mirar:
-		_set_acao(Acao.MIRANDO)
+		_tick_mira(pad)
 		return
+	if acao == Acao.MIRANDO:
+		_sair_da_mira()
 
 	# --- giro no próprio eixo ---
 	#
@@ -254,9 +309,175 @@ func clipe_atual() -> String:
 		Acao.GIRANDO, Acao.QUICKTURN:
 			return "arm00"
 		Acao.MIRANDO:
-			return "arm02"
+			## Poses do EXE: sub 0 levanta = anim **13**; mirando = **14/15/16** por tier e **17**
+			## no tier 3 (`0x8003ac48`+). A promoção "alvo alto" 15→19 / 16→20 (`0x8003ac90`,
+			## `player+0xc7 & 0x20`) usa os clipes do PLD, os únicos que gravam 19/20 no EXE.
+			if mira_sub == Mira.LEVANTAR:
+				return "arm13"
+			if mira_tier >= 3:
+				return "arm17"
+			return ["arm14", "arm15", "arm16"][mira_tier]
 		_:
 			return "arm02"
+
+
+func _sair_da_mira() -> void:
+	## Soltar o botão de mira volta ao repouso e RESETA o sub-estado (o EXE volta pela rotina 1).
+	mira_sub = Mira.LEVANTAR
+	mira_quadro = 0
+	tiro_pendente = -1
+	mira_alvo = -1
+	municao_vazia = false
+	_set_acao(Acao.PARADO)
+
+
+func _tick_mira(pad: Pad) -> void:
+	## Rotina 7 do EXE, sub-estado em `player+6`. O facing fica travado (o `T1 r7` é stub).
+	_set_acao(Acao.MIRANDO)
+	mira_quadro += 1
+	if recuo > 0:
+		recuo -= 1
+	match mira_sub:
+		Mira.LEVANTAR:
+			# sub 0: levanta a arma (anim 13) e passa para a interpolação do offset
+			if mira_quadro >= LEVANTAR_QUADROS:
+				mira_sub = Mira.PITCH
+				mira_quadro = 0
+				mira_offset = MIRA_OFFSET_INICIAL
+		Mira.PITCH:
+			# sub 1: `player+0xc0 -= 0x28` com clamp em 0 (`0x8003a8cc`)
+			mira_offset = maxi(0, mira_offset - MIRA_PITCH_PASSO)
+			if mira_offset == 0:
+				mira_sub = Mira.MIRANDO_ALVO
+				mira_quadro = 0
+		Mira.MIRANDO_ALVO:
+			# sub 2: AUTO-LOCK — varre os alvos, trava no que está no arco e define o tier
+			mira_alvo = _travar_alvo()
+			mira_pitch = (mira_tier << 9) + 0x800        ## `player+0x6e = (tier<<9)+0x800`
+			mirou.emit(mira_alvo, mira_tier)
+			mira_sub = Mira.FOGO
+			mira_quadro = 0
+		Mira.FOGO:
+			# sub 3: segura mirando e ATIRA no gatilho
+			mira_alvo = _travar_alvo()                    ## o alvo é reavaliado enquanto segura
+			if mira_alvo >= 0 and dificuldade == Dificuldade.FACIL:
+				_girar_para_alvo(mira_alvo)               ## AUTO-MIRA: o corpo vira para o alvo
+			if tiro_pendente >= 0:
+				if mira_quadro >= tiro_pendente:
+					_resolver_tiro()
+				return
+			if (pad.just_pressed(Pad.TIRO) or pad.just_pressed(Pad.ACAO)) and recuo == 0:
+				_puxar_gatilho()
+
+
+func _puxar_gatilho() -> void:
+	## Gatilho: `player+0xe3` é a máquina de debounce do EXE; aqui a borda do botão basta, porque
+	## o `Pad.just_pressed` já é borda. Sem munição = clique seco (o EXE escolhe o SFX "vazio"
+	## pelos bits `0x200`/`0x400` de `player+0xe4`).
+	var st := _estado()
+	var qtd := int(st.equipped_qtd()) if st != null else 0
+	if qtd <= 0:
+		municao_vazia = true
+		recuo = 8
+		return
+	municao_vazia = false
+	tiro_pendente = quadro_do_tiro()
+	mira_quadro = 0
+
+
+func quadro_do_tiro() -> int:
+	## Quadro em que o tiro sai, do timing `0x8009cf28` (`byte2 & 0x7f`). O de-para
+	## **item → índice de arma `w`** não foi achado no EXE (ver `tools/exe_aim_shoot.py`), então:
+	## faca = w0 (50 quadros) e o resto = w1 (12, o do handgun). Declarado.
+	var st := _estado()
+	var id := int(st.equipped_item_id()) if st != null else 0
+	return 50 if id == 0x01 else 12
+
+
+func _resolver_tiro() -> void:
+	## Sai o tiro: gasta 1 de munição, aplica o HITSCAN e entra em recuo/rearme.
+	##
+	## HITSCAN (`0x80044804`, via o handler genérico `0x8003eb28`): o EXE inicia a distância
+	## mínima em `0x7fffffff`, itera o array de personagens e aplica `char+0xcc -= dano` **no
+	## mesmo quadro** — não existe entidade-bala. Aqui o alvo travado pelo auto-lock é o alvo do
+	## tiro, e o dano NÃO é aplicado porque **o port ainda não tem entidade de inimigo com HP**:
+	## o sinal `atirou` leva o alvo para quem quiser tratar. Declarado, não fingido.
+	var st := _estado()
+	if st != null:
+		st.gastar_municao_equipada(1)
+	var de := pos
+	var para := pos + Vector3i(
+		PS1Math.rsin(facing) * MIRA_ALCANCE >> PS1Math.SHIFT, 0,
+		-PS1Math.rcos(facing) * MIRA_ALCANCE >> PS1Math.SHIFT)
+	atirou.emit(mira_alvo, de, para)
+	tiro_pendente = -1
+	mira_quadro = 0
+	recuo = 10                                    ## rearme: o EXE volta para a rotina 5
+	mira_sub = Mira.LEVANTAR
+
+
+func _girar_para_alvo(i: int) -> void:
+	## No FÁCIL o corpo gira para o alvo travado. O EXE faz isso no fim do sub 3
+	## (`0x8003afc8`: pega `player+0x15c` e chama `0x80018110`, que gira `player+0x6e` para o
+	## alvo); aqui o giro é imediato, o que é a "auto-mira" pedida.
+	if not alvos.is_valid():
+		return
+	var lista: Array = alvos.call()
+	if i < 0 or i >= lista.size():
+		return
+	var p: Vector3i = lista[i]
+	## Sinal: `facing = 0` aponta para **-Z** (a frente do jogo), e `angle_of_xz` é `atan2(x, z)`
+	## — então o Z entra NEGADO. Sem isso a auto-mira girava 180° (medido: alvo em -Z dava 2048).
+	facing = PS1Math.angle_of_xz(p.x - pos.x, -(p.z - pos.z))
+
+
+func _travar_alvo() -> int:
+	## AUTO-LOCK (`0x800445c8` chamado em laço por `0x8001e900`): rotaciona o alvo para o espaço
+	## local da mira e testa a caixa de meia-extensões do descritor `0x80098064`
+	## (3000 de alcance, ±1000 de largura, 1600 de altura), com clamp de arco de ±0x1000.
+	## Devolve o índice do alvo mais PRÓXIMO dentro da caixa, ou -1.
+	mira_tier = 0
+	if not mira_trava():
+		return -1                          ## DIFÍCIL: não gruda em ninguém
+	if not alvos.is_valid():
+		return -1
+	var lista: Array = alvos.call()
+	var melhor := -1
+	var melhor_d := 1 << 30
+	for i in lista.size():
+		var p: Vector3i = lista[i]
+		var dx := p.x - pos.x
+		var dz := p.z - pos.z
+		# para o espaço local da mira: adiante = -Z rodado por `facing`
+		var sin_f := PS1Math.rsin(facing)
+		var cos_f := PS1Math.rcos(facing)
+		var frente := (-dz * cos_f + dx * sin_f) >> PS1Math.SHIFT
+		var lado := (dx * cos_f + dz * sin_f) >> PS1Math.SHIFT
+		if frente < 0 or frente > MIRA_ALCANCE:
+			continue
+		if absi(lado) > MIRA_LARGURA:
+			continue
+		var dy := absi(p.y - pos.y)
+		if dy > MIRA_ALTURA:
+			continue
+		var d := frente * frente + lado * lado
+		if d < melhor_d:
+			melhor_d = d
+			melhor = i
+			# TIER pela ELEVAÇÃO do alvo: 0 = na mesma altura ... 3 = bem acima/abaixo.
+			# O EXE tira o tier do part-id travado (`player+0xc7`), que exige hitbox de osso —
+			# o port não tem osso de inimigo ainda, então derivo da altura. **Declarado.**
+			mira_tier = clampi(int(dy / 400), 0, 3)
+	return melhor
+
+
+## O `GameState` vem injetado pela sala (o player não conhece a árvore de cena). `null` = teste
+## isolado, e aí o tiro roda sem gastar munição.
+var estado: GameState = null
+
+
+func _estado() -> GameState:
+	return estado
 
 
 func health_zone() -> int:

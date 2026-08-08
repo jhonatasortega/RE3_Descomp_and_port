@@ -61,6 +61,7 @@ var esp: EspBrilho
 var menu: MenuStatus
 var menu_arquivo: MenuArquivo
 var _mouse_antes := false               ## borda do botão esquerdo (clique = toque no menu)
+var laser: MeshInstance3D               ## mira LASER (só no modo fácil)
 var cam3d: Camera3D
 var sun: DirectionalLight3D
 var room: RoomData
@@ -239,6 +240,7 @@ func _on_tick(_frame: int) -> void:
 		mostrar_camera(mundo.camera)
 	if esp != null:
 		esp.avancar(cam3d)                     ## o cintilar do item anda no tick de 30 Hz
+	_atualizar_laser()                         ## mira laser (modo fácil)
 	_atualizar_hud()
 
 
@@ -571,6 +573,53 @@ func _montar_hud() -> void:
 	hud.add_theme_color_override("font_color", Color(1, 1, 0.6))
 	hud.add_theme_font_size_override("font_size", 18)
 	cl.add_child(hud)
+
+
+func _atualizar_laser() -> void:
+	## MIRA LASER do modo FÁCIL (pedido do usuário; **não existe no original** — a regra de
+	## dificuldade está declarada em `Player.Dificuldade`). É um FEIXE fino (caixa esticada) do peito
+	## da Jill até o alvo travado, ou até o alcance do auto-lock (3000 un, do descritor
+	## `0x80098064`) quando não há alvo. Caixa e não linha porque a linha de 1 px do `ImmediateMesh`
+	## não aparecia na captura.
+	if player == null or world == null:
+		return
+	if laser == null:
+		laser = MeshInstance3D.new()
+		laser.name = "MiraLaser"
+		var bm := BoxMesh.new()
+		bm.size = Vector3(0.012, 0.012, 1.0)       ## 1 un de comprimento; a escala estica no Z
+		laser.mesh = bm
+		var m := StandardMaterial3D.new()
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		m.albedo_color = Color(1.0, 0.12, 0.12)
+		m.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+		m.disable_receive_shadows = true
+		m.no_depth_test = false
+		laser.material_override = m
+		world.add_child(laser)
+	var mostrar: bool = player.acao == Player.Acao.MIRANDO and player.mira_com_laser()
+	laser.visible = mostrar
+	if not mostrar:
+		return
+	var origem := Coords.to_godot_i(player.pos.x, player.pos.y, player.pos.z)
+	origem.y += float(Player.ALTURA_PS1) * 0.75 / Coords.WORLD_SCALE
+	var destino_ps1 := player.pos + Vector3i(
+		PS1Math.rsin(player.facing) * Player.MIRA_ALCANCE >> PS1Math.SHIFT, 0,
+		-PS1Math.rcos(player.facing) * Player.MIRA_ALCANCE >> PS1Math.SHIFT)
+	if player.mira_alvo >= 0 and player.alvos.is_valid():
+		var lista: Array = player.alvos.call()
+		if player.mira_alvo < lista.size():
+			destino_ps1 = lista[player.mira_alvo]
+	var destino := Coords.to_godot_i(destino_ps1.x, player.pos.y, destino_ps1.z)
+	destino.y = origem.y
+	var dir := destino - origem
+	var comp := dir.length()
+	if comp < 0.01:
+		laser.visible = false
+		return
+	laser.position = origem + dir * 0.5
+	laser.scale = Vector3(1.0, 1.0, comp)
+	laser.look_at(destino, Vector3.UP)
 
 
 func _clique() -> bool:

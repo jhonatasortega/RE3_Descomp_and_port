@@ -36,6 +36,17 @@ var _ancora_porta: Aot
 func _init(estado: GameState = null) -> void:
 	state = estado if estado != null else GameState.new()
 	player = Player.new()
+	## O player precisa do estado para gastar munição no tiro e da lista de ALVOS para o
+	## auto-lock da mira (`0x800445c8` varre os inimigos da sala).
+	player.estado = state
+	player.alvos = func() -> Array:
+		var fora: Array = []
+		if vm == null:
+			return fora
+		for sp: Spawn in vm.spawns:
+			if sp.pos != Vector3i.ZERO:
+				fora.append(sp.pos)
+		return fora
 
 
 func carregar(room_id: String) -> bool:
@@ -246,6 +257,12 @@ func tick(pad: Pad) -> void:
 	##
 	## Porta e item exigem o BOTÃO DE AÇÃO, como no RE3 — encostar não basta. Antes eu
 	## atravessava só por estar dentro do AOT, o que também causava troca em loop.
+	## `player+0x46` = ARMA EQUIPADA, e a mira exige `!= 0` (`0x80039714`: `lbu v0,0x46`). O port
+	## guarda aqui o **item id** da arma equipada — o índice `w` do EXE não tem tabela achada
+	## (ver `tools/exe_aim_shoot.py`), e para o teste de "tem arma" o id serve igual.
+	var eq := state.equipped_item_id()
+	player.equipped_weapon = eq if Itens.categoria(eq) == Itens.CAT_ARMA else 0
+	player.dificuldade = state.dificuldade as Player.Dificuldade
 	player.tick(pad)
 	# O Y NÃO é integrado: é rederivado do piso todo frame (`0x80033b88` → `floor_height`
 	# `0x8004d720` → grava em `entity+0x38`). É o que faz descer escada/rampa — sem isto a
@@ -259,7 +276,9 @@ func tick(pad: Pad) -> void:
 	# de baixo têm grupo = o nível de lá).
 	rvd.grupo = player.nivel()
 	camera = CameraRVD.update(room, rvd, player.pos.x, player.pos.z)
-	if pad.just_pressed(Pad.ACAO):
+	## MIRANDO, o botão de ação é o GATILHO (rotina 7 sub 3), não o "usar": sem esta guarda o
+	## mesmo clique atirava e abria a porta/pegava item no mesmo quadro.
+	if pad.just_pressed(Pad.ACAO) and player.acao != Player.Acao.MIRANDO:
 		usar()
 
 
