@@ -265,7 +265,13 @@ func _on_tick(_frame: int) -> void:
 	if mundo.camera != camera_index:
 		mostrar_camera(mundo.camera)
 	if esp_sala != null:
-		esp_sala.avancar(cam3d)                ## fogo/fumaça da sala, no mesmo tick de 30 Hz
+		## PROFUNDIDADE do fogo: as três chaves da Ordering Table do PS1 são comparáveis — máscara do
+		## cenário = `depth` cru do RDT (`0x80048844`), personagem = `zona*1024 + SZ>>5`
+		## (`0x80037d50`), efeito = `z>>5` (`0x80022de0`), e chave MENOR desenha depois, ou seja na
+		## frente (`0x80029618`). Passando a sala, a câmera e a chave do personagem, o `EspSala`
+		## decide sozinho o que fica na frente e o que fica atrás. Sem os 3 argumentos ele volta ao
+		## comportamento antigo (tudo atrás do 3D), que era o meu paliativo.
+		esp_sala.avancar(cam3d, room, camera_index, occlusion.char_key)
 	if esp != null:
 		esp.avancar(cam3d)                     ## o cintilar do item anda no tick de 30 Hz
 	var gs2: Node = get_node_or_null("/root/Game")
