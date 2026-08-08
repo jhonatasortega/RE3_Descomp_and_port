@@ -217,6 +217,14 @@ STAGES = [
     dict(id="bgm", titulo="Trilha: SoundFont do VAB real (re3.sf2)", src="iso", deps=[],
          cmds=[["re3_sound.py", "build"]], out=["assets/SOUND/BGM/re3.sf2"],
          doc="docs/formatos/audio_video.md"),
+    dict(id="se_depara", titulo="De-para id de SE -> amostra (111 bancos) + SFX de porta",
+         src="iso", deps=["sfx"],
+         cmds=[["exe_audio.py", "--portas"], ["exe_audio.py"]],
+         out=["data/re3_se.json", "data/sfx_map.json", "assets/SOUND/SFX/S*_DOOR*/*.wav"],
+         doc="docs/decomp/notes/exe_audio.md",
+         nota="A tabela id->descritor mora no INÍCIO de cada .VH/.SND; `--portas` extrai os "
+              "147 WAV dos 76 bancos VAB embutidos nos STAGE*/DOOR??.DO1 (cat 4). "
+              "`--verificar` roda as 1345 asserções que sustentam o de-para."),
 
     # ---------- etapas que exigem ferramenta externa / decisão humana ----------
     dict(id="bgm_gog", titulo="Trilha do PC -> Ogg (125 faixas)", src="ptbr", deps=[],
