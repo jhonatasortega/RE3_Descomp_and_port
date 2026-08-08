@@ -135,7 +135,32 @@ func _resolver_faixa(nome: String) -> String:
 	return ""
 
 
+func banco_de_sfx_da_sala(room_id: String) -> bool:
+	## Diz ao `Sfx` qual banco `cat 2` (o banco de som DA SALA) passou a valer.
+	##
+	## No original isso é uma coisa só: o **room-loader `0x800493ec`** carrega o banco de
+	## personagem (`cat 0`, em `0x800495d0`) e o banco da sala no mesmo caminho em que a sala
+	## entra. No port o ponto equivalente é aqui — `tocar_bgm_da_sala` é o que a troca de sala
+	## chama, então o banco de SFX da sala acompanha a trilha e não fica para trás.
+	##
+	## Sem isto, os 26 pedidos de `cat 2` do EXE (porta trancada, destrancar, emperrada, baú,
+	## subir, ricochete, SE por script) resolveriam no `R000`, cuja tabela de SE é toda
+	## `0xffffffff` — ou seja silêncio. Ver `docs/decomp/notes/exe_audio.md §13`.
+	var g := get_node_or_null("/root/Game")
+	if g == null:
+		g = get_parent()
+	if g == null:
+		return false
+	var s: Variant = g.get("sfx")
+	if not (s is Sfx):
+		return false
+	return (s as Sfx).definir_banco_sala(room_id)
+
+
 func tocar_bgm_da_sala(room_id: String) -> void:
+	## O banco de SFX da sala vem ANTES do `return` de "mesma faixa": salas vizinhas podem
+	## compartilhar a trilha e ter bancos de SE diferentes.
+	banco_de_sfx_da_sala(room_id)
 	var info := faixa_info(room_id)
 	var faixa := str(info.get("faixa", ""))
 	if faixa == "":

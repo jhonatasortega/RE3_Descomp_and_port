@@ -75,12 +75,19 @@ Além dos 35 bancos do disco (`SOUND/*.VH` + `R000.SND`), **todo `STAGE*/DOOR??.
 embute um banco VAB de PORTA** com o mesmo formato (`cat 4`, 4 ids) — 76 bancos, provado
 em 76/76. Ver o bloco `bancos_porta`/`parse_porta` e `exe_audio.md §4.4`.
 
+E **todo `STAGE*/R???.ARD` embute o banco de SALA (`cat 2`, 48 ids)**: a tabela de SE e o
+header VAB moram no RDT e o corpo PS-ADPCM é o **sub-bloco 9 do contêiner** (o que
+`ARD.md §2` rotulava `mask_extra`) — 169 bancos, provado em 169/169. Ver `bancos_sala`/
+`parse_sala` e `exe_audio.md §13`.
+
 Uso:
     python tools/exe_audio.py                 # gera <out>/data/re3_se.json + sfx_map.json
     NOSTALGIA_OUT=port python tools/exe_audio.py
-    python tools/exe_audio.py --verificar     # 1345 asserções; sai != 0 se alguma falhar
+    python tools/exe_audio.py --verificar     # sai != 0 se alguma asserção falhar
     python tools/exe_audio.py --tabela C_00   # imprime a tabela de SE de um banco
     NOSTALGIA_OUT=port python tools/exe_audio.py --portas   # 147 WAV dos bancos de porta
+    NOSTALGIA_OUT=port python tools/exe_audio.py --salas    # 1702 WAV dos bancos de sala
+    python tools/exe_audio.py --armas         # SE por QUADRO de animação das 21 armas (§14)
 
 Ver: docs/decomp/notes/exe_audio.md
 """
@@ -92,8 +99,36 @@ import sys
 import paths
 import vab
 
-MAGIC_VAB = 0x0001EEEE           # gravado em hdr+0x10 nos 35 bancos
+MAGIC_VAB = 0x0001EEEE           # header VAB **versão 1** (35 bancos do disco, 76 portas, 94 salas)
+MAGIC_VAB_V2 = 0x0002EEEE        # header VAB **versão 2** (75 salas) — só o tamanho do header muda
+MAGICS_VAB = (MAGIC_VAB, MAGIC_VAB_V2)
 VAG_DUMMY = 1                    # VAG#1 = bloco mudo padrão do SPU (descartado)
+
+# `N` = quantos ids de SE cada `cat` tem. **Tabela `0x800a0fe4` do EXE** (8 bytes),
+# lida em `0x80078384..0x80078390` dentro de `0x8007836c(a0 = cat, a1 = base do banco)`:
+#     *(0x800e0610 + cat*4) = a1                  ; a base da TABELA DE SE
+#     a1 += *(0x800a0fe4 + cat) * 4               ; -> o header VAB
+# Ou seja **`hdr == base_da_tabela + N*4`** é instrução, não regularidade observada. Nos
+# arquivos do disco a tabela começa no offset 0 e por isso `hdr == N*4` (C_ = 0x40,
+# A_ = 0x80, R000 = 0xC0); nos bancos EMBUTIDOS (porta, sala) a tabela é `hdr - N*4`.
+N_SE_POR_CAT = {0: 16, 1: 32, 2: 48, 3: 32, 4: 4}
+EXE_N_SE_POR_CAT = 0x800A0FE4    # endereço da tabela acima no SLUS_009.23 (8 bytes)
+
+
+def tam_header(versao):
+    """Tamanho do header VAB em bytes. **PROVADO** em `0x800783a4..0x800783b0`:
+
+        lhu  $v0, 0x12($a1)     ; hdr+0x12 = u16 ALTO do magic = a VERSÃO (1 ou 2)
+        addiu $a1, $a1, 0x20
+        sll  $v0, $v0, 4        ; versao * 16
+        addu $a1, $a1, $v0      ; base do array de TONS = hdr + 0x20 + versao*0x10
+        sw   $a1, 0x18($a2)
+
+    Logo `0x0001eeee` -> tons em `hdr+0x30` e `0x0002eeee` -> `hdr+0x40`. A §11.4 media
+    isso por estatística (`u32@hdr+0x08 == tam + 32*n_tons` em 168/168); agora é a
+    aritmética do motor.
+    """
+    return 0x20 + versao * 0x10
 
 # Corpo (.VB) com nome diferente do header (mesma regra de re3_sfx.py).
 CORPO_ESPECIAL = {"R000": "R_000.VB"}
@@ -295,7 +330,29 @@ ACOES = {
     "porta_emperrada": dict(cat=2, id=0x26, conf="MEDIA", prova=(
         "MEDIDO: 0x80050dd8 pede a0=0x226 quando Key_Type==0xfe (10 das 453 portas), "
         "junto da mensagem 0x11")),
+    # ---- ARMA VAZIA / clique seco: cat 1 / id 1 (MEDIDO nesta rodada) ----
+    # Os 4 sítios de cat 1 / id 1 do EXE são o MESMO idioma, em 4 subestados de arma:
+    #     if (*(gs+0x2108) & 0x40) {                     ; botão de RECARREGAR
+    #         if (0x8006cf0c(0) == -1)  SE cat 1 / id 1  ; munição NÃO encontrada
+    #         else                      player+6 = 4 (ou 10)   ; TEM -> subestado de RECARGA
+    #     }
+    # Sítios: 0x8003f190 (sub 1 = mira/hold, 0x8003ef08) · 0x8003fd90 (sub 8 = mira de corpo
+    # inteiro, 0x8003fb78) · 0x8004029c (0x8003ffd8) · 0x8004070c (0x800402f4).
+    # `0x8006cf0c(a0 = 0)` é CONSULTA de munição (`exe_items.md §144`): devolve **-1** quando
+    # `0x8006cc8c` não acha o item de munição no inventário e **0** quando acha (com a0 = 0 ele
+    # não consolida nada; o `beqz` de 0x8006cf84 sai com v0 = 0). Logo o ramo do SE é
+    # exatamente "pediu recarga e NÃO TEM BALA" — o clique seco.
+    # Sanidade: A_01 (a FACA) é o único banco de arma que NÃO define o id 1, e faca não recarrega.
+    "arma_vazia": dict(cat=1, id=1, conf="MEDIA", prova=(
+        "MEDIDO: os 4 sítios de cat 1 / id 1 (0x8003f190, 0x8003fd90, 0x8004029c, 0x8004070c) "
+        "são o mesmo idioma: sob `*(gs+0x2108) & 0x40` (pedido de recarga), o SE só sai no ramo "
+        "em que `0x8006cf0c(0)` devolve -1 = a munição NÃO está no inventário; no ramo em que "
+        "devolve 0 o código vai para o subestado de RECARGA (player+6 = 4 / 10) e NÃO pede SE. "
+        "Ou seja é o som de 'sem bala'. O NOME 'clique seco' é DECLARADO")),
 }
+
+# O som da RECARGA não é um id fixo: são EVENTOS POR QUADRO da animação de recarga
+# (`seq 7` do banco 2 do `.PLW`). Ver `eventos_de_arma()`.
 
 # Banco padrão de cada `cat` quando o port não sabe qual está carregado.
 # C_00 é o banco de MENU (mesma tabela de SE que C_01) — é o certo para som de UI.
@@ -329,19 +386,35 @@ def bancos_disponiveis(d=None):
     return out
 
 
-def parse_header(vh, vb_len):
-    """Acha o header VAB pelo magic e devolve os campos + o offset (= tamanho da tabela SE)."""
-    i = vh.find(struct.pack("<I", MAGIC_VAB))
+def parse_header(vh, vb_len, inicio=0, limite=None, n_se=None):
+    """Acha o header VAB pelo magic e devolve os campos + a base da tabela de SE.
+
+    `inicio`/`limite` delimitam a busca do magic (nos bancos embutidos o arquivo inteiro
+    tem falso-positivo em potencial). `n_se` = quantos ids o `cat` daquele banco tem
+    (`N_SE_POR_CAT`); sem ele vale a regra dos arquivos do disco, em que a tabela começa no
+    offset 0 e portanto `n_se = hdr/4`.
+    """
+    fim = len(vh) if limite is None else limite
+    i, versao = -1, 0
+    for m in MAGICS_VAB:
+        j = vh.find(struct.pack("<I", m), inicio, fim)
+        if j >= 0 and (i < 0 or j < i):
+            i, versao = j, m >> 16
     if i < 0:
-        raise ValueError("magic 0x0001eeee (header VAB) ausente")
+        raise ValueError("magic 0x000{1,2}eeee (header VAB) ausente")
     hdr = i - 0x10
     if hdr < 0:
-        raise ValueError("magic 0x0001eeee em offset impossível (%d)" % i)
+        raise ValueError("magic do header VAB em offset impossível (%d)" % i)
+    n = hdr // 4 if n_se is None else n_se
+    base_se = hdr - n * 4                    # 0x80078384..0x80078390 (ver N_SE_POR_CAT)
+    if base_se < 0:
+        raise ValueError("tabela de SE de %d ids não cabe antes do header (%#x)" % (n, hdr))
     vb_size = struct.unpack_from("<I", vh, hdr)[0]
     total, off_vagtab = struct.unpack_from("<2I", vh, hdr + 4)
     n_tons, n_vags = struct.unpack_from("<2H", vh, hdr + 0x14)
     return {
-        "hdr": hdr, "n_se": hdr // 4,
+        "hdr": hdr, "n_se": n, "base_se": base_se,
+        "versao": versao, "tam_header": tam_header(versao),
         "vb_size": vb_size, "vb_size_ok": vb_size == vb_len,
         "total": total, "off_vagtab": off_vagtab,
         "n_tons": n_tons, "n_vags": n_vags,
@@ -350,7 +423,7 @@ def parse_header(vh, vb_len):
 
 
 def tons_do_header(vh, h):
-    """Tons `VagAtr` lidos por OFFSET (`hdr+0x30`, `n_tons` x 32 B).
+    """Tons `VagAtr` lidos por OFFSET (`hdr + tam_header`, `n_tons` x 32 B).
 
     `vab.parse_tones` acha os tons pelo marcador `c0 00 c1 00 c2 00 c3 00` em
     `reserved[4]`. Isso funciona nos `.VH`/`.SND` do disco, mas **falha nos bancos
@@ -360,7 +433,7 @@ def tons_do_header(vh, h):
     """
     out = []
     for i in range(h["n_tons"]):
-        t = h["hdr"] + 0x30 + i * 32
+        t = h["hdr"] + h["tam_header"] + i * 32
         a = vh[t:t + 8]
         adsr1, adsr2, prog, vg = struct.unpack_from("<4H", vh, t + 16)
         out.append({
@@ -397,21 +470,35 @@ def parse_banco(nome, ph, pc):
                        os.path.basename(ph), os.path.basename(pc))
 
 
-def parse_bytes(nome, vh, vb_len, arq="", corpo=""):
+def parse_bytes(nome, vh, vb_len, arq="", corpo="", inicio=0, limite=None, n_se=None,
+                banco_esperado=None, taxa_dos_tons=False):
     """Núcleo do parse: `vh` = bytes do header, `vb_len` = tamanho do corpo PS-ADPCM.
 
-    Serve tanto para o par `.VH`+`.VB` do disco quanto para o banco **embutido** nos
-    `DOOR*.DO1` (§porta), onde header e corpo moram no mesmo arquivo.
+    Serve para o par `.VH`+`.VB` do disco, para o banco **embutido** nos `DOOR*.DO1`
+    (§porta) e para o banco **embutido no RDT** dos `R???.ARD` (§sala).
+
+    `banco_esperado` = o `cat` do próprio arquivo. Quando dado, descritores que citam
+    OUTRO banco são marcados `banco_externo` e **não** recebem `wav`: o índice de tom
+    deles vale no array de tons do outro banco, que não é este arquivo. Isso acontece em
+    **25 dos 2209** descritores das salas (R30C -> banco 6, R50D -> banco 5, R509 -> 3) e
+    em **0** dos 278 do disco.
     """
-    h = parse_header(vh, vb_len)
+    h = parse_header(vh, vb_len, inicio=inicio, limite=limite, n_se=n_se)
     tons = tons_do_header(vh, h)
     vagtab = vagtab_do_header(vh, h)
     se = {}
     for i in range(h["n_se"]):
-        d = struct.unpack_from("<I", vh, i * 4)[0]
+        d = struct.unpack_from("<I", vh, h["base_se"] + i * 4)[0]
         if d == 0xFFFFFFFF:
             continue
         info = decodifica_descritor(d)
+        if banco_esperado is not None and info["banco"] != banco_esperado:
+            info["banco_externo"] = (
+                "descritor cita o banco %d, não o %d deste arquivo — o índice de tom vale "
+                "no array de tons do banco %d (carregado em outro cat)"
+                % (info["banco"], banco_esperado, info["banco"]))
+            se[i] = info
+            continue
         it = info["tom"]
         if it >= len(tons):
             # Acontece em **12 dos 159** descritores dos bancos de porta e em NENHUM dos
@@ -434,14 +521,27 @@ def parse_bytes(nome, vh, vb_len, arq="", corpo=""):
         if 1 <= vg < len(vagtab):
             info["vb_bytes"] = (vagtab[vg] - vagtab[vg - 1]) * 8
         se[i] = info
+    # Taxa por VAG: vem do TOM que aponta aquela amostra. Nos bancos do disco/porta só os
+    # vags citados por um descritor têm taxa conhecida (o resto sai a 22050, comportamento
+    # histórico que os 147 WAV de porta já publicados assumem). Nos bancos de SALA a maioria
+    # dos vags não é citada por descritor nenhum, então lá a taxa vem direto dos tons
+    # (`taxa_dos_tons=True`) — senão 3 de cada 4 amostras sairiam com pitch errado.
+    taxa = {}
+    if taxa_dos_tons:
+        for t in tons:
+            taxa.setdefault(t["vag"], vab.tone_rate(t["center"], t["shift"], t["min"]))
+    taxa.update({v["vag"]: v["taxa_hz"] for v in se.values() if "vag" in v})
+    bancos_citados = sorted({v["banco"] for v in se.values()})
     return {
         "arquivo": arq, "corpo": corpo,
-        "banco": (min(v["banco"] for v in se.values()) if se else None),
+        "banco": (banco_esperado if banco_esperado is not None
+                  else (min(bancos_citados) if bancos_citados else None)),
+        "bancos_citados": bancos_citados,
+        "versao_header": h["versao"], "tam_header": h["tam_header"],
         "n_se": h["n_se"], "n_tons": len(tons), "n_vags": len(vagtab) - 1,
         "vb_bytes": vb_len, "vol_mestre": h["vol_mestre"], "pan_mestre": h["pan_mestre"],
-        "se": se, "_hdr": h, "_vagtab": vagtab,
-        # taxa por VAG (vem do tom que o referencia) — usada na extração dos WAV de porta
-        "_taxa_por_vag": {v["vag"]: v["taxa_hz"] for v in se.values() if "vag" in v},
+        "se": se, "_hdr": h, "_vagtab": vagtab, "_tons": tons,
+        "_taxa_por_vag": taxa,
     }
 
 
@@ -479,9 +579,136 @@ def parse_porta(nome, caminho):
     base = hdr + total                                   # corpo logo após o bloco do header
     if base + vb_size > len(b):
         raise ValueError("%s: corpo não cabe (base %#x + %d > %d)" % (caminho, base, vb_size, len(b)))
-    info = parse_bytes(nome, b, vb_size, os.path.basename(caminho), "(embutido)")
+    info = parse_bytes(nome, b, vb_size, os.path.basename(caminho), "(embutido)",
+                       n_se=N_SE_POR_CAT[4], banco_esperado=None)
     info["vb_offset"] = base
     return info, b[base:base + vb_size]
+
+
+# ─────────────────────── bancos de SALA (`R???.ARD`, `cat 2`) ───────────────────────
+# **Todo `STAGE*/R???.ARD` embute o banco de som da SALA** (`cat 2`, 48 ids). Três peças,
+# provadas em 169/169 (a §11.4 tinha as duas primeiras; a TERCEIRA é o achado desta rodada):
+#
+#  1. **Corpo PS-ADPCM = o sub-bloco 9 do contêiner** (tipo `0x02`, variante `0x02`), que
+#     `ARD.md §2` rotula `mask_extra`. Prova dupla: `len(bloco 9) == u32@hdr+0x00` (o
+#     tamanho do `.VB` declarado no header VAB) em **169/169**, e com essa base **todo** VAG
+#     da tabela termina num bloco com flag de fim — **1871/1871**.
+#  2. **Header VAB no RDT**, achado pelo magic `0x000{1,2}eeee` em `hdr+0x10`, 8 a 28 bytes
+#     depois de `offset_table[1]`.
+#  3. **A tabela de SE é `hdr - 48*4` (= `hdr - 0xC0`), NÃO `offset_table[0]`.** É aritmética
+#     do motor (`0x80078384`: `hdr = base + N*4`, `N = *(0x800a0fe4 + cat)` = 48 para cat 2).
+#     A §11.4 dizia "off[0] = tabela de 48 ids" porque `off[1] - off[0] == 0xC0` em 169/169 —
+#     mas `hdr = off[1] + pad` com `pad` de 8..28 B, então as duas janelas de 0xC0 são
+#     DIFERENTES. Quem decide é a validação cruzada com o SCD: com a base `hdr-0xC0`, **as
+#     9 salas que têm porta com `Key_Type == 0xfe` definem TODAS o SE id 38** (o id que
+#     `0x80050dd8` pede justamente nesse caso) e nenhuma sala sem essa porta fica de fora;
+#     com a base `off[0]` isso desanda (9 salas com a porta e SEM o id). Idem ids 22 e 37.
+ARD_GLOB = os.path.join("STAGE*", "R???.ARD")
+ARD_SETOR = 0x800                    # os sub-blocos do .ARD são alinhados ao setor de CD
+ARD_BLOCO_RDT = 8                    # bloco tipo 0x00 = RDT (lógica da sala)
+ARD_BLOCO_VB = 9                     # bloco tipo 0x02 = **corpo PS-ADPCM do banco da sala**
+RDT_OFFTAB = 22                      # 22 ponteiros u32 em rdt+0x08
+RDT_OFF_AUDIO = 1                    # offset_table[1] = onde procurar o header VAB
+BUSCA_HDR = 0x40                     # janela de busca do magic depois de offset_table[1]
+
+
+def bancos_sala():
+    """[(nome, caminho)] dos 169 `R???.ARD`. O nome do banco é o id da sala (`R100`...)."""
+    import glob
+    return [(os.path.splitext(os.path.basename(p))[0], p)
+            for p in sorted(glob.glob(paths.cd_data(ARD_GLOB)))]
+
+
+def blocos_do_ard(dados):
+    """[(offset, tamanho, tipo, variante)] dos sub-blocos do contêiner `.ARD`."""
+    _total, n = struct.unpack_from("<2I", dados, 0)
+    out, pos = [], ARD_SETOR
+    for i in range(n):
+        tam, fa, _fb = struct.unpack_from("<IHH", dados, 8 + i * 8)
+        out.append((pos, tam, fa & 0xFF, (fa >> 8) & 0xFF))
+        pos = (pos + tam + ARD_SETOR - 1) // ARD_SETOR * ARD_SETOR
+    return out
+
+
+def parse_sala(nome, caminho):
+    """Banco VAB (`cat 2`) embutido num `.ARD`. Devolve (info, bytes_do_corpo)."""
+    b = open(caminho, "rb").read()
+    blocos = blocos_do_ard(b)
+    if len(blocos) <= ARD_BLOCO_VB:
+        raise ValueError("%s: só %d sub-blocos" % (caminho, len(blocos)))
+    o_rdt, t_rdt, tipo_rdt, _v = blocos[ARD_BLOCO_RDT]
+    if tipo_rdt != 0x00:
+        raise ValueError("%s: bloco %d não é o RDT (tipo %#x)" % (caminho, ARD_BLOCO_RDT, tipo_rdt))
+    rdt = b[o_rdt:o_rdt + t_rdt]
+    off = list(struct.unpack_from("<%dI" % RDT_OFFTAB, rdt, 0x08))
+    o_vb, t_vb, _t, _v = blocos[ARD_BLOCO_VB]
+    ini = off[RDT_OFF_AUDIO]
+    info = parse_bytes(nome, rdt, t_vb, os.path.basename(caminho), "sub-bloco %d" % ARD_BLOCO_VB,
+                       inicio=ini, limite=min(ini + BUSCA_HDR + 0x14, len(rdt)),
+                       n_se=N_SE_POR_CAT[2], banco_esperado=2, taxa_dos_tons=True)
+    info["vb_offset"] = o_vb
+    info["off_audio"] = ini
+    info["alinhamento"] = info["_hdr"]["hdr"] - ini
+    return info, b[o_vb:o_vb + t_vb]
+
+
+# ───────── SE por QUADRO DE ANIMAÇÃO da ARMA (`cat 1`, dado do `.PLW`) ─────────
+# Fecha o resíduo "o id do mecanismo da arma vem de RAM e NÃO é extraível do estático"
+# (§12.1). Vem de RAM, sim — mas a RAM é um CURSOR para dado do disco:
+#
+#   0x8003f5b0  lw   $v0, 0xe4($s0)      ; player+0xe4
+#   0x8003f5b8  lhu  $v0, ($v0)          ; u16 apontado
+#   0x8003f5c0  andi $v0, $v0, 0xf000
+#   0x8003f5c4  beqz $v0, ...            ; nibble 0 = quadro sem som
+#   0x8003f5d0  srl  $v0, $v0, 0xc
+#   0x8003f5d4  addiu $v0, $v0, -1       ; id = nibble - 1
+#   0x8003f5d8  or   $a0, $v0, 0x10100   ; cat 1
+#
+# E quem escreve `player+0xe4` é o AVANÇADOR DE ANIMAÇÃO: `0x8001ae04`/`0x8001ae20`
+# (caminhando a lista de quadros pelo bit `0x100` de cada u16) e `0x80026ca8`/`0x80026cc0`
+# (dentro de `0x80026be8`, que os subestados da arma chamam com `a1 = gs+0x2618` e
+# `a2 = gs+0x2614` = o **banco 2 do `.PLW` da arma equipada**, ver `recuo_tiro.md §2`).
+#
+# Ou seja **`player+0xe4` aponta para a FRAME-LIST do EDD**, e o nibble alto de cada quadro é
+# um EVENTO DE SOM por quadro — exatamente a forma que `sfx.md`/§11.2 suspeitava. A frame-list
+# é `2 bytes por quadro` com "pose no byte baixo + flags no alto" (`pld2gltf.parse_edd`).
+#
+# Prova cruzada, byte a byte: **31 dos 31** ids de evento das 20 armas reais estão definidos no
+# `A_{w}.VH` daquela arma (o único "furo" é `w = 0`, que não tem banco `A_00` no disco). E o
+# `w = 1` (FACA) usa só o id **7**, dentro do conjunto `{6..10}` que é o único que o `A_01`
+# define — a mesma peça que provou o estouro em `cat 1 / id 0` (§11.1).
+PLW_GLOB = os.path.join("PLD", "PL00W*.PLW")
+PLW_OSSOS_BANCO2 = 9        # o banco 2 (tronco/braços, o da mira) tem 9 ossos — plw.md §9.4
+SEQ_RECARGA = 7             # `player+0xc8 = 0x00070007` no subestado 4 (recuo_tiro.md §linha 110)
+SE_ARMA_VAZIA = 1           # `cat 1 / id 1`: ver ACOES["arma_vazia"]
+
+
+def eventos_de_arma():
+    """{w: {plw, banco, eventos: [{seq, quadro, id}]}} — os SE por quadro de cada arma."""
+    import glob
+    import find_anim_banks as fab
+    out = {}
+    for p in sorted(glob.glob(paths.cd_data(PLW_GLOB))):
+        nome = os.path.splitext(os.path.basename(p))[0]        # PL00W02
+        w = int(nome[-2:], 16)
+        b = open(p, "rb").read()
+        _ents, bancos = fab.all_banks(b)
+        cands = [k for k in bancos if k["nb"] == PLW_OSSOS_BANCO2]
+        if not cands:
+            continue
+        bk = cands[0]
+        edd, nseq = bk["edd"], bk["nseq"]
+        ev = []
+        for s in range(nseq):
+            n_quadros = struct.unpack_from("<H", b, edd + s * 8)[0]
+            off = struct.unpack_from("<H", b, edd + s * 8 + 2)[0]
+            for q in range(n_quadros):
+                nib = struct.unpack_from("<H", b, edd + off + q * 2)[0] >> 12
+                if nib:
+                    ev.append({"seq": s, "quadro": q, "id": nib - 1})
+        out[w] = {"plw": os.path.basename(p), "banco": "A_%02X" % w,
+                  "n_seq": nseq, "eventos": ev}
+    return out
 
 
 # ───────────────── qual banco de porta cada SALA/PORTA usa (MEDIDO) ─────────────────
@@ -624,7 +851,7 @@ def gerar_portas_salas():
     return dados
 
 
-def coletar(portas=False):
+def coletar(portas=False, salas=False):
     d = {n: parse_banco(n, ph, pc) for n, ph, pc in bancos_disponiveis()}
     if portas:
         for n, p in bancos_porta():
@@ -632,12 +859,61 @@ def coletar(portas=False):
                 d[n] = parse_porta(n, p)[0]
             except ValueError as ex:
                 print("  aviso: %s" % ex)
+    if salas:
+        for n, p in bancos_sala():
+            try:
+                d[n] = parse_sala(n, p)[0]
+            except (ValueError, struct.error) as ex:
+                print("  aviso: %s" % ex)
     return d
+
+
+def _escrever_wav(caminho, pcm, taxa):
+    import wave
+    with wave.open(caminho, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(taxa)
+        w.writeframes(struct.pack("<%dh" % len(pcm), *pcm))
+
+
+def extrair_salas():
+    """Escreve os WAV dos 169 bancos de SALA em `<out>/assets/SOUND/SFX/<sala>/`.
+
+    Critério de aceite (medido, ver `--verificar`): **169 salas, 1702 amostras**. Nenhuma
+    sala falha — a §11.4 dizia que `R11B` não tinha header VAB e isso estava ERRADO: ela
+    tem, é versão 2, e o que ela quebra é só a regra `u32@hdr+0x08 == tam_header + 32*n_tons`
+    (960 em vez de 928, um slot de tom sobrando). Como a tabela VAG é lida pelo OFFSET
+    `hdr+u32@hdr+0x08`, isso não afeta a extração.
+    """
+    n_wav = n_sala = 0
+    falhas = []
+    for nome, p in bancos_sala():
+        try:
+            info, corpo = parse_sala(nome, p)
+        except (ValueError, struct.error) as ex:
+            falhas.append("%s: %s" % (nome, ex))
+            continue
+        vagtab = info["_vagtab"]
+        outdir = paths.assets("SOUND", "SFX", nome)
+        os.makedirs(outdir, exist_ok=True)
+        for k in range(2, len(vagtab)):                  # VAG#1 = bloco mudo, descartado
+            a, z = vagtab[k - 1] * 8, vagtab[k] * 8
+            if z <= a:
+                continue
+            pcm = vab.decode_adpcm(corpo, a, z)
+            _escrever_wav(os.path.join(outdir, "%s_%02d.wav" % (nome, k - 2)),
+                          pcm, info["_taxa_por_vag"].get(k, 22050))
+            n_wav += 1
+        n_sala += 1
+    print("salas: %d bancos, %d WAV -> %s" % (n_sala, n_wav, paths.assets("SOUND", "SFX")))
+    for f in falhas:
+        print("  FALHA %s" % f)
+    return n_sala, n_wav
 
 
 def extrair_portas():
     """Escreve os WAV dos bancos de porta em `<out>/assets/SOUND/SFX/<banco>/`."""
-    import wave
     n_wav = 0
     for nome, p in bancos_porta():
         info, corpo = parse_porta(nome, p)
@@ -647,12 +923,8 @@ def extrair_portas():
         for k in range(2, len(vagtab)):                  # VAG#1 = bloco mudo, descartado
             a, z = vagtab[k - 1] * 8, vagtab[k] * 8
             pcm = vab.decode_adpcm(corpo, a, z)
-            taxa = info["_taxa_por_vag"].get(k, 22050)
-            with wave.open(os.path.join(outdir, "%s_%02d.wav" % (nome, k - 2)), "wb") as w:
-                w.setnchannels(1)
-                w.setsampwidth(2)
-                w.setframerate(taxa)
-                w.writeframes(struct.pack("<%dh" % len(pcm), *pcm))
+            _escrever_wav(os.path.join(outdir, "%s_%02d.wav" % (nome, k - 2)),
+                          pcm, info["_taxa_por_vag"].get(k, 22050))
             n_wav += 1
     print("portas: %d WAV -> %s" % (n_wav, paths.assets("SOUND", "SFX")))
     return n_wav
@@ -678,20 +950,42 @@ META = {
         "regs_SPU": "*(0x800a1250) = 0x1f801c00",
     },
     "formato_banco": {
-        "tabela_se": "offset 0 do .VH/.SND, N x u32; 0xffffffff = id nao usado; N = hdr/4",
-        "magic_header_vab": "0x0001eeee em hdr+0x10 (35/35 bancos)",
+        "tabela_se": "N x u32 terminando em `hdr` (base = hdr - N*4); 0xffffffff = id nao usado. "
+                     "N = *(0x800a0fe4 + cat) = {0:16, 1:32, 2:48, 3:32, 4:4}, lido em "
+                     "0x80078390 dentro de 0x8007836c. Nos arquivos do disco a tabela comeca "
+                     "no offset 0, logo hdr == N*4; nos bancos EMBUTIDOS (porta/sala) nao.",
+        "magic_header_vab": "0x0001eeee (versao 1) ou 0x0002eeee (versao 2) em hdr+0x10. "
+                            "O u16 ALTO e' a VERSAO e ela decide o tamanho do header: "
+                            "tons = hdr + 0x20 + versao*0x10 (0x30 ou 0x40) — PROVADO em "
+                            "0x800783a4..0x800783b0 (`lhu 0x12(hdr)`, `sll 4`, `addu`).",
         "campos": "hdr+0x00 |.VB| (35/35 ok) | hdr+0x08 off tabela VAG | "
-                  "hdr+0x14 n_tons (35/35 ok) | hdr+0x16 n_vags | hdr+0x18/+0x19 vol/pan mestre | "
-                  "hdr+0x30 tons (32B, VagAtr)",
+                  "hdr+0x12 VERSAO | hdr+0x14 n_tons (35/35 ok) | hdr+0x16 n_vags | "
+                  "hdr+0x18/+0x19 vol/pan mestre | hdr+0x20+versao*0x10 tons (32B, VagAtr)",
         "descritor": "byte0 bits1-3 = banco VAB; byte1 bits4-7 = indice do TOM; "
                      "byte2 bit7 = voz dinamica; byte2 bits0-4 = voz base; byte3 bit0 = flag. "
                      "byte1 bits0-3 e byte3 bits1-7 NAO PROVADOS",
         "amostra": "tom.vag (1-based); VAG#1 = bloco mudo descartado -> wav = <banco>_{vag-2:02d}",
     },
     "cat": {"0": "C_xx (personagem/UI/global)",
-            "1": "A_xx da ARMA equipada (0x80043eb4 -> 0x8007809c(1, lbu player+0x46); A_{w:02X}, w=1 = faca)", "2": "R###.SND (sala)",
+            "1": "A_xx da ARMA equipada (0x80043eb4 -> 0x8007809c(1, lbu player+0x46); A_{w:02X}, w=1 = faca)",
+            "2": "banco da SALA: R000.SND no disco (tabela toda 0xffffffff) + os 169 EMBUTIDOS "
+                 "nos R???.ARD (nome do banco = id da sala). 48 ids.",
+            "3": "banco do INIMIGO (32 ids) — de qual arquivo vem NAO LOCALIZADO",
+            "4": "porta (4 ids), embutido no DOORxx.DOn",
             "nota": "cat == id de banco VAB (mesma fn de busca 0x800750e4 para os dois)"},
     "CORRECOES": [
+        "docs/decomp/notes/exe_audio.md §11.4 dizia que a tabela de SE da sala ficava em "
+        "offset_table[0] do RDT. NAO fica: fica em `hdr - 48*4`, e `hdr = offset_table[1] + "
+        "pad` com pad de 8..28 B (medido em 169/169) — as duas janelas de 0xC0 diferem. Base "
+        "certa provada por 0x80078384 (hdr = base + N*4) e corroborada pelo SCD: com "
+        "`hdr-0xC0` as 9 salas com porta Key_Type==0xfe definem TODAS o SE id 38.",
+        "docs/decomp/notes/exe_audio.md §11.4 dizia 'header VAB achado em 168/169 (R11B "
+        "falha)'. Achado em 169/169. R11B tem header versao 2; o que ela quebra e' so a regra "
+        "u32@hdr+0x08 == tam_header + 32*n_tons (960 vs 928 = um slot de tom sobrando), o que "
+        "nao afeta nada porque a tabela VAG e' lida pelo offset.",
+        "docs/formatos/ARD.md §2 rotula o sub-bloco 9 (tipo 0x02) de 'mask_extra' / 'payload "
+        "extra de mascara'. E' o CORPO PS-ADPCM do banco de som da sala: len(bloco 9) == "
+        "u32@hdr+0x00 em 169/169 e todos os 1871 VAG terminam em flag de fim com essa base.",
         "docs/decomp/notes/sfx.md §8 dizia que os opcodes SCD 0x57/0x58/0x59 eram filas de "
         "SE. NAO SAO: 0x80038678/0x80038704/0x8003879c alimentam as duas filas de RUMBLE "
         "(0x800de648 motor pequeno on/off, 0x800de798 motor grande com rampa linear). O tick "
@@ -716,13 +1010,14 @@ META = {
 
 
 def gerar():
-    bancos = coletar(portas=True)
+    bancos = coletar(portas=True, salas=True)
     dados = {"_meta": META, "acoes": {}, "banco_padrao": BANCO_PADRAO,
              "banco_jogo": BANCO_JOGO, "bancos": {}}
 
     for nome, b in sorted(bancos.items()):
         dados["bancos"][nome] = {
             "arquivo": b["arquivo"], "corpo": b["corpo"], "banco": b["banco"],
+            "versao_header": b["versao_header"],
             "n_se": b["n_se"], "n_tons": b["n_tons"], "n_vags": b["n_vags"],
             "vb_bytes": b["vb_bytes"],
             "se": {str(i): {k: v for k, v in info.items() if k != "nao_provado"}
@@ -737,7 +1032,8 @@ def gerar():
             if b["banco"] != cat:
                 continue
             info = b["se"].get(sid)
-            if info and not info.get("dummy", True) and "invalido" not in info:
+            if (info and not info.get("dummy", True)
+                    and "invalido" not in info and "banco_externo" not in info):
                 por_banco[nome] = info["wav"]
         # 1ª escolha: o banco padrão do cat. Se o id não existir lá (caso do tiro, que só
         # vive nos bancos de área), cai no BANCO_JOGO — declarado, não medido.
@@ -753,11 +1049,44 @@ def gerar():
             "por_banco": por_banco,
         }
 
+    # ── SE por QUADRO da animação da arma (mecanismo/recarga) ──
+    ev = eventos_de_arma()
+    n_ev = 0
+    for w, e in sorted(ev.items()):
+        b = bancos.get(e["banco"])
+        se = b["se"] if b else {}
+        for it in e["eventos"]:
+            info = se.get(it["id"]) if se else None
+            it["wav"] = info["wav"] if info and not info.get("dummy", True) else None
+            it["no_banco"] = info is not None
+            n_ev += 1
+    dados["eventos_arma"] = {
+        "_meta": {
+            "descricao": "SE de MECANISMO da arma (cat 1) por QUADRO de animação. O id NÃO é "
+                         "fixo: 0x8003f5b0 lê `u16 @ *(player+0xe4)` e faz id = (u16>>12)-1, e "
+                         "`player+0xe4` é o CURSOR da frame-list do EDD do banco 2 do .PLW da "
+                         "arma (escrito por 0x8001ae04/0x8001ae20 e 0x80026ca8/0x80026cc0, "
+                         "dentro de 0x80026be8, que os subestados chamam com gs+0x2614/+0x2618 "
+                         "= banco 2). Logo o id É extraível do disco.",
+            "PROVA_CRUZADA": "31 dos 31 ids de evento das 20 armas reais estão definidos no "
+                             "A_{w}.VH daquela arma; o w=0 (desarmado) não tem banco A_00. E o "
+                             "w=1 (FACA) usa só o id 7, dentro do {6..10} que é o único "
+                             "conjunto que o A_01 define.",
+            "seq_recarga": SEQ_RECARGA,
+            "seq_tiro": [1, 3, 5],
+            "nota_seq": "seq 7 = RECARGA (player+0xc8 = 0x00070007 no subestado 4, "
+                        "recuo_tiro.md); seq 1/3/5 = as 3 variantes de FOGO. Os rótulos das "
+                        "outras seqs do banco 2 não foram medidos.",
+            "n_eventos": n_ev,
+        },
+        "por_arma": {str(w): ev[w] for w in sorted(ev)},
+    }
+
     out = paths.data("re3_se.json")
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "w", encoding="utf-8") as f:
         json.dump(dados, f, ensure_ascii=False, indent=1)
-    print("%s  (%d bancos, %d acoes)" % (out, len(bancos), len(ACOES)))
+    print("%s  (%d bancos, %d acoes, %d eventos de arma)" % (out, len(bancos), len(ACOES), n_ev))
 
     # sfx_map.json: nome lógico -> wav, agora com origem provada (substitui a heurística)
     mapa = {
@@ -810,7 +1139,10 @@ def verificar():
             "%s: hdr+0x14 (%d) != tons achados pelo marcador (%d)" % (nome, h["n_tons"], len(tons_sig)))
         tons = tons_do_header(vh, h)
         chk(tons == tons_sig, "%s: tons por offset != tons por marcador" % nome)
-        chk(0x30 + 32 * len(tons) == h["off_vagtab"],
+        chk(h["versao"] == 1, "%s: banco do disco deveria ser header versao 1, e' %d"
+            % (nome, h["versao"]))
+        chk(h["base_se"] == 0, "%s: tabela de SE do disco deveria comecar no offset 0" % nome)
+        chk(h["tam_header"] + 32 * len(tons) == h["off_vagtab"],
             "%s: tons nao terminam onde hdr+0x08 aponta a tabela VAG" % nome)
         vagtab = vagtab_do_header(vh, h)
         chk(vagtab == vab.find_vagtab(vh, vb_len),
@@ -955,6 +1287,198 @@ def verificar():
             "stage %d: usa dtex %d mas o array tem so %d entradas"
             % (s, max(usa.get(s, {0})), len(arr)))
 
+    # ── N de ids de SE por cat: a tabela `0x800a0fe4` do EXE (a base de tudo acima) ──
+    text_exe, base_exe = _exe_bytes()
+    tab_n = list(text_exe[EXE_N_SE_POR_CAT - base_exe:EXE_N_SE_POR_CAT - base_exe + 8])
+    chk(tab_n == [16, 32, 48, 32, 4, 0, 0, 0],
+        "0x800a0fe4 (N de ids de SE por cat) deveria ser [16,32,48,32,4,0,0,0], e' %s" % tab_n)
+    for cat, n in sorted(N_SE_POR_CAT.items()):
+        chk(tab_n[cat] == n, "cat %d: N_SE_POR_CAT diz %d, o EXE diz %d" % (cat, n, tab_n[cat]))
+
+    # ── bancos de SALA embutidos nos R???.ARD (§13) ──
+    salas_ard = bancos_sala()
+    chk(len(salas_ard) == 169, "esperados 169 R???.ARD, achei %d" % len(salas_ard))
+    n_sala = n_vag_sala = n_fim = n_desc_sala = n_ext = n_inv_sala = n_mudo = 0
+    n_vag0 = []
+    vers = {1: 0, 2: 0}
+    pads = set()
+    regra_hdr = []
+    id_por_sala = {}
+    for nome, p in salas_ard:
+        dados_ard = open(p, "rb").read()
+        blocos = blocos_do_ard(dados_ard)
+        chk(len(blocos) == 10, "%s: esperados 10 sub-blocos, achei %d" % (nome, len(blocos)))
+        chk(blocos[ARD_BLOCO_VB][2] == 0x02 and blocos[ARD_BLOCO_VB][3] == 0x02,
+            "%s: sub-bloco %d deveria ser tipo 0x02 variante 0x02" % (nome, ARD_BLOCO_VB))
+        try:
+            info, corpo = parse_sala(nome, p)
+        except (ValueError, struct.error) as ex:
+            chk(False, "%s: %s" % (nome, ex))
+            continue
+        n_sala += 1
+        h = info["_hdr"]
+        vers[h["versao"]] = vers.get(h["versao"], 0) + 1
+        pads.add(info["alinhamento"])
+        # (1) o CORPO e' o sub-bloco 9: o tamanho declarado no header VAB casa com ele
+        chk(h["vb_size"] == len(corpo),
+            "%s: hdr+0x00 (%d) != |sub-bloco 9| (%d)" % (nome, h["vb_size"], len(corpo)))
+        # (2) e com essa base TODO VAG termina num bloco com flag de fim (bit0)
+        tabv = info["_vagtab"]
+        chk(tabv[0] == 0 and tabv[-1] * 8 == len(corpo),
+            "%s: tabela VAG nao vai de 0 a |corpo|/8" % nome)
+        for k in range(1, len(tabv)):
+            if tabv[k] <= tabv[k - 1]:
+                continue
+            n_vag_sala += 1
+            if corpo[tabv[k] * 8 - 16 + 1] & 0x01:
+                n_fim += 1
+            else:
+                chk(False, "%s: VAG %d nao termina em flag de fim" % (nome, k))
+        # (3) o VAG#1 e' o bloco mudo de 48 B (3 blocos), como nos bancos do disco
+        chk(tabv[1] * 8 == 48, "%s: VAG#1 (mudo) deveria ter 48 B, tem %d" % (nome, tabv[1] * 8))
+        # (4) tabela de SE de 48 ids terminando exatamente no header
+        chk(h["n_se"] == 48 and h["base_se"] == h["hdr"] - 0xC0,
+            "%s: tabela de SE deveria ser 48 ids em hdr-0xC0" % nome)
+        # (5) a janela off[1]-off[0] tambem mede 0xC0 (o que confundiu a §11.4), mas fica
+        #     `alinhamento` bytes ANTES da tabela de verdade
+        rdt_off = struct.unpack_from("<%dI" % RDT_OFFTAB, dados_ard,
+                                     blocos[ARD_BLOCO_RDT][0] + 0x08)
+        chk(rdt_off[1] - rdt_off[0] == 0xC0,
+            "%s: offset_table[1]-[0] deveria medir 0xC0" % nome)
+        chk(8 <= info["alinhamento"] <= 28,
+            "%s: alinhamento hdr-off[1] fora de 8..28 (%d)" % (nome, info["alinhamento"]))
+        # (6) a regra do tamanho do header (0x20 + versao*0x10)
+        if h["tam_header"] + 32 * h["n_tons"] != h["off_vagtab"]:
+            regra_hdr.append(nome)
+        ids_usados = set()
+        for i, v in info["se"].items():
+            n_desc_sala += 1
+            ids_usados.add(i)
+            if "banco_externo" in v:
+                n_ext += 1
+            elif "invalido" in v:
+                n_inv_sala += 1
+            else:
+                chk(v["banco"] == 2, "%s id %d: banco %d != 2" % (nome, i, v["banco"]))
+                if v["vag"] == 0:
+                    # 1 caso em 2209: R11B id 5 (tom 13). É a MESMA sala do slot de tom
+                    # sobrando; nenhuma outra sala tem `vag == 0`. Dado inconsistente.
+                    n_vag0.append((nome, i))
+                else:
+                    chk(1 <= v["vag"] <= info["n_vags"],
+                        "%s id %d: vag %d fora da tabela" % (nome, i, v["vag"]))
+                if v["dummy"]:
+                    n_mudo += 1
+        id_por_sala[nome] = ids_usados
+    chk(n_sala == 169, "169 bancos de sala parseados, achei %d" % n_sala)
+    chk((vers.get(1), vers.get(2)) == (94, 75),
+        "esperadas 94 salas com header versao 1 e 75 com versao 2, achei %s" % vers)
+    chk(pads == {8, 12, 16, 20, 24, 28},
+        "alinhamentos hdr-off[1] observados deviam ser {8,12,16,20,24,28}, sao %s" % sorted(pads))
+    chk(n_vag_sala == 1871 and n_fim == 1871,
+        "esperados 1871 VAG nas salas, todos terminando em flag de fim; achei %d/%d"
+        % (n_fim, n_vag_sala))
+    chk(regra_hdr == ["R11B"],
+        "a regra hdr+0x08 == tam_header + 32*n_tons deveria falhar SO na R11B; falha em %s"
+        % regra_hdr)
+    chk(n_desc_sala == 2209,
+        "esperados 2209 descritores usados nas salas, achei %d" % n_desc_sala)
+    chk(n_ext == 25,
+        "esperados 25 descritores de sala citando OUTRO banco (R30C/R50D/R509), achei %d" % n_ext)
+    chk(n_inv_sala == 1,
+        "esperado 1 descritor de sala com tom fora da faixa (R708 id 24), achei %d" % n_inv_sala)
+    # 56 descritores apontam o VAG#1 (bloco mudo do SPU): são PLACEHOLDERS silenciosos —
+    # o motor toca, o waveform é silêncio. É o mesmo fenômeno dos bancos do disco (§4.2).
+    chk(n_mudo == 56,
+        "esperados 56 descritores de sala apontando o VAG mudo, achei %d" % n_mudo)
+    chk(n_vag0 == [("R11B", 5)],
+        "so a R11B id 5 deveria ter vag 0 (a mesma sala do slot de tom sobrando); achei %s"
+        % n_vag0)
+
+    # ── VALIDAÇÃO CRUZADA COM O SCD: é ela que prova a BASE da tabela (hdr-0xC0) ──
+    # `0x80050dd8` pede `cat 2 / id 38` quando `Key_Type == 0xfe`. Se a base estiver certa,
+    # TODA sala que registra uma porta com `Key_Type == 0xfe` define o id 38 no seu banco.
+    # (Com a base `off[0]` da §11.4, 9 dessas salas NÃO definem o id — foi assim que o erro
+    # apareceu.) Idem para o id 22 (`Key_Type == 0xff` / sem a chave) e o 37 (com a chave).
+    portas_sala = portas_por_sala()
+    faltando = []
+    n_fe = 0
+    for s, v in sorted(portas_sala.items()):
+        if any(p["key_type"] == 0xFE for p in v):
+            n_fe += 1
+            if 38 not in id_por_sala.get(s, set()):
+                faltando.append(s)
+    chk(n_fe == 9, "esperadas 9 salas com porta Key_Type==0xfe, achei %d" % n_fe)
+    chk(not faltando,
+        "salas com porta Key_Type==0xfe SEM o SE id 38 no banco: %s (base da tabela errada?)"
+        % faltando)
+    com_ff = [s for s, v in sorted(portas_sala.items())
+              if any(p["key_type"] == 0xFF for p in v)]
+    sem22 = [s for s in com_ff if 22 not in id_por_sala.get(s, set())]
+    chk(len(com_ff) == 8, "esperadas 8 salas com porta Key_Type==0xff, achei %d" % len(com_ff))
+    chk(sem22 == ["R20B"],
+        "das 8 salas com porta Key_Type==0xff, so a R20B nao define o SE id 22 "
+        "(a porta 'nunca abre' dela fica MUDA no original); achei %s" % sem22)
+    # comparação honesta com a base ERRADA da §11.4: ela deixa 9 salas com porta 0xfe SEM o
+    # id 38. É esta a medida que escolheu `hdr-0xC0` — fica no teste para não reincidir.
+    sem38_off0 = 0
+    for s, v in sorted(portas_sala.items()):
+        if not any(p["key_type"] == 0xFE for p in v):
+            continue
+        cam = dict(bancos_sala()).get(s)
+        if cam is None:
+            continue
+        dados_ard = open(cam, "rb").read()
+        blocos = blocos_do_ard(dados_ard)
+        o_rdt = blocos[ARD_BLOCO_RDT][0]
+        off0 = struct.unpack_from("<I", dados_ard, o_rdt + 0x08)[0]
+        d = struct.unpack_from("<I", dados_ard, o_rdt + off0 + 38 * 4)[0]
+        if d == 0xFFFFFFFF:
+            sem38_off0 += 1
+    chk(sem38_off0 == 9,
+        "com a base off[0] da §11.4, 9 das 9 salas com porta 0xfe ficam sem o id 38; achei %d"
+        % sem38_off0)
+
+    # ── SE por QUADRO da animação da arma (mecanismo/recarga) — §14 ──
+    ev = eventos_de_arma()
+    chk(len(ev) == 21, "esperados 21 PL00W*.PLW (w = 0..20), achei %d" % len(ev))
+    bancos_arma = {n: parse_banco(n, ph, pc) for n, ph, pc in bancos_disponiveis()
+                   if n.startswith("A_")}
+    chk(len(bancos_arma) == 20, "esperados 20 bancos A_, achei %d" % len(bancos_arma))
+    n_ev = n_ev_ok = 0
+    ids_por_w = {}
+    for w, e in sorted(ev.items()):
+        ids = sorted({it["id"] for it in e["eventos"]})
+        ids_por_w[w] = ids
+        b = bancos_arma.get(e["banco"])
+        for i in ids:
+            n_ev += 1
+            if b is None:
+                chk(w == 0, "%s (w=%d) nao existe no disco e nao e' o w=0" % (e["banco"], w))
+                continue
+            if i in b["se"]:
+                n_ev_ok += 1
+            else:
+                chk(False, "%s: evento de quadro pede o id %d, que o banco nao define (define %s)"
+                    % (e["banco"], i, sorted(b["se"])))
+    chk((n_ev, n_ev_ok) == (33, 31),
+        "esperados 33 ids de evento (31 nas 20 armas reais + 2 do w=0 sem banco), achei %d/%d"
+        % (n_ev, n_ev_ok))
+    chk(ids_por_w.get(1) == [7],
+        "a FACA (w=1) deveria usar so o id 7 nos eventos de quadro, usa %s" % ids_por_w.get(1))
+    chk(7 in bancos_arma["A_01"]["se"] and 0 not in bancos_arma["A_01"]["se"],
+        "A_01 define o id 7 (o evento da facada) e NAO define o id 0 (o estouro)")
+    # a RECARGA: os eventos da seq 7 são o som dela; as armas que recarregam têm evento lá
+    com_recarga = sorted(w for w, e in ev.items()
+                         if any(it["seq"] == SEQ_RECARGA for it in e["eventos"]))
+    chk(com_recarga == [0, 2, 3, 4, 5, 13, 14, 16, 17, 18, 19],
+        "armas com evento de som na seq %d (RECARGA): %s" % (SEQ_RECARGA, com_recarga))
+    # ARMA VAZIA (clique seco) = cat 1 / id 1, e a FACA é a única que não o define
+    sem_id1 = sorted(n for n, b in bancos_arma.items() if 1 not in b["se"])
+    chk(sem_id1 == ["A_01", "A_0B"],
+        "os unicos bancos de arma sem o id 1 (arma vazia) deveriam ser A_01 (a FACA, que nao "
+        "recarrega) e A_0B (que tambem nao tem evento de quadro nenhum); sem: %s" % sem_id1)
+
     # ── os 155 call sites de SE_pede (§12 do doc) ──
     tab = tabela_callsites()
     chk(len(tab) == 155, "esperava 155 `jal 0x800746c0`, achei %d" % len(tab))
@@ -985,14 +1509,33 @@ def verificar():
 
 
 def tabela(nome):
-    d = sound_dir()
-    ph = os.path.join(d, nome + (".SND" if nome == "R000" else ".VH"))
-    pc = os.path.join(d, CORPO_ESPECIAL.get(nome, nome + ".VB"))
-    b = parse_banco(nome, ph, pc)
-    print("%s: banco=%s n_se=%d n_tons=%d n_vags=%d |.VB|=%d"
-          % (nome, b["banco"], b["n_se"], b["n_tons"], b["n_vags"], b["vb_bytes"]))
+    """Imprime a tabela de SE de um banco. Aceita banco do disco, `S?_DOORxx` e SALA (`R100`)."""
+    b = None
+    for n, p in bancos_sala():                       # sala (banco embutido no .ARD)
+        if n == nome:
+            b = parse_sala(n, p)[0]
+            break
+    if b is None:
+        for n, p in bancos_porta():                  # porta (banco embutido no .DO1)
+            if n == nome or n.endswith("_" + nome):
+                b = parse_porta(n, p)[0]
+                break
+    if b is None:
+        d = sound_dir()
+        ph = os.path.join(d, nome + (".SND" if nome == "R000" else ".VH"))
+        pc = os.path.join(d, CORPO_ESPECIAL.get(nome, nome + ".VB"))
+        b = parse_banco(nome, ph, pc)
+    print("%s: banco=%s n_se=%d n_tons=%d n_vags=%d |.VB|=%d header v%d (0x%x)"
+          % (nome, b["banco"], b["n_se"], b["n_tons"], b["n_vags"], b["vb_bytes"],
+             b["versao_header"], b["tam_header"]))
     print(" id  descritor  tom vag  Hz    voz          wav")
     for i, v in sorted(b["se"].items()):
+        if "banco_externo" in v or "invalido" in v:
+            print("%3d  %s %3d   -      -  -            (%s)"
+                  % (i, v["desc"], v["tom"],
+                     "banco %d, fora deste arquivo" % v["banco"] if "banco_externo" in v
+                     else "tom invalido"))
+            continue
         print("%3d  %s %3d %3d %6d  %-11s %s"
               % (i, v["desc"], v["tom"], v["vag"], v["taxa_hz"],
                  "dinamica" if v["voz_dinamica"] else "fixa/%d" % v["voz_base"],
@@ -1453,6 +1996,27 @@ def gerar_callsites():
     return dados
 
 
+def imprimir_eventos_arma():
+    """Imprime os SE por quadro de animação de cada arma (mecanismo/recarga) — §14."""
+    ev = eventos_de_arma()
+    bancos_arma = {n: parse_banco(n, ph, pc) for n, ph, pc in bancos_disponiveis()
+                   if n.startswith("A_")}
+    print(" w  plw          banco  eventos (seq/quadro -> cat 1 / id -> wav)")
+    for w, e in sorted(ev.items()):
+        b = bancos_arma.get(e["banco"])
+        partes = []
+        for it in e["eventos"]:
+            info = (b["se"].get(it["id"]) if b else None)
+            wav = info["wav"] if info and not info.get("dummy", True) else "-"
+            marca = "" if info else "  <- NAO no banco"
+            partes.append("seq%d/f%d=id%d(%s)%s" % (it["seq"], it["quadro"], it["id"], wav, marca))
+        print("%2d  %-12s %-6s %s" % (w, e["plw"], e["banco"],
+                                      "  ".join(partes) if partes else "(nenhum)"))
+    print("\nseq %d = RECARGA · seq 1/3/5 = FOGO. `cat 1 / id 1` (arma vazia) NAO vem de quadro:"
+          % SEQ_RECARGA)
+    print("vem do codigo, nos 4 sitios de 0x8003f190/0x8003fd90/0x8004029c/0x8004070c.")
+
+
 def main(argv):
     if "--callsites" in argv:
         imprimir_callsites()
@@ -1466,6 +2030,12 @@ def main(argv):
         return 0
     if "--portas" in argv:
         extrair_portas()
+        return 0
+    if "--salas" in argv:
+        extrair_salas()
+        return 0
+    if "--armas" in argv:
+        imprimir_eventos_arma()
         return 0
     if "--portas-salas" in argv:
         gerar_portas_salas()

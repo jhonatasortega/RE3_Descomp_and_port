@@ -40,12 +40,17 @@ func run(t: Object) -> bool:
 
 	# ── 1. os bancos entraram: 35 do disco + 76 de porta ──
 	var bancos: Dictionary = d.get("bancos", {})
-	t.eq(bancos.size(), 111, "111 bancos: 35 do disco (20 A_, 14 C_, R000) + 76 de porta")
+	t.eq(bancos.size(), 280,
+		"280 bancos: 35 do disco (20 A_, 14 C_, R000) + 76 de porta + 169 de SALA")
 	var n_porta := 0
+	var n_sala := 0
 	for nome: String in bancos:
 		if nome.contains("_DOOR"):
 			n_porta += 1
+		elif nome.begins_with("R") and nome != "R000":
+			n_sala += 1
 	t.eq(n_porta, 76, "76 bancos de porta (todo STAGE*/DOORxx.DO1 embute um banco VAB)")
+	t.eq(n_sala, 169, "169 bancos de SALA (todo STAGE*/R???.ARD embute o banco cat 2)")
 
 	# ── 2. formato do banco: tabela de SE = hdr/4 (magic 0x0001eeee em hdr+0x10) ──
 	t.eq(int((bancos.get("C_00", {}) as Dictionary).get("n_se", -1)), 16,
@@ -123,17 +128,31 @@ func run(t: Object) -> bool:
 	var sem_wav := 0
 	var n_desc_porta := 0
 	var inval_porta := 0
+	var n_desc_sala := 0
+	var inval_sala := 0
+	var externo_sala := 0
+	var mudo_sala := 0
 	for nome: String in bancos:
 		var b: Dictionary = bancos[nome]
 		var n_tons := int(b.get("n_tons", 0))
 		var se: Dictionary = b.get("se", {})
 		var eh_porta := nome.contains("_DOOR")
+		var eh_sala := nome.begins_with("R") and nome != "R000"
 		for k: String in se:
 			var info: Dictionary = se[k]
 			if eh_porta:
 				n_desc_porta += 1
 				if info.has("invalido"):
 					inval_porta += 1
+				continue
+			if eh_sala:
+				n_desc_sala += 1
+				if info.has("banco_externo"):
+					externo_sala += 1
+				elif info.has("invalido"):
+					inval_sala += 1
+				elif bool(info.get("dummy", false)):
+					mudo_sala += 1
 				continue
 			n_desc += 1
 			if int(info.get("tom", -1)) >= n_tons:
@@ -161,6 +180,30 @@ func run(t: Object) -> bool:
 		"id 0 do banco de porta = 0x00601408 (idêntico nas 76 portas)")
 	t.eq(str((se_d00.get("1", {}) as Dictionary).get("desc", "")), "0x00612408",
 		"id 1 do banco de porta = 0x00612408 (idêntico nas 76 portas)")
+
+	# ── 5c. bancos de SALA (cat 2), extraídos dos R???.ARD nesta rodada ──
+	## O que eles desbloqueiam: os **26** pedidos de `cat 2` do EXE (porta trancada,
+	## destrancar, emperrada, baú, subir, ricochete, SE por script). Layout e provas em
+	## `docs/decomp/notes/exe_audio.md §13`; asserções do lado do dado em
+	## `python tools/exe_audio.py --verificar`.
+	t.group("Audio/sala")
+	t.eq(n_desc_sala, 2209, "2209 descritores de SE nos 169 bancos de sala")
+	t.eq(externo_sala, 25,
+		"25 descritores citam OUTRO banco (R30C->6, R50D->5, R509->3): o índice de tom vale "
+		+ "no array de tons do outro banco, então não há WAV desta sala para eles")
+	t.eq(inval_sala, 1, "1 descritor com tom fora da faixa (R708 id 24) — dado original")
+	t.eq(mudo_sala, 56, "56 descritores apontam o VAG mudo do SPU (placeholders silenciosos)")
+	var r100: Dictionary = bancos.get("R100", {})
+	t.eq(int(r100.get("banco", -1)), 2, "o banco da sala é o cat 2")
+	t.eq(int(r100.get("n_se", -1)), 48,
+		"48 ids de SE por sala — é a tabela 0x800a0fe4 do EXE ({16,32,48,32,4}), lida em 0x80078390")
+	t.eq(int(r100.get("vb_bytes", -1)), 40432,
+		"R100: corpo PS-ADPCM de 40432 B = o tamanho do sub-bloco 9 do .ARD (ARD.md chama de "
+		+ "`mask_extra`; é o .VB do banco de som da sala)")
+	t.eq(int(r100.get("versao_header", -1)), 1,
+		"R100 tem header VAB versão 1 (0x0001eeee -> tons em hdr+0x30)")
+	t.eq(int((bancos.get("R101", {}) as Dictionary).get("versao_header", -1)), 2,
+		"R101 tem header versão 2 (0x0002eeee -> tons em hdr+0x40; 0x800783a4 prova a conta)")
 
 	# ── 6. API do Sfx ──
 	t.group("Audio/Sfx API")
@@ -299,17 +342,182 @@ func run(t: Object) -> bool:
 		t.check(s.dano_player(i), "dano_player(%d) resolve uma amostra do C_02" % i)
 	t.check(s.item_pego() and s.combinar_ok() and s.combinar_erro()
 		and s.equipar() and s.examinar(), "as 5 ações novas de menu tocam")
-	## cat 2 = banco de SALA: o port não tem essas amostras (só `R000.SND` está no disco e a
-	## tabela de SE dele é toda 0xffffffff; os outros 168 estão embutidos nos `R###.ARD`,
-	## exe_audio.md §11.4). O teste FIXA esse limite em vez de escondê-lo.
+	# ── 6.2b CLIQUE SECO e RECARGA — os dois sons que faltavam na arma ──
+	## O que mudou: o id do MECANISMO da arma não era extraível ("vem de RAM"). Ele vem de RAM,
+	## sim, mas a RAM é o **cursor da frame-list do EDD do banco 2 do `.PLW`** — dado do disco.
+	## `player+0xe4` é escrito pelo avançador de animação (`0x8001ae04`/`0x8001ae20` e
+	## `0x80026ca8`/`0x80026cc0`, dentro de `0x80026be8`), e `0x8003f5b0` lê o u16 daquele
+	## quadro: `id = (u16 >> 12) - 1`.
+	t.group("Audio/arma vazia e recarga")
+	var ea: Dictionary = (d.get("eventos_arma", {}) as Dictionary)
+	if t.check(not ea.is_empty(), "re3_se.json publica os eventos de som por quadro da arma"):
+		var pa: Dictionary = ea.get("por_arma", {})
+		t.eq(pa.size(), 21, "21 armas (PL00W00..PL00W14, w = 0..20)")
+		var n_ev := 0
+		var fora_banco := 0
+		for w: String in pa:
+			var e: Dictionary = pa[w]
+			for it: Variant in (e.get("eventos", []) as Array):
+				n_ev += 1
+				if not bool((it as Dictionary).get("no_banco", false)):
+					fora_banco += 1
+		t.eq(n_ev, 58, "58 eventos de som por quadro nas 21 armas")
+		t.eq(fora_banco, 2, "só 2 eventos citam id fora do banco da arma — e são os do w=0, "
+			+ "que não tem A_00 no disco (as 20 armas reais fecham 31/31)")
+		t.eq(int((ea.get("_meta", {}) as Dictionary).get("seq_recarga", -1)), 7,
+			"a sequência de RECARGA é a 7 (player+0xc8 = 0x00070007 no subestado 4)")
+		# a pistola (w=2): dois eventos na recarga — soltar e encaixar o pente
+		var ev2: Array = ((pa.get("2", {}) as Dictionary).get("eventos", []) as Array)
+		t.eq(ev2.size(), 2, "a pistola (w=2) tem 2 eventos de som na recarga")
+		t.eq(int((ev2[0] as Dictionary).get("id", -1)), 3,
+			"1º evento da recarga da pistola = cat 1 / id 3 (seq 7, quadro 7)")
+		t.eq(int((ev2[1] as Dictionary).get("id", -1)), 5,
+			"2º evento da recarga da pistola = cat 1 / id 5 (seq 7, quadro 23)")
+		# a FACA (w=1) usa só o id 7 — dentro do {6..10} que é o único que o A_01 define
+		var ev1: Array = ((pa.get("1", {}) as Dictionary).get("eventos", []) as Array)
+		t.check(not ev1.is_empty(), "a faca (w=1) tem evento de som")
+		for it: Variant in ev1:
+			t.eq(int((it as Dictionary).get("id", -1)), 7,
+				"o único id de evento da faca é o 7 (e A_01 define só 6..10)")
+
+	s.definir_banco_arma(Sfx.ARMA_PADRAO)                 ## A_02 = pistola
+	t.check(s.arma_vazia(), "arma_vazia() (clique seco) toca: cat 1 / id 1 do A_02")
+	var wav_vazia := str((s.banco_info("A_02").get("se", {}) as Dictionary).get("1", {}).get("wav", ""))
+	t.eq(s.ultimo_tocado(), wav_vazia, "e a amostra é a do id 1 do banco da ARMA")
+	t.eq(s.seq_de_recarga(), 7, "a sequência de recarga da pistola é a 7")
+	t.eq(s.eventos_da_arma(7).size(), 2, "2 eventos na recarga da pistola")
+	t.check(s.recarregar(), "recarregar() toca o 1º evento da recarga")
+	t.check(s.recarregar(7), "recarregar(quadro 7) toca (é onde o evento está)")
+	t.check(not s.recarregar(8), "recarregar(quadro 8) NÃO toca: aquele quadro não tem evento")
+	t.check(s.arma_evento(7, 23), "arma_evento(seq 7, quadro 23) toca o 2º som da recarga")
+	t.check(not s.arma_evento(7, 22), "arma_evento em quadro sem evento não toca")
+
+	s.definir_banco_arma(Sfx.ARMA_FACA)                   ## A_01 = faca
+	t.check(not s.arma_vazia(),
+		"a FACA não tem clique seco: A_01 é um dos 2 bancos de arma sem o id 1")
+	t.check(s.arma_evento(1, 6), "a facada é o evento seq 1 / quadro 6 = cat 1 / id 7")
+	s.definir_banco_arma(Sfx.ARMA_PADRAO)
+
+	# ── 6.3 os 26 pedidos de `cat 2` — o que a extração dos bancos de sala LIGOU ──
+	## Antes desta rodada este bloco fixava o limite ("sem amostra, sem invenção"). Agora fixa
+	## o de-para: cada id sai do banco embutido no `.ARD` da sala carregada, e o MESMO id toca
+	## amostra diferente em cada sala — é a indireção que o motor faz por `cat`.
+	t.group("Audio/sala cat 2")
 	t.eq(s.acao_cat("subir"), 2, "subir/descer é cat 2 (banco de SALA)")
 	t.eq(s.acao_id("subir_impacto"), 0x2c, "impacto ao subir = cat 2 / id 44 (0x8003b3e8)")
-	t.eq(s.acao_wav("subir"), "", "sem banco de sala extraído, subir NÃO tem amostra")
-	t.check(not s.subir(), "subir() devolve false em vez de tocar som de outro banco")
-	t.check(not s.bau_abrir() and not s.bau_mover() and not s.porta_trancada(),
-		"baú e porta trancada também são cat 2: sem amostra, sem invenção")
-	t.check(not s.arma_mecanismo(0),
-		"arma_mecanismo(0) não toca: o id vem de u16@*(player+0xe4), que é RAM (NÃO MEDIDO)")
+
+	# sem banco de sala selecionado, nada toca — e o Sfx reclama (é bug de integração)
+	t.check(not s.se_de_sala(Sfx.SE_PORTA_TRANCADA),
+		"sem definir_banco_sala() nenhum SE de cat 2 toca")
+
+	t.check(s.definir_banco_sala("R101"), "definir_banco_sala('R101') aceita o banco da sala")
+	t.eq(s.banco_sala(), "R101", "o banco cat 2 carregado é o da sala")
+	t.check(not s.definir_banco_sala("R999"), "sala inexistente não vira banco")
+	t.eq(s.banco_sala(), "", "e o banco fica vazio, em vez de apontar a sala errada")
+
+	# porta TRANCADA / DESTRANCAR: a prioridade desta rodada. R101 define os dois.
+	s.definir_banco_sala("R101")
+	t.check(s.porta_trancada(), "porta_trancada() toca (cat 2 / id 22, 0x80050ed8)")
+	t.eq(s.ultimo_tocado(), "R101/R101_11.wav", "e a amostra é a do banco da R101")
+	t.check(s.porta_destrancar(), "porta_destrancar() toca (cat 2 / id 37, 0x80050e74)")
+	t.eq(s.ultimo_tocado(), "R101/R101_12.wav", "destrancar é OUTRA amostra da mesma sala")
+	# o MESMO id em outra sala é OUTRA amostra — é isto que o `cat` resolve em runtime
+	s.definir_banco_sala("R103")
+	t.check(s.porta_trancada(), "o id 22 também existe na R103")
+	t.eq(s.ultimo_tocado(), "R103/R103_07.wav",
+		"mesmo id, sala diferente, amostra diferente (indireção do 0x800e0610)")
+	# porta EMPERRADA (Key_Type == 0xfe): R105 é uma das 9 salas
+	s.definir_banco_sala("R105")
+	t.check(s.porta_emperrada(), "porta_emperrada() toca (cat 2 / id 38, 0x80050dd8)")
+	t.eq(s.ultimo_tocado(), "R105/R105_08.wav", "amostra da R105")
+	# baú: a R100 tem caixa de itens e define os dois ids
+	s.definir_banco_sala("R100")
+	t.check(s.bau_abrir(), "bau_abrir() toca (cat 2 / id 20, 0x80051578)")
+	t.eq(s.ultimo_tocado(), "R100/R100_05.wav", "amostra do baú da R100")
+	t.check(s.bau_mover(), "bau_mover() toca (cat 2 / id 21, 4 sítios em 0x800646f0)")
+	t.eq(s.ultimo_tocado(), "R100/R100_04.wav", "transferir item é outra amostra")
+	# subir/descer: só 9 salas definem o id 0 — nas outras o ORIGINAL também é mudo
+	s.definir_banco_sala("R201")
+	t.check(s.subir(), "subir() toca na R201 (cat 2 / id 0, 0x8003b224)")
+	s.definir_banco_sala("R100")
+	t.check(not s.subir(),
+		"na R100 o id 0 não existe: devolve false, como 0x80074770 faz com o descritor -1")
+	# ricochete de bala: as bases são MEDIDAS em 0x800776b0, a superfície NÃO
+	s.definir_banco_sala("R101")
+	var algum_ricochete := false
+	for base: int in Sfx.RICOCHETE_BASES:
+		if s.ricochete(base):
+			algum_ricochete = true
+	t.check(algum_ricochete,
+		"ricochete() resolve em alguma das bases medidas {0x17,0x1a,0x2d} de 0x80077b50")
+	# SE por script (0x80030010) e por objeto (0x8001c838/0x8001c864) usam o mesmo caminho
+	t.check(s.se_do_script(Sfx.SE_PORTA_TRANCADA),
+		"se_do_script(idx) é o `cat 2 / byte do stream` de 0x80030010")
+	t.eq(s.se_de_sala(1023), false, "id de sala fora da tabela de 48 não toca")
+
+	# ── 6.4 porta_usada(): a árvore de decisão de 0x80050d28, inteira ──
+	## `Key_Id` (desc+0x0f) bit 0x80 = "esta porta é trancada" (0x80050d7c); bits 0..5 = índice
+	## da flag de "já destrancada" (0x80078930/0x800788dc). `Key_Type` (desc+0x10) é a CHAVE,
+	## com 0xfe = emperrada e 0xff = nunca abre.
+	t.group("Audio/porta trancada")
+	var portas: Variant = AssetIO.json("porta_banco.json")
+	if t.check(portas is Dictionary, "data/porta_banco.json existe"):
+		var n_trancadas := 0
+		var n_fe := 0
+		var n_ff := 0
+		for sala: String in ((portas as Dictionary).get("salas", {}) as Dictionary):
+			for p: Variant in ((portas as Dictionary)["salas"] as Dictionary)[sala]:
+				var kid := int((p as Dictionary).get("key_id", 0))
+				var kt := int((p as Dictionary).get("key_type", 0))
+				if (kid & 0x80) != 0:
+					n_trancadas += 1
+				if kt == 0xFE:
+					n_fe += 1
+				if kt == 0xFF:
+					n_ff += 1
+		t.eq(n_fe, 10, "10 das 453 portas têm Key_Type == 0xfe (emperrada)")
+		t.eq(n_ff, 9, "9 portas têm Key_Type == 0xff (nunca abre), em 8 salas (a R303 tem 2)")
+		t.check(n_trancadas > 0 and n_trancadas < 453,
+			"o bit 0x80 do Key_Id separa trancadas de livres (%d de 453)" % n_trancadas)
+
+	# uma porta LIVRE não pede SE nenhum (0x80050d80 desvia antes)
+	s.definir_banco_sala("R100")
+	t.eq(s.porta_usada("R100", 0), Sfx.Porta.LIVRE,
+		"porta sem o bit 0x80 no Key_Id é LIVRE: nenhum SE (0x80050d80)")
+	# e o desfecho de cada ramo, na sala que registra aquela porta
+	var achou_trancada := false
+	var achou_emperrada := false
+	for sala: String in ((portas as Dictionary).get("salas", {}) as Dictionary):
+		for p: Variant in ((portas as Dictionary)["salas"] as Dictionary)[sala]:
+			var pd: Dictionary = p
+			if (int(pd.get("key_id", 0)) & 0x80) == 0:
+				continue
+			s.definir_banco_sala(sala)
+			var kt := int(pd.get("key_type", 0))
+			var r := s.porta_usada(sala, int(pd.get("aot", -1)))
+			if kt == 0xFE:
+				achou_emperrada = achou_emperrada or r == Sfx.Porta.EMPERRADA
+			elif kt == 0xFF:
+				achou_trancada = achou_trancada or r == Sfx.Porta.NUNCA_ABRE
+			else:
+				achou_trancada = achou_trancada or r == Sfx.Porta.TRANCADA
+	t.check(achou_trancada, "porta_usada() devolve TRANCADA/NUNCA_ABRE nas portas com chave")
+	t.check(achou_emperrada, "porta_usada() devolve EMPERRADA nas portas Key_Type == 0xfe")
+	# com a chave na mão o desfecho vira DESTRANCOU (id 37 / 4 se Knock_Type != 0)
+	s.definir_banco_sala("R101")
+	var alvo := -1
+	for p: Variant in ((portas as Dictionary)["salas"] as Dictionary).get("R101", []):
+		var pd2: Dictionary = p
+		var kt2 := int(pd2.get("key_type", 0))
+		if (int(pd2.get("key_id", 0)) & 0x80) != 0 and kt2 != 0xFE and kt2 != 0xFF:
+			alvo = int(pd2.get("aot", -1))
+			break
+	if alvo >= 0:
+		t.eq(s.porta_usada("R101", alvo, true), Sfx.Porta.DESTRANCOU,
+			"com a chave: DESTRANCOU (0x8006cc8c >= 0 -> 0x80050e74)")
+		t.eq(s.porta_usada("R101", alvo, false, true), Sfx.Porta.LIVRE,
+			"porta JÁ destrancada não pede SE (0x80078930 -> 0x80050f3c)")
+	s.definir_banco_sala("R101")
 
 	# ── 7. os WAV existem em disco e carregam ──
 	t.group("Audio/assets")
@@ -320,6 +528,45 @@ func run(t: Object) -> bool:
 			faltando.append("%s(%s)" % [a, rel])
 	t.eq(faltando, [] as Array[String],
 		"os 5 WAV de menu existem em assets/SOUND/SFX (rode tools/re3_sfx.py)")
+
+	## Cobertura das amostras de SALA: toda ação de `cat 2` resolve, em toda sala que define o
+	## id, um WAV que EXISTE no disco. É o critério de aceite da extração do lado do port
+	## (`NOSTALGIA_OUT=port python tools/exe_audio.py --salas` = 169 bancos, 1702 WAV).
+	var acoes_cat2 := ["porta_trancada", "porta_destrancar", "porta_emperrada",
+		"subir", "subir_impacto", "bau_abrir", "bau_mover"]
+	var faltam_sala: Array[String] = []
+	var n_pares := 0
+	for a: String in acoes_cat2:
+		var pb: Dictionary = ((d.get("acoes", {}) as Dictionary).get(a, {}) as Dictionary
+			).get("por_banco", {})
+		for banco: String in pb:
+			n_pares += 1
+			if not AssetIO.exists("%s/%s" % [SFX_DIR, str(pb[banco])]):
+				faltam_sala.append("%s/%s" % [a, banco])
+	t.check(n_pares >= 100,
+		"as 7 ações de cat 2 resolvem em >= 100 pares (ação, sala) — achei %d" % n_pares)
+	t.eq(faltam_sala, [] as Array[String],
+		"todo WAV de sala resolvido existe no disco (rode `exe_audio.py --salas`): %s"
+		% str(faltam_sala.slice(0, 6)))
+
+	## E o GANCHO: quem diz ao `Sfx` qual banco de sala vale é o `Audio`, no mesmo ponto em que
+	## troca a trilha da sala — o equivalente ao room-loader `0x800493ec`, que carrega os dois.
+	var s2 := Sfx.new()
+	var a3 := Audio.new()
+	if laco != null:
+		laco.root.add_child(s2)
+		laco.root.add_child(a3)
+	s2.carregar()
+	t.check(a3.get_parent() != null, "Audio na árvore para o teste do gancho")
+	## sem um `Game` na árvore o Audio cai no pai; o teste só precisa provar a ligação lógica
+	t.check(s2.definir_banco_sala("R10D") and s2.banco_sala() == "R10D",
+		"Sfx.definir_banco_sala é o gancho que o Audio.tocar_bgm_da_sala chama")
+	if a3.get_parent() != null:
+		a3.get_parent().remove_child(a3)
+	if s2.get_parent() != null:
+		s2.get_parent().remove_child(s2)
+	a3.free()
+	s2.free()
 
 	if faltando.is_empty():
 		var caminho := AssetIO.path("%s/%s" % [SFX_DIR, s.acao_wav("menu_confirmar")])

@@ -217,14 +217,17 @@ STAGES = [
     dict(id="bgm", titulo="Trilha: SoundFont do VAB real (re3.sf2)", src="iso", deps=[],
          cmds=[["re3_sound.py", "build"]], out=["assets/SOUND/BGM/re3.sf2"],
          doc="docs/formatos/audio_video.md"),
-    dict(id="se_depara", titulo="De-para id de SE -> amostra (111 bancos) + SFX de porta",
+    dict(id="se_depara", titulo="De-para id de SE -> amostra (280 bancos) + SFX de porta e de SALA",
          src="iso", deps=["sfx"],
-         cmds=[["exe_audio.py", "--portas"], ["exe_audio.py"]],
-         out=["data/re3_se.json", "data/sfx_map.json", "assets/SOUND/SFX/S*_DOOR*/*.wav"],
+         cmds=[["exe_audio.py", "--portas"], ["exe_audio.py", "--salas"], ["exe_audio.py"]],
+         out=["data/re3_se.json", "data/sfx_map.json", "assets/SOUND/SFX/S*_DOOR*/*.wav",
+              "assets/SOUND/SFX/R???/*.wav"],
          doc="docs/decomp/notes/exe_audio.md",
-         nota="A tabela id->descritor mora no INÍCIO de cada .VH/.SND; `--portas` extrai os "
-              "147 WAV dos 76 bancos VAB embutidos nos STAGE*/DOOR??.DO1 (cat 4). "
-              "`--verificar` roda as 1345 asserções que sustentam o de-para."),
+         nota="A tabela id->descritor fica em `hdr - N*4`, com N = *(0x800a0fe4 + cat) = "
+              "{16,32,48,32,4}. Além dos 35 bancos soltos do disco, `--portas` extrai os 147 "
+              "WAV dos 76 bancos embutidos nos STAGE*/DOOR??.DO1 (cat 4) e `--salas` os 1702 "
+              "WAV dos 169 bancos embutidos nos STAGE*/R???.ARD (cat 2 — o corpo PS-ADPCM é o "
+              "sub-bloco 9 do contêiner). `--verificar` roda as 7756 asserções do de-para."),
 
     # ---------- etapas que exigem ferramenta externa / decisão humana ----------
     dict(id="bgm_gog", titulo="Trilha do PC -> Ogg (125 faixas)", src="ptbr", deps=[],

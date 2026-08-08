@@ -409,6 +409,21 @@ amostras individuais direto do `.VB`:
 >    o mesmo "núcleo global" que o `sfx_map.json` já tinha achado por hash de PCM.
 >    Gerar: `NOSTALGIA_OUT=port python tools/exe_audio.py`.
 >    As ações de **jogo** (porta/passo/item/recarga) seguem **sem nome provado**.
+> 3. **Os bancos EMBUTIDOS** (`exe_audio.md` §4.4 e §13). O disco tem 35 bancos soltos, mas o
+>    jogo usa **280**: cada `STAGE*/DOORxx.DOn` embute o banco de PORTA (`cat 4`, 4 ids, 76
+>    bancos / 147 amostras) e cada `STAGE*/R???.ARD` embute o banco da SALA (`cat 2`, 48 ids,
+>    169 bancos / **1702 amostras**). Nos dois casos a tabela de SE fica **`hdr − N*4`**, com
+>    `N = *(0x800a0fe4 + cat)` = `{16, 32, 48, 32, 4}`, e o header pode ser **versão 2**
+>    (`0x0002eeee`), que empurra os tons de `hdr+0x30` para `hdr+0x40` — a conta do motor é
+>    `tons = hdr + 0x20 + versao*0x10` (`0x800783a4`).
+>    Extrair: `NOSTALGIA_OUT=port python tools/exe_audio.py --portas` e `--salas`.
+>
+> **CORREÇÃO em [`ARD.md §2`](ARD.md):** o **sub-bloco 9** do `.ARD` (tipo `0x02`, variante
+> `0x02`), rotulado ali como `mask_extra` / "payload extra de máscara", é **o corpo PS-ADPCM
+> (`.VB`) do banco de som da sala**. Medido em 169/169: `len(bloco 9)` é exatamente o
+> `u32@hdr+0x00` (tamanho do `.VB`) declarado no header VAB embutido no RDT, e com essa base
+> **todos os 1871 VAG** das 169 salas terminam num bloco com flag de fim. Ou seja o `.ARD`
+> carrega, além do RDT e dos 8 blocos de BGM (§7.3), o banco de SFX da sala.
 
 ### 9.3 Formato tocável confirmado no Godot
 

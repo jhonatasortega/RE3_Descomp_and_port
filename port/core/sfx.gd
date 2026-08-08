@@ -17,9 +17,22 @@ extends Node
 ##
 ## `cat` **é o id do banco VAB** (a mesma função `0x800750e4` busca `cat` e o banco do
 ## descritor na tabela de 8 slots `0x800e0664`): **0 = `C_xx`** (jogador/UI/global),
-## **1 = `A_xx`**, **2 = `R###.SND`** (sala), **4 = porta** (banco embutido em cada
+## **1 = `A_xx`**, **2 = banco da SALA**, **4 = porta** (banco embutido em cada
 ## `STAGE*/DOORxx.DOn` — é o recurso que o loader `0x80012818` puxa com a string de
 ## depuração `"DOOR SOUND"` de `0x800103ac`).
+##
+## Quantos ids cada `cat` tem é a tabela `0x800a0fe4` = `{16, 32, 48, 32, 4}`, lida em
+## `0x80078390`: **`cat 2` tem 48 ids**.
+##
+## ── O banco de SALA (`cat 2`) — extraído nesta rodada ──
+## Era o buraco que deixava 26 dos 155 pedidos de SE mudos. O único banco de sala no disco é
+## `R000.SND` (tabela toda `0xffffffff`); os outros **169 estão EMBUTIDOS nos `R???.ARD`**:
+## tabela de 48 ids + header VAB no RDT, e o **corpo PS-ADPCM é o sub-bloco 9 do contêiner**
+## (`len(bloco 9) == u32@hdr+0x00` em 169/169, e com essa base os 1871 VAG terminam todos em
+## flag de fim). `tools/exe_audio.py --salas` extrai **1702 amostras**.
+## Quem diz ao `Sfx` qual sala está carregada é `definir_banco_sala()` — o `Audio` chama isso
+## no mesmo lugar em que troca a BGM da sala, que é o equivalente do room-loader
+## `0x800493ec` do original.
 ##
 ## Quem carrega cada banco (medido nesta rodada — o carregador é `0x8007809c`, com
 ## `fileid = *(0x800110b0 + cat*4) + banco*2`):
@@ -58,10 +71,44 @@ const ARMA_FACA := 1
 ## `w` de partida do port enquanto o de-para **item -> `w`** não for medido (ver
 ## `tools/exe_aim_shoot.py`). `A_02` é o primeiro banco de arma de fogo. **DECLARADO**.
 const ARMA_PADRAO := 2
+## `cat 1 / id 1` = CLIQUE SECO (pediu recarga sem bala) — ver `arma_vazia()`.
+const SE_ARMA_VAZIA := 1
+## Sequência da animação de RECARGA no banco 2 do `.PLW` — ver `seq_de_recarga()`.
+const SEQ_RECARGA_PADRAO := 7
 
 ## Ações nomeadas com confiança ALTA — o que a UI pode usar sem ressalva.
 const ACOES_MENU := ["menu_mover", "menu_cancelar", "menu_confirmar",
 	"menu_invalido", "menu_abrir"]
+
+## ── ids de `cat 2` (banco de SALA) que o EXE pede, por call site ──
+## Os 26 `jal 0x800746c0` de `cat 2` estão em `data/se_callsites.json`. Os que têm id
+## constante ficam aqui, para nenhum número ser digitado duas vezes.
+const SE_SUBIR := 0                 ## 0x8003b224 — início do subir/descer (macro-ação 9)
+const SE_BAU_ABRIR := 20            ## 0x80051578 — abrir a caixa de itens
+const SE_BAU_MOVER := 21            ## 4 sítios em 0x800646f0 — transferir item
+const SE_PORTA_TRANCADA := 22       ## 0x80050e10 / 0x80050ed8 / 0x80050f14
+const SE_PORTA_DESTRANCAR := 37     ## 0x80050e74 (Knock_Type == 0)
+const SE_PORTA_EMPERRADA := 38      ## 0x80050dd8 (Key_Type == 0xfe)
+const SE_PORTA_DESTRANCAR_KNOCK := 4    ## 0x80050e74 com Knock_Type != 0 (4 das 453 portas)
+const SE_PORTA_TRANCADA_KNOCK := 5      ## 0x80050ed8 / 0x80050f14 com Knock_Type != 0
+const SE_SUBIR_IMPACTO := 44        ## 0x8003b3e8 — impacto ao terminar de subir
+const SE_MAPA_NAVEGAR := 43         ## 0x8006f790 — navegação da tela de MAPA
+const SE_INIMIGO_T21 := 42          ## 0x8001db0c — IA do inimigo tipo 21
+const SE_ZUMBI := 14                ## 0x8001edb8 — `14 ou 30` pelo estado do zumbi
+const SE_ZUMBI_ALT := 30
+const SE_ATOR_19 := 19              ## 0x80021cdc e 0x80036934 — NÃO IDENTIFICADO
+const SE_ATOR_2 := 2                ## 0x80036b8c — NÃO IDENTIFICADO
+const SE_SCE11_40 := 40             ## 0x800517d0 — NÃO IDENTIFICADO
+const SE_DRAW_46 := 46              ## 0x80024f04 / 0x80025038 / 0x800250f0 — NÃO IDENTIFICADO
+
+## Resultado de `porta_usada()` — reproduz os 4 desfechos de `0x80050d28`.
+enum Porta {
+	LIVRE,          ## a porta não é trancada (bit 0x80 de Key_Id apagado) — sem SE aqui
+	DESTRANCOU,     ## tinha a chave: id 37 (ou 4 se Knock_Type != 0) + mensagem 5
+	TRANCADA,       ## não tem a chave: id 22 (ou 5) + mensagem
+	EMPERRADA,      ## Key_Type == 0xfe: id 38 + mensagem 0x11
+	NUNCA_ABRE,     ## Key_Type == 0xff: id 22 + mensagem 0x12
+}
 
 var _dados: Dictionary = {}
 var _acoes: Dictionary = {}
@@ -72,6 +119,7 @@ var _cache: Dictionary = {}                     ## rel -> AudioStreamWAV
 var _banco_area := ""                           ## banco C_ da área atual (ver definir_banco_area)
 var _banco_porta := ""                          ## banco da porta em uso (ver definir_banco_porta)
 var _banco_arma := ""                           ## banco A_ da arma equipada (ver definir_banco_arma)
+var _banco_sala := ""                           ## banco cat 2 da sala atual (ver definir_banco_sala)
 var _portas: Dictionary = {}                    ## sala -> [{aot, dtex, ...}] (porta_banco.json)
 var _volume_db := 0.0
 var _ultimo := ""                               ## último rel tocado (harness/teste)
@@ -349,29 +397,117 @@ func mensagem_fecha() -> bool:
 
 func subir() -> bool:
 	## SUBIR/DESCER (a macro-ação 9, que `port/script_vm/subir.gd` reimplementa): `cat 2 / id 0`
-	## em `0x8003b224`. **Banco de SALA** — e o port ainda não tem essas amostras (só existe
-	## `R000.SND` no disco e a tabela de SE dele é toda `0xffffffff`; os outros 168 bancos estão
-	## EMBUTIDOS nos `R###.ARD`, ver `exe_audio.md §11.4`). Devolve false e reclama uma vez,
-	## em vez de tocar som de outro banco.
-	return tocar_acao("subir")
+	## em `0x8003b224`. **Banco de SALA** — desde a extração dos 169 bancos embutidos nos
+	## `R???.ARD` isto TOCA, desde que `definir_banco_sala()` tenha sido chamado.
+	## Só **9 salas** definem o id 0; nas outras o motor original também fica em silêncio
+	## (o descritor é `0xffffffff` e `0x80074770` descarta).
+	return se_de_sala(SE_SUBIR)
 
 
 func subir_impacto() -> bool:
 	## Impacto ao terminar de subir/descer: `cat 2 / id 44` em `0x8003b3e8` (sub 5 com
-	## `+0xc9 == 1`) — é o `SFX_IMPACTO` que `subir.gd` já sinaliza. Banco de SALA: sem amostra.
-	return tocar_acao("subir_impacto")
+	## `+0xc9 == 1`) — é o `SFX_IMPACTO` que `subir.gd` já sinaliza. 5 salas definem o id.
+	return se_de_sala(SE_SUBIR_IMPACTO)
 
 
 func bau_abrir() -> bool:
 	## Abrir a CAIXA DE ITENS: `cat 2 / id 20` em `0x80051578`, dentro do driver de tela
-	## `0x800514f0` que o `sce 9` instala em `gs+0x75e0`. Banco de SALA: sem amostra.
-	return tocar_acao("bau_abrir")
+	## `0x800514f0` que o `sce 9` instala em `gs+0x75e0`. **20 salas** definem o id — e são
+	## justamente as que têm baú (a `R100` é uma delas), o que é sanidade a favor da base da
+	## tabela de SE usada na extração.
+	return se_de_sala(SE_BAU_ABRIR)
 
 
 func bau_mover() -> bool:
 	## Transferir item no baú: `cat 2 / id 0x15`, 4 sítios em `0x800646f0` (`0x80064b2c`,
-	## `0x80064bc8`, `0x80064d1c`, `0x80064d90`). Banco de SALA: sem amostra.
-	return tocar_acao("bau_mover")
+	## `0x80064bc8`, `0x80064d1c`, `0x80064d90`). 19 salas definem o id.
+	return se_de_sala(SE_BAU_MOVER)
+
+
+func mapa_navegar() -> bool:
+	## Único SE de `cat 2` da tela de MAPA: `id 43` em `0x8006f790` (`0x8006f708`). Os outros
+	## 7 sítios daquela função são `cat 0`. 2 salas definem o id — o resto fica mudo, como no
+	## original. Nome DECLARADO.
+	return se_de_sala(SE_MAPA_NAVEGAR)
+
+
+func ricochete(base: int, variante := 0) -> bool:
+	## IMPACTO/RICOCHETE de bala na sala: `cat 2 / idx = base + a0`, em `0x80077b50` (a única
+	## chamada de `0x800776b0`). MEDIDO: a `base` sai de `{0x17, 0x1a, retorno&0x7f}` ou `0x2d`
+	## e o `a0` é 0 ou 1 — ver a CORREÇÃO de `exe_combat.md` no `_meta` do `re3_se.json`
+	## (o doc antigo dizia que `0x800776b0` escolhia seco/tiro/vazio pelos bits `0x200/0x400`
+	## de `player+0xe4`; não existe esse teste na função).
+	##
+	## Qual base vale em qual superfície **NÃO FOI MEDIDO** — por isso quem chama passa a base,
+	## em vez de o `Sfx` adivinhar. As bases medidas estão em `RICOCHETE_BASES`.
+	return se_de_sala(base + (1 if variante != 0 else 0))
+
+
+## As bases de `idx` que `0x800776b0` usa para o SE de impacto na sala (MEDIDAS na função;
+## qual corresponde a qual superfície não foi medido).
+const RICOCHETE_BASES := [0x17, 0x1A, 0x2D]
+
+
+func se_do_script(idx: int) -> bool:
+	## SE pedido pelo BYTECODE: `cat 2`, `idx = próximo byte do stream`. MEDIDO em `0x80030010`
+	## (dentro do interpretador de mensagem/cena `0x8002fee8`, cujos opcodes `0xEA..0xFE` —
+	## jump-table `0x80010508`, 21 entradas — leem um byte e o transformam neste pedido).
+	## É o caminho por onde o script toca som de ambiente da sala.
+	return se_de_sala(idx)
+
+
+func se_de_objeto(idx: int, alterna := false) -> bool:
+	## SE de OBJETO do cenário (tipo 5/6): `cat 2`, `idx = u16 @ obj+0x22`. Dois sítios em
+	## `0x8001c5bc`: `0x8001c864` pede o idx cru e `0x8001c838` pede `idx + (rand & 1)` — as
+	## duas variantes de um mesmo par de amostras. `alterna` reproduz o segundo.
+	return se_de_sala(idx + (1 if alterna else 0))
+
+
+func se_de_inimigo_na_sala(idx: int) -> bool:
+	## Sons de inimigo que saem do banco da SALA (não do `cat 3`): `id 42` da IA do tipo 21
+	## (`0x8001db0c`, em `0x8001d7d0`) e `id 14`/`30` do ZUMBI (`0x8001edb8`, em `0x8001e444`).
+	## Nomes DECLARADOS. Use `SE_INIMIGO_T21`, `SE_ZUMBI`, `SE_ZUMBI_ALT`.
+	return se_de_sala(idx)
+
+
+func se_de_sala(id_se: int) -> bool:
+	## O pedido cru `cat 2 / id_se` no banco da SALA carregada. É por aqui que passam TODOS os
+	## 26 pedidos de `cat 2` do EXE — inclusive os que seguem `NÃO IDENTIFICADOS`
+	## (`SE_ATOR_19`, `SE_ATOR_2`, `SE_SCE11_40`, `SE_DRAW_46`), que ficam expostos com esse
+	## nome exatamente para não fingir que sabemos o evento.
+	##
+	## Devolve false, sem reclamar, quando o banco da sala não define o id: é o que
+	## `0x80074770` faz com o descritor `0xffffffff`. Reclama só quando NENHUM banco de sala
+	## está selecionado — aí é bug de integração, não silêncio do dado.
+	if _banco_sala == "":
+		_reclamar("sem_banco_sala",
+			"nenhum banco de SALA (cat 2) selecionado — chame Sfx.definir_banco_sala(<sala>) "
+			+ "ao carregar a sala (o Audio já faz isso em tocar_bgm_da_sala)")
+		return false
+	return tocar_id(2, id_se, _banco_sala)
+
+
+func definir_banco_sala(sala_id: String) -> bool:
+	## Diz qual banco `cat 2` está carregado. O banco de sala tem o **nome da sala**
+	## (`R100`, `R10D`, ...) porque é o próprio `R???.ARD` que o embute.
+	##
+	## No original quem faz isso é o room-loader `0x800493ec` (o mesmo que carrega o `C_02` de
+	## `cat 0` em `0x800495d0`); o registro é `0x8007836c(a0 = 2, a1 = base da tabela de SE)`,
+	## que grava `*(0x800e0610 + 2*4)` e deriva o header VAB como `a1 + 48*4`.
+	## No port o gancho equivalente é `Audio.tocar_bgm_da_sala()`, chamado na troca de sala.
+	if _bancos.has(sala_id):
+		_banco_sala = sala_id
+		return true
+	_banco_sala = ""
+	if sala_id != "":
+		_reclamar("banco_sala:%s" % sala_id,
+			"banco de sala '%s' não existe no data/%s — rode " % [sala_id, DADOS]
+			+ "`NOSTALGIA_OUT=port python tools/exe_audio.py` e `... --salas`")
+	return false
+
+
+func banco_sala() -> String:
+	return _banco_sala
 
 
 func impacto_projetil() -> bool:
@@ -387,27 +523,114 @@ func sala_entrada() -> bool:
 
 
 func arma_mecanismo(idx: int) -> bool:
-	## Som de MECANISMO da arma (ferrolho/recarga): `cat 1 / idx`, do banco `A_{w}`.
-	##
-	## O idioma é o mesmo em 11 dos 155 sítios (`0x8003f5e8` = **RECARGA**, subestado 4 do
-	## handler de arma; `0x8004082c`; `0x80040f78` = handler da FACA; e 7 dentro dos handlers
-	## por arma, ex. `0x800414e0`):
-	## ```
-	## v0 = u16 @ *(player+0xe4)     ; props da ARMA (RAM)
-	## if ((v0 & 0xf000) == 0) pula
-	## a0 = 0x10100 | ((v0 >> 12) - 1)
-	## ```
-	## Ou seja **o id vem do nibble alto do primeiro u16 dos props da arma**, e esses props
-	## vivem em RAM (`player+0xe4` = `0x800ccca8`, BSS) — não há `sw` para `+0xe4` em todo o
-	## `.text`, então o de-para arma → nibble **NÃO FOI MEDIDO**. Por isso o port exige o `idx`
-	## de quem chama, em vez de adivinhar: nada de tocar o id errado.
-	## Sanidade: `A_01` (faca) define só 6..10 e `A_02`/`A_03` definem 0..5.
-	if idx <= 0:
-		_reclamar("arma_mecanismo",
-			"id do mecanismo da arma NÃO MEDIDO (vem de u16@*(player+0xe4), que é RAM) — "
-			+ "nenhum som pedido, de propósito")
+	## Som de MECANISMO da arma: `cat 1 / idx`, do banco `A_{w}`. Use `arma_evento()` quando o
+	## que você tem é (sequência, quadro) — é assim que o motor decide o `idx` (ver abaixo).
+	if idx < 0:
 		return false
 	return tocar_id(1, idx, _banco_arma)
+
+
+func arma_vazia() -> bool:
+	## **CLIQUE SECO — pediu recarga e não tem bala.** `cat 1 / id 1`, do banco da arma.
+	##
+	## MEDIDO: os 4 sítios de `cat 1 / id 1` do EXE são o MESMO idioma, em 4 subestados de arma
+	## (`0x8003f190` no sub 1 = mira/hold · `0x8003fd90` no sub 8 = mira de corpo inteiro ·
+	## `0x8004029c` · `0x8004070c`):
+	## ```
+	## if (*(gs+0x2108) & 0x40) {                     ; pedido de RECARREGAR
+	##     if (0x8006cf0c(0) == -1)  SE cat 1 / id 1  ; a munição NÃO está no inventário
+	##     else                      player+6 = 4    ; TEM -> vai para o subestado de RECARGA
+	## }
+	## ```
+	## `0x8006cf0c(a0 = 0)` é a CONSULTA de munição (`exe_items.md §144`): com `a0 = 0` ela não
+	## consolida nada e sai por `0x8006cf84` com `v0 = 0` quando `0x8006cc8c` **acha** o item de
+	## munição, ou com `v0 = -1` quando **não acha**. Logo o SE só sai no ramo "sem bala".
+	##
+	## Sanidade: `A_01` (a FACA) é um dos dois únicos bancos de arma que **não** definem o id 1
+	## — e faca não recarrega. O NOME "clique seco" é DECLARADO; o ramo é medido.
+	return tocar_id(1, SE_ARMA_VAZIA, _banco_arma)
+
+
+func recarregar(quadro := -1) -> bool:
+	## **RECARGA.** O som dela **não tem id fixo** — são EVENTOS POR QUADRO da animação de
+	## recarga. `quadro < 0` toca o PRIMEIRO evento da sequência de recarga (útil para quem
+	## ainda não anima quadro a quadro); com `quadro >= 0` toca só se aquele quadro exato tem
+	## evento, que é o comportamento do motor.
+	##
+	## MEDIDO em `0x8003f5b0..0x8003f5e8` (subestado 4, `0x8003f520`, que grava
+	## `player+0xc8 = 0x00070007` = sequência 7 do banco 2 do `.PLW`):
+	## ```
+	## v0 = u16 @ *(player+0xe4)      ; o QUADRO corrente da frame-list do EDD
+	## if ((v0 & 0xf000) == 0) pula   ; nibble 0 = quadro sem som
+	## a0 = 0x10100 | ((v0 >> 12) - 1)
+	## ```
+	## E `player+0xe4` é o **cursor da frame-list**, escrito pelo avançador de animação
+	## (`0x8001ae04`/`0x8001ae20`, que caminha pelo bit `0x100` de cada u16, e
+	## `0x80026ca8`/`0x80026cc0` dentro de `0x80026be8` — chamado pelos subestados com
+	## `gs+0x2614`/`gs+0x2618` = o banco 2 do `.PLW`). Ou seja o id **é dado do disco**, e
+	## `tools/exe_audio.py --armas` o extrai: 58 eventos nas 21 armas.
+	##
+	## Exemplo (pistola, `w = 2`): `seq 7 quadro 7 -> id 3` e `quadro 23 -> id 5` — os dois
+	## tempos da recarga (soltar e encaixar o pente).
+	var evs := eventos_da_arma(seq_de_recarga())
+	if evs.is_empty():
+		return false
+	if quadro < 0:
+		return arma_mecanismo(int((evs[0] as Dictionary).get("id", -1)))
+	for e: Variant in evs:
+		if int((e as Dictionary).get("quadro", -1)) == quadro:
+			return arma_mecanismo(int((e as Dictionary).get("id", -1)))
+	return false
+
+
+func arma_evento(seq: int, quadro: int) -> bool:
+	## O SE de mecanismo daquele (sequência, quadro) da arma equipada, se houver. É o pedido
+	## exato do motor: um evento por quadro de animação (ver `recarregar()`).
+	## Sequências medidas: **7 = recarga**, **1/3/5 = as três variantes de FOGO**
+	## (`recuo_tiro.md`); o resto do banco 2 não tem rótulo medido.
+	for e: Variant in eventos_da_arma(seq):
+		if int((e as Dictionary).get("quadro", -1)) == quadro:
+			return arma_mecanismo(int((e as Dictionary).get("id", -1)))
+	return false
+
+
+func eventos_da_arma(seq := -1) -> Array:
+	## Os eventos de som por quadro da arma equipada: `[{seq, quadro, id, wav}]`.
+	## `seq < 0` devolve todos. Vem de `re3_se.json.eventos_arma`, extraído do `.PLW`.
+	var ea: Variant = _dados.get("eventos_arma")
+	if not (ea is Dictionary):
+		return []
+	var pa: Variant = (ea as Dictionary).get("por_arma")
+	if not (pa is Dictionary):
+		return []
+	var out: Array = []
+	for w: String in pa as Dictionary:
+		var e: Dictionary = (pa as Dictionary)[w]
+		if str(e.get("banco", "")) != _banco_arma:
+			continue
+		for it: Variant in (e.get("eventos", []) as Array):
+			if seq < 0 or int((it as Dictionary).get("seq", -1)) == seq:
+				out.append(it)
+	return out
+
+
+func seq_de_recarga() -> int:
+	## Índice da sequência de RECARGA no banco 2 do `.PLW`. **7** em 20 das 21 armas
+	## (`player+0xc8 = 0x00070007` no subestado 4, `0x8003f554`); a `w = 15` é a exceção
+	## medida — o banco 2 dela tem 11 sequências e os eventos de recarga estão na **10**.
+	var ea: Variant = _dados.get("eventos_arma")
+	if ea is Dictionary:
+		var m: Variant = (ea as Dictionary).get("_meta")
+		if m is Dictionary and (m as Dictionary).has("seq_recarga"):
+			var padrao := int((m as Dictionary)["seq_recarga"])
+			## se a arma equipada não tem evento na seq padrão, usa a maior seq com evento
+			var maior := -1
+			for e: Variant in eventos_da_arma():
+				maior = maxi(maior, int((e as Dictionary).get("seq", -1)))
+				if int((e as Dictionary).get("seq", -1)) == padrao:
+					return padrao
+			return maior
+	return SEQ_RECARGA_PADRAO
 
 
 func porta_abrir() -> bool:
@@ -431,26 +654,101 @@ func porta_fechar() -> bool:
 	return porta_abrir()
 
 
-func porta_trancada() -> bool:
+func porta_trancada(knock := 0) -> bool:
 	## Porta trancada. É **cat 2 (banco de SALA)**, não o banco da porta: o produtor de porta
 	## `0x80050d28` (jump-table de SCE `0x8009e0bc[1]`) pede `a0 = 0x216` em `0x80050ed8` /
 	## `0x80050f14` no caminho "não tem a chave" e em `0x80050e10` quando `Key_Type == 0xff`.
+	## Com `Knock_Type != 0` (4 das 453 portas) o id é **5** em vez de 22 (`0x80050ec8`).
 	##
-	## O port **não tem a amostra**: o único banco de sala no disco é `R000.SND` e a tabela de
-	## SE dele é toda `0xffffffff`. Devolve false — sem inventar som de outro banco.
-	return tocar_acao("porta_trancada")
+	## Agora TOCA: 33 salas definem o id 22 no banco embutido no `.ARD`.
+	return se_de_sala(SE_PORTA_TRANCADA_KNOCK if knock != 0 else SE_PORTA_TRANCADA)
 
 
 func porta_emperrada() -> bool:
-	## Porta BLOQUEADA (`Key_Type == 0xfe`, 10 das 453 portas): `cat 2 / id 38` em
-	## `0x80050dd8`, junto da mensagem `0x11`. Mesma ressalva de amostra que `porta_trancada`.
-	return tocar_acao("porta_emperrada")
+	## Porta BLOQUEADA (`Key_Type == 0xfe`, 10 das 453 portas em 9 salas): `cat 2 / id 38` em
+	## `0x80050dd8`, junto da mensagem `0x11`.
+	##
+	## **As 9 salas que registram uma porta `Key_Type == 0xfe` definem TODAS o id 38** — e é
+	## essa correlação, entre dois dados independentes (o SCD e a tabela de SE do banco), que
+	## provou onde a tabela de SE da sala começa. Ver `exe_audio.md §13`.
+	return se_de_sala(SE_PORTA_EMPERRADA)
 
 
-func porta_destrancar() -> bool:
-	## Destrancou com a chave: `cat 2 / id 0x25` (`0x80050e74`, caminho "tem a chave";
-	## `Knock_Type != 0` usa o id 4). Mesma ressalva de amostra que `porta_trancada`.
-	return tocar_acao("porta_destrancar")
+func porta_destrancar(knock := 0) -> bool:
+	## Destrancou com a chave: `cat 2 / id 0x25` (`0x80050e74`, caminho "tem a chave"), ou
+	## **id 4** quando `Knock_Type != 0` (`0x80050e64`). 24 salas definem o id 37.
+	return se_de_sala(SE_PORTA_DESTRANCAR_KNOCK if knock != 0 else SE_PORTA_DESTRANCAR)
+
+
+func porta_trancamento(sala: String, aot: int) -> Dictionary:
+	## Os campos de trancamento daquela porta, lidos do `data/porta_banco.json` (extraído do
+	## SCD por `tools/exe_audio.py --portas-salas`):
+	## `{trancada, flag, key_type, key_id, knock}` — ou `{}` se a porta não estiver no mapa.
+	##
+	## **`Key_Id` (descriptor+0x0f) não é só o id da chave**: MEDIDO em `0x80050d74`..`0x80050d80`,
+	## o **bit 0x80 é o "esta porta é trancada"** (sem ele `0x80050d28` desvia direto para
+	## `0x80050f3c` e a porta abre, sem SE nenhum) e os **bits 0..5 são o índice da flag** de
+	## "já destrancada", usada em `0x80078930(gs+0x7994, key_id & 0x3f)` para testar e em
+	## `0x800788dc(...)` para marcar depois de usar a chave. Quem é a CHAVE é o `Key_Type`
+	## (`+0x10`), que `0x8006cc8c` procura no inventário.
+	## Duas salas registram DUAS portas no mesmo índice de AOT com trancamento diferente
+	## (`R203` aot 0: `key_id` 128 e 0 · `R508` aot 2: 0 e 139). Como o `SCE_DOOR_AOT_SET`
+	## escreve no SLOT do AOT, o registro MAIS RECENTE vence — então aqui vale o ÚLTIMO do
+	## SCD. Qual dos dois o script realmente instala depende do fluxo em runtime, logo isto é
+	## **DECLARADO**, não medido.
+	var v: Variant = _portas.get(sala)
+	if not (v is Array):
+		return {}
+	var achado: Dictionary = {}
+	for e: Variant in v as Array:
+		if e is Dictionary and int((e as Dictionary).get("aot", -1)) == aot:
+			var d := e as Dictionary
+			var kid := int(d.get("key_id", 0))
+			achado = {
+				"trancada": (kid & 0x80) != 0,
+				"flag": kid & 0x3F,
+				"key_type": int(d.get("key_type", 0)),
+				"key_id": kid,
+				"knock": int(d.get("knock", 0)),
+			}
+	return achado
+
+
+func porta_usada(sala: String, aot: int, tem_chave := false, ja_destrancada := false) -> Porta:
+	## Reproduz o produtor de porta **`0x80050d28`** (o SCE 1 da jump-table `0x8009e0bc`), que é
+	## o que roda quando o personagem USA uma porta. Toca o SE certo e devolve o desfecho, para
+	## quem chama decidir se atravessa e qual mensagem mostrar. A ordem é a do binário:
+	##
+	## ```
+	## if (u8@desc+0x0f & 0x80) == 0        -> 0x80050f3c : porta LIVRE, nenhum SE
+	## if 0x80078930(gs+0x7994, kid & 0x3f) -> 0x80050f3c : já destrancada, nenhum SE
+	## Key_Type == 0xfe                     -> SE 38 (0x80050dd8) + mensagem 0x11
+	## Key_Type == 0xff                     -> SE 22 (0x80050e10) + mensagem 0x12
+	## 0x8006cc8c(Key_Type) >= 0 (TEM)      -> mensagem 5, SE Knock ? 4 : 37 (0x80050e74),
+	##                                        instala 0x80050fe0 e MARCA a flag (0x800788dc)
+	## senão                                -> SE Knock ? 5 : 22 (0x80050ed8 / 0x80050f14)
+	## ```
+	##
+	## O `Sfx` não guarda o estado das portas (`gs+0x7994` é do jogo): quem chama passa
+	## `ja_destrancada` e `tem_chave`. Um só `if` no `World.atravessar` liga tudo isto.
+	var t := porta_trancamento(sala, aot)
+	if t.is_empty() or not bool(t.get("trancada", false)):
+		return Porta.LIVRE
+	if ja_destrancada:
+		return Porta.LIVRE
+	var kt := int(t.get("key_type", 0))
+	var knock := int(t.get("knock", 0))
+	if kt == 0xFE:
+		porta_emperrada()
+		return Porta.EMPERRADA
+	if kt == 0xFF:
+		se_de_sala(SE_PORTA_TRANCADA)
+		return Porta.NUNCA_ABRE
+	if tem_chave:
+		porta_destrancar(knock)
+		return Porta.DESTRANCOU
+	porta_trancada(knock)
+	return Porta.TRANCADA
 
 
 func definir_banco_porta(porta: Variant) -> void:
@@ -504,12 +802,15 @@ func tocar_acao(acao: String) -> bool:
 			% [acao, acao_cat(acao), acao_id(acao)]
 			+ "banco não está no disco extraído")
 		return false
-	# Se a área definiu um banco `C_` e a ação é de cat 0, prefere o som daquela área —
-	# é o que o original faz (o mesmo id toca amostra diferente por banco carregado).
-	if _banco_area != "" and int((a as Dictionary).get("cat", -1)) == 0:
+	# Se o banco daquele `cat` está carregado, prefere o som DELE — é o que o original faz (o
+	# mesmo id toca amostra diferente por banco). Vale para o `C_` da área (cat 0), o `A_` da
+	# arma (cat 1) e agora o banco da SALA (cat 2), que é o caso em que o id é o MESMO e a
+	# amostra muda de sala para sala.
+	var carregado := _banco_de(int((a as Dictionary).get("cat", -1)))
+	if carregado != "":
 		var pb: Variant = (a as Dictionary).get("por_banco")
-		if pb is Dictionary and (pb as Dictionary).has(_banco_area):
-			rel = (pb as Dictionary)[_banco_area]
+		if pb is Dictionary and (pb as Dictionary).has(carregado):
+			rel = (pb as Dictionary)[carregado]
 	return tocar_arquivo(rel as String)
 
 
@@ -621,8 +922,16 @@ func ultimo_tocado() -> String:
 
 # ───────────────────────────── interno ─────────────────────────────
 func _banco_de(cat: int) -> String:
+	## Qual banco está CARREGADO em cada `cat`, na mesma divisão do motor
+	## (`0x800e0664`, 8 slots): 0 = personagem/área, 1 = arma, 2 = SALA, 4 = porta.
 	if cat == 0 and _banco_area != "":
 		return _banco_area
+	if cat == 1 and _banco_arma != "":
+		return _banco_arma
+	if cat == 2 and _banco_sala != "":
+		return _banco_sala
+	if cat == 4 and _banco_porta != "":
+		return _banco_porta
 	var bp: Variant = _dados.get("banco_padrao")
 	if bp is Dictionary and (bp as Dictionary).has(str(cat)):
 		return str((bp as Dictionary)[str(cat)])

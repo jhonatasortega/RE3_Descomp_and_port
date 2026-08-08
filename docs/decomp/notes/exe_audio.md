@@ -5,7 +5,8 @@
 > amostra tocada.
 >
 > Ferramenta: [`tools/exe_audio.py`](../../../tools/exe_audio.py) (`--verificar` roda as
-> asserções; `--tabela <banco>` imprime uma tabela).
+> 7756 asserções; `--tabela <banco>` imprime uma tabela; `--portas`/`--salas` extraem os
+> bancos embutidos).
 > Saída: `<out>/data/re3_se.json` + `<out>/data/sfx_map.json`.
 > Consumo no port: [`port/core/sfx.gd`](../../../port/core/sfx.gd).
 > Formato do banco VAB (corte/pitch/ADSR): [`sfx.md`](sfx.md).
@@ -34,7 +35,28 @@ que `sfx.md §8` documentava como filas de som, são **vibração do controle**.
 | Som de PASSO | "não identificado" | **NÃO PROVADO**, com o achado negativo medido (§11.2) |
 | BGM sala → faixa | "NÃO MEDIDO" | **PROVADO byte-exato** nas 169 salas (§7) — a §7 antiga estava errada |
 | **id 9 = "abrir menu"** | rótulo desta nota | **ERRADO**: 9 = entrar no MAPA/ARQUIVO; abrir o inventário é **6** e fechar é **5** (§5.4) |
-| Banco de sala (`cat 2`) | só `R000.SND` | os outros **168 estão embutidos nos `R###.ARD`** (§11.4) |
+| Banco de sala (`cat 2`) | só `R000.SND` | os outros **169 estão embutidos nos `R###.ARD`** e foram **EXTRAÍDOS** (§13): 1702 amostras |
+
+**Rodada de 2026-08-08 (3ª) — §13: os 169 bancos de SALA extraídos.** Fecha os 26 pedidos de
+`cat 2` que estavam mudos (porta trancada/destrancar/emperrada, baú, subir, ricochete, SE por
+script). O que mudou de rótulo:
+
+| Assunto | Antes | Agora |
+|---|---|---|
+| tabela de SE da sala | `offset_table[0]` do RDT (§11.4) | **`hdr − 48*4`** — provado por `0x80078384` e pela validação cruzada com o `Key_Type` do SCD (§13.2) |
+| header VAB nas salas | achado em 168/169 (`R11B` falha) | **169/169**; a `R11B` só quebra a regra do `n_tons` (§13.3) |
+| corpo PS-ADPCM da sala | não localizado | **o sub-bloco 9 do `.ARD`** (que `ARD.md` chama de `mask_extra`) — 169/169 + 1871/1871 VAG com flag de fim (§13.1) |
+| `N` de ids de SE por `cat` | inferido do `hdr/4` | **tabela `0x800a0fe4` = `{16,32,48,32,4}`** (§13.1) |
+| tamanho do header por versão | regularidade em 168/168 | **instrução**: `tons = hdr + 0x20 + versao*0x10` (`0x800783a4`) |
+| `Key_Id` (`desc+0x0f`) | "id da chave" | **bit 7 = trancada · bits 0..5 = índice da flag de já-destrancada** (§13.6) |
+
+**Rodada de 2026-08-08 (4ª) — §14: clique seco e recarga.**
+
+| Assunto | Antes | Agora |
+|---|---|---|
+| id do mecanismo/recarga da arma | "vem de RAM, **não extraível** do estático" (§12.1) | **evento de som POR QUADRO** da frame-list do EDD do banco 2 do `.PLW` — extraído: 58 eventos, 31/31 conferindo com o `A_{w}.VH` (§14.2) |
+| `player+0xe4` | "ponteiro para os props da arma" | **cursor da frame-list da animação** (`0x8001ae04`, `0x80026ca8`) |
+| `cat 1 / id 1` | "arma: mecanismo do sub 1", DECLARADO | **CLIQUE SECO** — os 4 sítios são o ramo "a munição não está no inventário" (§14.4) |
 
 **Rodada de 2026-08-08 (2ª) — §12: os 155 call sites varridos de uma vez.** Em vez de perseguir
 som item a item, a lista inteira está fechada em `data/se_callsites.json` (155 linhas com função,
@@ -635,7 +657,7 @@ blocos `<Text>`, 13 `{clear}` + 4 `{timed}`. `epilogue.xml`: 1 bloco, 13 `{clear
 python tools/exe_audio.py --tabela C_00
 python tools/exe_audio.py --tabela A_02      # banco de ARMA: o id 0 é o estouro (§11.1)
 
-# 1898 asserções que sustentam o de-para
+# 7756 asserções que sustentam o de-para
 python tools/exe_audio.py --verificar
 
 # os 155 `jal 0x800746c0`: tabela completa (função, cat/idx, a1, evento, confiança) — §12
@@ -645,13 +667,20 @@ NOSTALGIA_OUT=port python tools/exe_audio.py --callsites --json   # + data/se_ca
 # extrai os WAV dos 76 bancos de porta (147 amostras)
 NOSTALGIA_OUT=port python tools/exe_audio.py --portas
 
-# gera data/re3_se.json (111 bancos) + data/sfx_map.json no destino do port
+# extrai os WAV dos 169 bancos de SALA (1702 amostras) — §13
+NOSTALGIA_OUT=port python tools/exe_audio.py --salas
+python tools/exe_audio.py --tabela R101         # a tabela de 48 ids de uma sala
+
+# SE de mecanismo/recarga da arma: os eventos por QUADRO do .PLW (58 nas 21 armas) — §14
+python tools/exe_audio.py --armas
+
+# gera data/re3_se.json (280 bancos) + data/sfx_map.json no destino do port
 NOSTALGIA_OUT=port python tools/exe_audio.py
 
 # mapa sala -> faixa de BGM (169 salas, prova por sha1 dos blocos do ARD) — §7
 python tools/audio_gog.py --mapa
 
-# teste do port (97 asserções) — SEMPRE com filtro, a suíte inteira leva ~7 min
+# teste do port (190 asserções) — SEMPRE com filtro, a suíte inteira leva ~7 min
 GODOT="C:/Program Files (x86)/Steam/steamapps/common/Godot Engine/godot.windows.opt.tools.64.exe"
 "$GODOT" --path port --headless --audio-driver Dummy --script res://dev/run_tests.gd -- audio
 
@@ -780,21 +809,24 @@ Explica por que só existe `R000.SND` no disco: os outros 168 bancos de sala mor
 do arquivo da sala**. Medido nos 169 `.ARD` (mesmo método da §4.4, offsets do RDT da
 [`ARD.md §3.2`](../../formatos/ARD.md), onde `off[0..2]` já estavam rotulados "áudio VAB"):
 
-- **`off[0]` = tabela de SE de 48 ids** (`u32`, `0xffffffff` = vazio) — o mesmo `N = 48` do
-  `R000.SND`. Confirmado por `off[1] − off[0] == 0xC0` em **169/169**.
-- **`off[1]` = fim da tabela**; o header VAB vem logo depois, com 8 a 28 bytes de
-  alinhamento. Achado pelo magic `0xeeee` em `hdr+0x10`, com `hdr+0x18 = 0x7f` (volume) e
-  `hdr+0x19 = 0x40` (pan): **168/169** (só `R11B` falha — é uma das 4 salas `SEM_MAIN`).
+> ⚠ **Três afirmações desta seção estavam ERRADAS e foram corrigidas na §13** (a rodada que
+> extraiu os bancos). Ficam aqui riscadas porque o erro é instrutivo:
+> 1. a tabela de SE **não** começa em `off[0]` — começa em `hdr − 48*4`, e o header fica
+>    `pad` bytes (8..28) depois de `off[1]`, então as duas janelas de `0xC0` são diferentes;
+> 2. o header VAB é achado em **169/169**, não 168/169 — a `R11B` tem header, versão 2;
+> 3. "os descritores citam mais de um banco" era consequência do erro (1): com a base certa,
+>    **2184 dos 2209** descritores citam o banco 2, e os 25 restantes vêm de 3 salas só.
+
+- `off[1] − off[0] == 0xC0` em **169/169** — o que é verdade, e foi justamente o que fez a
+  base errada parecer certa.
+- O header VAB é achado pelo magic `0xeeee` em `hdr+0x10`, com `hdr+0x18 = 0x7f` (volume) e
+  `hdr+0x19 = 0x40` (pan): **169/169**.
 - **O `u16` alto do magic é a VERSÃO do VAB**, e ela muda o tamanho do header:
   `0x0001eeee` → header **0x30** (94 salas, e os 35 bancos do disco) · `0x0002eeee` →
-  header **0x40** (74 salas). Prova: `u32@hdr+0x08 == tam_header + 32*n_tons` em 168/168
-  com essa regra (com 0x30 fixo, as 74 falhavam por exatamente 0x10).
-- Os descritores dessas tabelas citam **mais de um banco** (`606` de banco 2, mas também
-  0, 1, 3, 4, 5, 6, 7) — diferente dos bancos do disco, onde cada arquivo cita um só (§4.3).
+  header **0x40** (75 salas). Isso deixou de ser estatística: `0x800783a4..0x800783b0`
+  calcula literalmente `tons = hdr + 0x20 + versao*0x10` (§13.1).
 
-Consequência prática: **extrair os 168 bancos de sala é possível** e é o caminho natural
-para fechar `porta_trancada`/`porta_destrancar`/`porta_emperrada` (§5, hoje sem amostra) e
-para procurar o passo no dado em vez de no código. **Não foi extraído nesta rodada.**
+Consequência prática: **extrair os 169 bancos de sala é possível** — e foi feito na §13.
 
 ---
 
@@ -836,9 +868,12 @@ if ((v0 & 0xf000) == 0) pula
 a0 = 0x10100 | ((v0 >> 12) - 1)  ; cat 1, id = nibble alto - 1
 ```
 
-Não existe **nenhum** `sw` para `+0xe4` no `.text`, logo o de-para arma → nibble **não é
-extraível do estático**. Um dos 11 é `0x8003f5e8`, dentro do subestado **4 = RECARGA**
-(`recuo_tiro.md` §linha 50) — ou seja *a recarga está localizada, o id dela não*.
+Não existe **nenhum** `sw` para `+0xe4` no `.text`. A conclusão que estava aqui — *"o de-para
+arma → nibble não é extraível do estático"* — está **ERRADA e foi corrigida na §14**:
+`player+0xe4` não guarda props, é o **cursor da frame-list do EDD do banco 2 do `.PLW`**
+(escrito por `0x8001ae04`/`0x8001ae20` e `0x80026ca8`/`0x80026cc0`), e o nibble é um **evento de
+som por quadro de animação** — dado do disco. Um dos 11 é `0x8003f5e8`, dentro do subestado
+**4 = RECARGA** (`recuo_tiro.md` §linha 50), e agora *o id dela também está medido*.
 
 ### 12.2 A tabela (agrupada por evento; as 155 linhas estão no JSON)
 
@@ -958,11 +993,9 @@ em sala (`0x800495d0`). O `re3_se.json` resolve isso pelo `banco_declarado` (cai
 
 Duas categorias diferentes, e vale não confundir.
 
-**(a) Falta a AMOSTRA (`cat 2` = banco de SALA).** O único banco de sala no disco é
-`R000.SND`, cuja tabela de SE é toda `0xffffffff`; os outros **168 estão embutidos nos
-`R###.ARD`** (§11.4, layout validado em 168/169 e **não extraído**). Enquanto isso não for
-extraído, estes 26 pedidos de `cat 2` **não podem soar**, e o `Sfx` devolve `false` e reclama
-uma vez em vez de tocar som de outro banco:
+**(a) Falta a AMOSTRA (`cat 2` = banco de SALA).** ✅ **RESOLVIDO na §13** — os 169 bancos
+foram extraídos (1702 amostras) e os 26 pedidos abaixo passaram a soar. A lista fica como
+índice do que foi ligado; a coluna "quantas salas definem o id" está na §13.4.
 
 | evento | `cat`/`id` | call site |
 |---|---|---|
@@ -982,8 +1015,9 @@ implementar, e cada linha já vem com o id certo:
 | evento que falta no port | `cat`/`id` | call site |
 |---|---|---|
 | **porta trancada / destrancar** — o port não tem lógica de `Key_Type`/chave em `atravessar` | 2/22 · 2/37 | `0x80050ed8` · `0x80050e74` |
-| **recarga da arma** | 1/`nibble` | `0x8003f5e8` (subestado 4) |
-| mecanismo da arma (ferrolho, engate, faca) | 1/1, 1/6, 1/8, 1/9, 1/18, 1/19, `nibble` | `0x8003e750` `0x8003e82c` `0x8003e8f0` `0x8003e934` `0x8003f190` `0x8003fd90` `0x8004029c` `0x8004070c` `0x8004097c` `0x80040bc0` `0x80040c5c` + 11 dinâmicos |
+| **recarga da arma** — ✅ id RESOLVIDO na §14 (evento de quadro do `.PLW`); falta o gatilho | 1/`nibble` | `0x8003f5e8` (subestado 4) |
+| **clique seco (sem bala)** — ✅ id RESOLVIDO na §14 (`cat 1 / id 1`); falta o gatilho | 1/1 | `0x8003f190` `0x8003fd90` `0x8004029c` `0x8004070c` |
+| mecanismo da arma (ferrolho, engate, faca) — ids `nibble` resolvidos na §14; os 18/19 seguem NÃO IDENTIFICADOS | 1/6, 1/8, 1/9, 1/18, 1/19, `nibble` | `0x8003e750` `0x8003e82c` `0x8003e8f0` `0x8003e934` `0x8004097c` `0x80040bc0` `0x80040c5c` + 11 dinâmicos |
 | **vozes/ações de inimigo** (`cat 3`, banco **não localizado**) | 3/3, 3/8, 3/19, 3/20, 3/24, 3/`arg` | `0x8001d464` `0x8001ec4c` `0x8003d114` `0x80077600` `0x80077698` |
 | **dano ao player** (a API existe, o gatilho não) | 0/0..3 | `0x8003d208` `0x8003d354` `0x8003d560` `0x8003d82c` `0x8003dac8` |
 | agarrado pelo inimigo | 0/11 | `0x8003cf10` |
@@ -1049,3 +1083,353 @@ do `C_02`.
 * **Extrair os 168 bancos de sala dos `R###.ARD`** segue sendo o passo que desbloqueia mais som
   de uma vez (26 pedidos de `cat 2`): porta trancada, baú, subir, ricochete e o SE por script.
   O layout está validado (§11.4); a extração **não foi feita**.
+
+---
+
+## 13. Rodada de 2026-08-08 (3ª) — **os 169 bancos de SALA (`cat 2`) extraídos**
+
+> Era o item de maior retorno em aberto: **26 dos 155** pedidos de SE são de `cat 2` (banco da
+> sala) e nenhum podia soar, porque o único banco de sala no disco é o `R000.SND` — cuja tabela
+> é toda `0xffffffff`. Os outros **169** moram dentro dos `R???.ARD`.
+>
+> Ferramentas: `python tools/exe_audio.py --salas` (extrai) · `--tabela R101` (inspeciona) ·
+> `--verificar` (**7756 asserções, 0 falhas** — eram 1937).
+
+### 13.0 Placar
+
+| | n |
+|---|---:|
+| bancos de sala extraídos | **169/169** (não 168 — ver §13.3) |
+| amostras (WAV) | **1702** |
+| descritores de SE usados | **2209** |
+| … citando o banco 2 (o próprio) | 2184 |
+| … citando OUTRO banco (não resolvem para amostra desta sala) | 25 (3 salas) |
+| … com tom fora da faixa | 1 (`R708` id 24) |
+| … apontando o VAG mudo do SPU (placeholder silencioso) | 56 |
+| VAGs cujo último bloco tem flag de fim | **1871/1871** |
+| pedidos de `cat 2` que passaram a soar | **26/26** (ver §13.5) |
+
+### 13.1 Onde mora cada peça — e as duas provas que vêm do EXE, não de estatística
+
+**A tabela `0x800a0fe4` = `{16, 32, 48, 32, 4, 0, 0, 0}` diz quantos ids de SE cada `cat` tem.**
+É lida dentro de `0x8007836c(a0 = cat, a1 = base do banco)`, o registrador de banco VAB:
+
+```
+0x80078380  sw   $a1, ($v0)              ; *(0x800e0610 + cat*4) = a1  -> a TABELA DE SE
+0x80078384  lui  $v0, 0x800a
+0x80078388  addiu $v0, $v0, 0xfe4        ; 0x800a0fe4
+0x8007838c  addu $a0, $a0, $v0
+0x80078390  lbu  $v0, ($a0)              ; N = *(0x800a0fe4 + cat)
+0x80078398  sll  $v0, $v0, 2
+0x8007839c  addu $a1, $a1, $v0           ; hdr = a1 + N*4
+0x800783a0  sw   $a1, 0x14($a2)          ; SND_CTX + cat*8 + 0x14 = header VAB
+0x800783a4  lhu  $v0, 0x12($a1)          ; hdr+0x12 = u16 ALTO do magic = a VERSAO
+0x800783a8  addiu $a1, $a1, 0x20
+0x800783ac  sll  $v0, $v0, 4             ; versao * 16
+0x800783b0  addu $a1, $a1, $v0           ; tons = hdr + 0x20 + versao*0x10
+0x800783b8  sw   $a1, 0x18($a2)
+```
+
+Duas consequências que valem para **todos** os bancos (disco, porta e sala):
+
+1. **`tabela_de_SE = hdr − N*4`.** Nos arquivos do disco a tabela começa no offset 0, e por
+   isso `hdr == N*4` (`C_` = `0x40`, `A_` = `0x80`, `R000` = `0xC0`, `DOORxx` = `0x10`) — o
+   `hdr/4` que a §4 usava é caso particular, não a regra.
+2. **O tamanho do header é `0x20 + versao*0x10`.** A §11.4 tinha isso como regularidade
+   observada em 168/168; `0x800783a4..0x800783b0` é a conta literal do motor.
+
+Com isso, o banco da sala fica assim:
+
+```
+RDT:   ... [pad 8..28 B] [tabela de SE: 48 x u32]  [header VAB]  [tons]  [tabela VAG] ...
+                          ^ hdr - 0xC0             ^ hdr
+            ^ offset_table[0]     ^ offset_table[1] = hdr - pad
+
+.ARD:  sub-bloco 9 (tipo 0x02) = o corpo PS-ADPCM (.VB) do banco
+```
+
+**O corpo é o sub-bloco 9 do contêiner** — o que [`ARD.md §2`](../../formatos/ARD.md) rotula
+`mask_extra` / "payload extra de máscara". Duas medidas, as duas em 169/169:
+
+* `len(sub-bloco 9) == u32@hdr+0x00` (o tamanho do `.VB` declarado no header VAB);
+* com essa base, **todo** VAG da tabela termina num bloco cujo byte de flag tem o bit 0 (fim):
+  **1871/1871**. E o VAG#1 mede 48 B (3 blocos) nas 169 — o mesmo bloco mudo padrão do SPU
+  dos bancos do disco.
+
+### 13.2 A base da tabela de SE: o erro da §11.4 e como o SCD o desmentiu
+
+A §11.4 dizia "`off[0]` = tabela de SE de 48 ids", porque `off[1] − off[0] == 0xC0` em 169/169.
+Mas o header não fica em `off[1]`: fica em `off[1] + pad`, com `pad` de **8, 12, 16, 20, 24 ou
+28** bytes (medido nas 169). Ou seja existem **duas** janelas de `0xC0` deslocadas entre si, e a
+aritmética do motor (§13.1) escolhe a que **termina em `hdr`**.
+
+A prova independente veio do **SCD**, cruzando dois dados que nunca se falaram:
+`0x80050dd8` pede `cat 2 / id 38` exatamente quando a porta tem `Key_Type == 0xfe`. Então, se a
+base estiver certa, toda sala que registra uma porta dessas tem de definir o id 38 no seu banco:
+
+| base da tabela | salas com porta `0xfe` **sem** o id 38 | salas com o id 38 **sem** porta `0xfe` |
+|---|---:|---:|
+| `off[0]` (§11.4) | **9 de 9** | 27 |
+| **`hdr − 0xC0`** (correta) | **0 de 9** | 2 |
+
+Idem para o id 22 (`Key_Type == 0xff` / sem a chave): com a base certa, **7 das 8** salas com
+porta `0xff` definem o id 22 — a exceção é a `R20B`, cuja porta "nunca abre" simplesmente não
+tem SE no original. As duas asserções estão no `--verificar`, junto com a contra-prova (o
+`9 de 9` da base errada), para o erro não voltar.
+
+Sanidade de bônus, do mesmo tipo: os ids **20/21** (abrir e mexer na CAIXA DE ITENS) aparecem em
+**20** e **19** salas — e a `R100`, que é sala de baú, é uma delas.
+
+### 13.3 A `R11B` não é exceção de header (e o que ela realmente tem)
+
+A §11.4 dizia "header VAB achado em 168/169 (só `R11B` falha)". **Achado em 169/169.** A `R11B`
+tem header **versão 2**; o que ela quebra é só a regra `u32@hdr+0x08 == tam_header + 32*n_tons`
+(vale **960**, esperado **928** = `0x40 + 27*32`) — é um slot de tom sobrando. Como a tabela VAG
+é lida pelo **offset** `hdr + u32@hdr+0x08`, isso não afeta nada. Dois resíduos ficam
+registrados nela: é a única sala com essa folga e o único descritor do jogo com `vag == 0`
+(id 5, tom 13).
+
+Contagem por versão de header: **94** salas na versão 1 (`0x0001eeee`) e **75** na versão 2
+(`0x0002eeee`) — 169. A §11.4 dizia 94 + 74 = 168 por conta da `R11B`.
+
+### 13.4 Os 25 descritores que citam OUTRO banco
+
+Nos 35 bancos do disco cada arquivo cita **um** banco só (§4.3). Nas salas, **3** fogem:
+
+| sala | ids | banco citado | leitura |
+|---|---|---:|---|
+| `R30C` | 1..12 | **6** | 12 entradas com índice de tom sequencial → é um banco de **ambiente** carregado em `cat 6` |
+| `R50D` | 4, 5, 14..17, 32..35, 38, 39 | **5** | idem, em `cat 5` |
+| `R509` | 13 | **3** | banco de INIMIGO |
+
+Isso corrobora, pelo dado, os `cat 5/6/7` que o §12.2 só tinha pelo código (`0x80078004`/
+`0x80078048`/`0x8007807c`, e o opcode `0x78` em `0x800553d0` com `cat = arg + 5`). A ferramenta
+marca `banco_externo` e **não** publica WAV para eles: o índice de tom vale no array de tons do
+**outro** banco, que não é este arquivo — inventar amostra aqui seria tocar som errado.
+
+### 13.5 Quantas salas definem cada id que o port usa
+
+O silêncio agora é o silêncio do original: quando o descritor é `0xffffffff`, `0x80074770`
+descarta, e `Sfx.se_de_sala()` devolve `false` sem reclamar.
+
+| ação do `Sfx` | `cat`/`id` | call site | salas que definem | com amostra real |
+|---|---|---|---:|---:|
+| `porta_trancada()` | 2/22 | `0x80050e10` `0x80050ed8` `0x80050f14` | 34 | **33** |
+| `porta_destrancar()` | 2/37 | `0x80050e74` | 25 | **24** |
+| `porta_emperrada()` | 2/38 | `0x80050dd8` | 10 | **9** |
+| `porta_trancada(knock)` / `porta_destrancar(knock)` | 2/5 · 2/4 | `0x80050ec8` · `0x80050e64` | — | — |
+| `bau_abrir()` | 2/20 | `0x80051578` | 20 | **20** |
+| `bau_mover()` | 2/21 | 4 sítios em `0x800646f0` | 19 | **19** |
+| `subir()` | 2/0 | `0x8003b224` | 21 | **9** |
+| `subir_impacto()` | 2/44 | `0x8003b3e8` | 5 | **5** |
+| `mapa_navegar()` | 2/43 | `0x8006f790` | 2 | 2 |
+| `se_de_inimigo_na_sala(42)` | 2/42 | `0x8001db0c` | 14 | 14 |
+| `se_de_inimigo_na_sala(14/30)` | 2/14 · 2/30 | `0x8001edb8` | 10 · 167 | 10 · 167 |
+| `se_de_sala(19)` / `(2)` / `(40)` / `(46)` — **NÃO IDENTIFICADOS** | 2/19 · 2/2 · 2/40 · 2/46 | `0x80021cdc` `0x80036934` · `0x80036b8c` · `0x800517d0` · `0x80024f04` `0x80025038` `0x800250f0` | 36 · 75 · 9 · 13 | idem |
+| `ricochete(base, v)` | 2/`base+a0` | `0x80077b50` | bases `{0x17, 0x1a, 0x2d}` | — |
+| `se_do_script(idx)` | 2/`byte do stream` | `0x80030010` | qualquer id | — |
+| `se_de_objeto(idx, alt)` | 2/`u16@obj+0x22` | `0x8001c838` `0x8001c864` | qualquer id | — |
+
+A diferença entre as duas últimas colunas são os **56 descritores que apontam o VAG mudo** —
+placeholders silenciosos do dado original (o motor toca, o waveform é silêncio). O `subir` é o
+caso extremo: 21 salas definem o id 0 e 12 delas apontam o mudo.
+
+### 13.6 `Key_Id` não é só o id da chave — o bit 0x80 é o "trancada"
+
+Achado ao reproduzir o produtor de porta `0x80050d28` (o SCE 1 da jump-table `0x8009e0bc`), que
+é quem roda quando o personagem USA uma porta:
+
+```
+0x80050d74  lbu  $a1, 0xf($s1)          ; Key_Id  (SCE_DOOR_AOT_SET, descriptor+0x0f)
+0x80050d7c  andi $v0, $a1, 0x80
+0x80050d80  beqz $v0, 0x80050f3c        ; bit 0x80 APAGADO -> porta LIVRE, nenhum SE
+0x80050dac  jal  0x80078930($a0 = gs+0x7994, $a1 = Key_Id & 0x3f)
+0x80050db4  bnez $v0, 0x80050f3c        ; flag ja marcada -> ja destrancada, nenhum SE
+0x80050dbc  lbu  $s0, 0x10($s1)         ; Key_Type
+            == 0xfe -> SE 2/38 (0x80050dd8) + mensagem 0x11
+            == 0xff -> SE 2/22 (0x80050e10) + mensagem 0x12
+0x80050e28  jal  0x8006cc8c($a0 = Key_Type)   ; procura a CHAVE no inventario; < 0 = nao tem
+   TEM:    mensagem 5; $a0 = (u8@desc+0x0e ? 0x204 : 0x225)  -> SE (0x80050e74)
+           instala 0x80050fe0 em gs+0x75dc e MARCA a flag (0x800788dc)
+   NAO:    $a0 = (u8@desc+0x0e ? 0x205 : 0x216)              -> SE (0x80050ed8 / 0x80050f14)
+```
+
+Logo, em `descriptor+0x0f`: **bit 7 = "esta porta é trancada"** e **bits 0..5 = índice da flag**
+de "já destrancada" (o mesmo par `0x80078930` testa / `0x800788dc` marca, sobre `gs+0x7994`).
+Quem é a chave é o `Key_Type` (`+0x10`). E o `Knock_Type` (`+0x0e`, ≠ 0 em 4 das 453 portas)
+troca o par de ids: **4/5** em vez de **37/22**.
+
+O port reproduz a árvore inteira em `Sfx.porta_usada(sala, aot, tem_chave, ja_destrancada)`,
+que toca o SE e devolve `LIVRE / DESTRANCOU / TRANCADA / EMPERRADA / NUNCA_ABRE`. O `Sfx` não
+guarda estado de porta (isso é do jogo) — daí os dois booleanos.
+
+### 13.7 Quem seleciona o banco da sala no port
+
+`Sfx.definir_banco_sala("R101")`. O gancho está em **`Audio.tocar_bgm_da_sala()`**
+(`Audio.banco_de_sfx_da_sala`), que é o que a troca de sala já chama: no original o room-loader
+`0x800493ec` carrega o banco de personagem (`cat 0`, `0x800495d0`) e o da sala no mesmo caminho,
+então casar os dois no port é fiel e não exige gancho novo em `world.gd`.
+
+### 13.8 O que ainda precisa de gancho fora do território de áudio
+
+Os 26 pedidos têm de-para e API; **o gatilho de 3 deles vive em arquivo que não é do áudio**:
+
+| pedido | onde o gancho falta | chamada exata |
+|---|---|---|
+| porta trancada / destrancar / emperrada | `port/room/world.gd`, em `atravessar()` antes de `carregar(destino)` | `var r := sfx.porta_usada(de, porta.id, tem_a_chave, ja_destrancada)`; se `r != Sfx.Porta.LIVRE` e `r != Sfx.Porta.DESTRANCOU`, **não** atravessa (as mensagens são `0x11`/`0x12`) |
+| subir / impacto | `port/actors/player.gd:603` (o `pass` do `if subir.sfx_pendente != 0`) | `sfx.subir()` se `subir.sfx_pendente == SubirObjeto.SFX_INICIO`, senão `sfx.subir_impacto()` |
+| SE por script (opcodes `0xEA..0xFE`) | `port/script_vm/vm.gd` | `sfx.se_do_script(byte_do_stream)` |
+| ricochete de bala | `port/actors/player.gd` (colisão de projétil) | `sfx.ricochete(base)` — a base é do dado, não do `Sfx` |
+| baú | `port/present/menu_bau.gd` | `sfx.bau_abrir()` ao abrir a tela · `sfx.bau_mover()` na transferência |
+
+### 13.9 Resíduo honesto desta rodada
+
+* **Quem registra o banco da sala em RAM não foi localizado.** `0x8007836c` (o registrador de
+  banco) só é chamado 5 vezes, e a única com `cat 2` é `0x8007935c`, que passa o endereço FIXO
+  `0x80101000` depois de carregar os fileids `0x127`/`0x128` (= `R000.SND` / `R_000.VB`). Ou
+  seja: o **default** `R000` está localizado; **como o banco embutido no `.ARD` chega àquele
+  buffer não foi achado no estático**. Não afeta o layout (provado pela aritmética de
+  `0x8007836c` + as medidas em 169/169), mas é pergunta em aberto.
+* **Qual `base` de `0x800776b0` vale em qual superfície** (ricochete) segue NÃO MEDIDO — o port
+  exige a base de quem chama.
+* **`cat 3` (banco do INIMIGO) continua sem arquivo localizado.** O `N` dele é 32
+  (`0x800a0fe4[3]`), o que é dado novo, mas não diz de onde vem.
+* **O som de PASSO continua NÃO PROVADO** (§11.2). O que esta rodada acrescenta é que agora dá
+  para procurá-lo **no dado**: os ids 29/30/31 aparecem em 167 das 169 salas e os 26/27/28 em
+  135 — cheiro de ambiente por sala, não de passada, mas é a primeira vez que a pergunta pode
+  ser feita ao banco em vez de ao código.
+* **`ARD.md §2` segue com o rótulo errado** do sub-bloco 9 (`mask_extra`). A correção está
+  registrada aqui e no `_meta.CORRECOES` do `re3_se.json`; o arquivo não foi editado porque
+  está sendo mexido em outra frente.
+
+---
+
+## 14. Rodada de 2026-08-08 (4ª) — **clique seco e recarga**: o id do mecanismo da arma É extraível
+
+> O §12.1 registrou um achado negativo: *"o de-para arma → nibble **não é extraível do
+> estático**"*, porque o id do som de mecanismo sai de `u16 @ *(player+0xe4)` e **não existe
+> nenhum `sw` para `+0xe4`** no `.text`. A primeira metade está certa; a conclusão estava
+> **errada**.
+>
+> Ferramenta: `python tools/exe_audio.py --armas`. Dado versionado:
+> `re3_se.json.eventos_arma` (58 eventos nas 21 armas).
+
+### 14.1 `player+0xe4` não guarda "props da arma" — é o CURSOR DA ANIMAÇÃO
+
+Quem escreve `+0xe4` são **4 sítios**, todos no avançador de animação:
+
+```
+0x8001ae04 / 0x8001ae20   sw $v1, 0xe4($a0)     ; caminha a lista pelo bit 0x100 de cada u16
+0x80026ca8 / 0x80026cc0   sw $s0, 0xe4($s1)     ; dentro de 0x80026be8
+```
+
+`0x80026be8` é exatamente a rotina que **todos** os subestados da arma chamam, com
+`a1 = gs+0x2618` e `a2 = gs+0x2614` — que são o **banco 2 do `.PLW` da arma equipada**
+(`recuo_tiro.md §2`). E `0x8001adc0` mostra o formato: uma lista de `u16` em que o **bit
+`0x100`** marca continuação, isto é a **frame-list do EDD** (`pld2gltf.parse_edd`: "2 bytes por
+frame, pose no byte baixo + flags no alto").
+
+Logo o trecho que o §12.1 chamava de "props em RAM" é, na verdade, **o quadro corrente da
+animação**:
+
+```
+0x8003f5b0  lw   $v0, 0xe4($s0)      ; cursor da frame-list
+0x8003f5b8  lhu  $v0, ($v0)          ; o u16 daquele QUADRO
+0x8003f5c0  andi $v0, $v0, 0xf000    ; nibble alto = evento de som (0 = quadro mudo)
+0x8003f5d0  srl  $v0, $v0, 0xc
+0x8003f5d4  addiu $v0, $v0, -1       ; id = nibble - 1
+0x8003f5d8  or   $a0, $v0, 0x10100   ; cat 1
+0x8003f5e8  jal  0x800746c0
+```
+
+**É um evento de som por quadro de animação** — exatamente a forma que a §11.2 apontou como
+"pista mais forte" para o som de passo. E, porque a frame-list é dado do `.PLW`, **o id é
+extraível do disco**.
+
+### 14.2 Prova cruzada: 31/31
+
+`tools/exe_audio.py --armas` lê o banco 2 (o de 9 ossos, `plw.md §9.4`) de cada
+`PLD/PL00W{w:02X}.PLW`, varre a frame-list de cada sequência e emite `(seq, quadro, id)`.
+
+**Todos os 31 ids de evento das 20 armas reais estão definidos no `A_{w}.VH` daquela arma.**
+O único "furo" é `w = 0` (desarmado), que não tem `A_00` no disco. Dois casos que fecham o
+argumento:
+
+* **`w = 1` (a FACA)** usa **só o id 7** — e `A_01` é o único banco `A_` que define
+  exatamente `{6,7,8,9,10}`. É a mesma peça que provou o estouro em `cat 1 / id 0` (§11.1),
+  agora usada na direção oposta.
+* **`w = 2` (a pistola)** usa os ids **3** e **5**, e `A_02` define `{0..5}`.
+
+### 14.3 A tabela (58 eventos)
+
+| `w` | banco | sequência/quadro → `cat 1 / id` |
+|---:|---|---|
+| 0 | — | seq7 f7→3 · f23→5 *(sem `A_00` no disco)* |
+| 1 | `A_01` | seq1 f6→7 · seq3 f6→7 · seq5 f6→7 **(a facada)** |
+| 2 | `A_02` | **seq7 f7→3 · f23→5 (RECARGA da pistola)** |
+| 3 | `A_03` | seq7 f7→3 · f23→5 |
+| 4 | `A_04` | seq1 f21→4 · seq3 f22→4 · seq5 f21→4 · seq7 f28→3 |
+| 5 | `A_05` | seq7 f12→3 · f28→5 |
+| 6..9 | `A_06`..`A_09` | seq1 f14→3 f25→4 · seq3 f13→3 f26→4 · seq5 f13→3 f27→4 (**bombeamento**) |
+| 10, 11, 12, 20 | — | **nenhum** evento de quadro |
+| 13 | `A_0D` | seq7 f1→3 · f8→5 |
+| 14 | `A_0E` | seq7 f5→3 · f20→5 |
+| 15 | `A_0F` | **seq10** f5→3 · f22→5 — o banco 2 dela tem 11 seqs; a recarga **não** é a seq 7 |
+| 16 | `A_10` | seq1 f10→4 · seq3 f9→4 · seq5 f9→4 · seq7 f18→3 f28→3 |
+| 17, 18 | `A_11`, `A_12` | seq7 f7→3 · f23→5 |
+| 19 | `A_13` | seq1 f21→4 · seq3 f20→4 · seq5 f21→4 · seq7 f28→3 |
+
+Rótulos de sequência **medidos**: **7 = RECARGA** (`0x8003f554` grava
+`player+0xc8 = 0x00070007` no subestado 4, e `recuo_tiro.md §linha 110` já media 32 quadros =
+`mira07`) e **1/3/5 = as três variantes de FOGO**. O resto do banco 2 **não tem rótulo medido**.
+
+### 14.4 CLIQUE SECO = `cat 1 / id 1` (o ramo "sem bala")
+
+Os **4** sítios de `cat 1 / id 1` do EXE são o MESMO idioma, em 4 subestados de arma —
+`0x8003f190` (sub 1 = mira/hold, `0x8003ef08`), `0x8003fd90` (sub 8 = mira de corpo inteiro,
+`0x8003fb78`), `0x8004029c` (`0x8003ffd8`) e `0x8004070c` (`0x800402f4`):
+
+```
+if (*(gs+0x2108) & 0x40) {                        ; pedido de RECARREGAR
+    if (0x8006cf0c(0) == -1)  SE cat 1 / id 1     ; a munição NÃO está no inventário
+    else                      player+6 = 4 (ou 10)  ; TEM -> subestado de RECARGA
+}
+```
+
+`0x8006cf0c(a0 = 0)` é a **consulta** de munição (`exe_items.md §144` já a tinha como
+"consolidar munição"): com `a0 = 0` ela não consolida nada — devolve **`0`** quando
+`0x8006cc8c` **acha** o item de munição no inventário (sai pelo `beqz` de `0x8006cf84`) e
+**`-1`** quando não acha (`0x8006cf7c`). Logo o SE sai **só** no ramo sem bala.
+
+Sanidade: os únicos dois bancos de arma que **não** definem o id 1 são `A_01` (a FACA, que não
+recarrega) e `A_0B` (que também não tem evento de quadro nenhum).
+
+Nome `arma_vazia` / "clique seco" é **DECLARADO**; o ramo é **MEDIDO**.
+
+### 14.5 O que foi ligado no port
+
+| ação do `Sfx` | de onde sai o id | onde o gatilho precisa entrar |
+|---|---|---|
+| `arma_vazia()` | `cat 1 / id 1` fixo, do banco `A_{w}` | `player.gd`: onde o port já sabe `municao_vazia`, no momento em que o jogador pede tiro/recarga sem bala |
+| `recarregar(quadro = -1)` | evento de quadro da **seq de recarga** (7, ou 10 na `w = 15`) | `player.gd`: no subestado de recarga, a cada quadro — `sfx.recarregar(quadro_da_anim)`. Com `quadro = -1` toca o primeiro evento (aproximação para quem ainda não anima quadro a quadro) |
+| `arma_evento(seq, quadro)` | o evento exato daquele quadro | `player.gd`: uma linha no avanço de animação da arma — é o que o motor faz (`0x80026be8` → `0x8003f5e8`) |
+| `eventos_da_arma(seq)` | consulta | para o gancho saber em quais quadros há som |
+
+`arma_mecanismo(idx)` continua existindo (pedido cru por id), mas **não reclama mais** de "id
+não medido": o id agora tem fonte.
+
+### 14.6 Resíduo honesto desta rodada
+
+* **A `w = 15` tem a recarga na seq 10, não na 7** — o banco 2 dela declara 11 sequências. O
+  `Sfx.seq_de_recarga()` cai na maior sequência com evento quando a 7 não tem, o que é
+  **DECLARADO**. Qual arma é `w = 15` não está medido (o de-para **item → `w`** segue aberto,
+  `tools/exe_aim_shoot.py`).
+* **4 armas (`w` 10, 11, 12 e 20) não têm evento de som em quadro nenhum.** Elas têm banco
+  `A_` com ids (ex.: `A_0B` define `{0, 2, 18, 19}`), então o som delas vem por outro caminho —
+  provavelmente os sítios `cat 1 / ids 18/19` de `0x80040900`, que seguem **NÃO IDENTIFICADOS**
+  (§12.6).
+* **Os rótulos das outras sequências do banco 2** (0, 2, 4, 6, 8...) não foram medidos; só
+  7 = recarga e 1/3/5 = fogo.
+* **O bit `0x40` de `gs+0x2108`** é tratado como "pedido de recarregar" porque é o gatilho dos
+  4 sítios e o ramo alternativo entra no subestado de recarga. **Qual botão físico é** não foi
+  medido (`gs+0x2104` é o pad; `+0x2108` é o registrador vizinho).
