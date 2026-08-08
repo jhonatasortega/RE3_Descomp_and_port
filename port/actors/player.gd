@@ -82,16 +82,14 @@ const MIRA_ALTURA := 1600                 ## idem, altura
 const MIRA_MOUSE_GIRO := 8
 const MIRA_MOUSE_ZONA := 30
 var mira_mouse_y := 0
-## ── RAMPAS ENTRE AS POSES DE MIRA ──
-## O banco 2 do PLW tem, além dos holds de 1 quadro (`mira02` médio, `mira04` alto, `mira06`
-## baixo), TRÊS clipes de **20 quadros** (`mira01`, `mira03`, `mira05`) que são as TRANSIÇÕES.
-## Sem tocá-las a pose troca de uma vez e dá o "salto" que o usuário viu ao mirar para cima.
-## O de-para rampa → destino é **declarado** (pareamento óbvio pela ordem: a rampa vem antes do
-## hold que ela alcança); o nº de quadros é medido (20).
-const MIRA_RAMPA_QUADROS := 20
-var mira_rampa := ""                      ## clipe de rampa em curso ("" = nenhuma)
-var mira_rampa_resta := 0
-var _mira_alto_antes := 0
+## ── SÓ 3 PONTOS NO EIXO Y, E ISSO É DO JOGO ──
+## O usuário observou que a mira vertical tem apenas 3 posições. É o que o dado tem e o que o EXE
+## faz: o banco 2 do PLW traz **três** poses de hold (`mira02` médio, `mira04` alto, `mira06`
+## baixo) e o pitch do EXE é **em degraus** — `player+0x6e = (tier << 9) + 0x800` (`0x8003ac5c`),
+## ou seja passo de `0x200` ≈ 17,6°, com 4 tiers. Não existe mira livre em Y no RE3.
+## (O banco também tem `mira01`/`mira03`/`mira05`, de 20 quadros, que são as TRANSIÇÕES entre os
+## holds. Cheguei a tocá-las achando que resolvia um "salto" — o usuário esclareceu que não era
+## isso, então desfiz: a troca de pose é direta, como no original.)
 const LEVANTAR_QUADROS := 6               ## duração do sub 0 (declarado: não medi o nº de quadros)
 var mira_sub: Mira = Mira.LEVANTAR
 var mira_tier := 0                        ## 0..3 pela elevação do alvo (auto-lock)
@@ -347,8 +345,6 @@ func clipe_atual() -> String:
 			## `mira07` fica reservado para a recarga, quando ela existir.
 			if mira_sub == Mira.LEVANTAR:
 				return "mira00"
-			if mira_rampa != "":
-				return mira_rampa              ## transição de 20 quadros: sem salto de pose
 			if mira_alto > 0:
 				return "mira04"
 			if mira_alto < 0:
@@ -381,9 +377,6 @@ func _sair_da_mira() -> void:
 	tiro_pendente = -1
 	mira_alvo = -1
 	mira_mouse_y = 0
-	mira_rampa = ""
-	mira_rampa_resta = 0
-	_mira_alto_antes = 0
 	municao_vazia = false
 	_set_acao(Acao.PARADO)
 
@@ -425,15 +418,6 @@ func _tick_mira(pad: Pad) -> void:
 	mira_quadro += 1
 	if recuo > 0:
 		recuo -= 1
-	## troca de altura DISPARA a rampa (20 quadros) em vez de saltar direto para o hold
-	if mira_alto != _mira_alto_antes:
-		mira_rampa = "mira03" if mira_alto > 0 else ("mira05" if mira_alto < 0 else "mira01")
-		mira_rampa_resta = MIRA_RAMPA_QUADROS
-		_mira_alto_antes = mira_alto
-	if mira_rampa_resta > 0:
-		mira_rampa_resta -= 1
-		if mira_rampa_resta == 0:
-			mira_rampa = ""
 	match mira_sub:
 		Mira.LEVANTAR:
 			# sub 0: levanta a arma (anim 13) e passa para a interpolação do offset
