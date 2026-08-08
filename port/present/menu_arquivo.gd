@@ -105,6 +105,16 @@ func abrir() -> void:
 	queue_redraw()
 
 
+func _sfx() -> Sfx:
+	## O tocador é o `Game.sfx`; aqui só se diz QUANDO. O de-para id → amostra é o do
+	## `docs/decomp/notes/exe_audio.md` (§12: os 155 `jal 0x800746c0`).
+	var laco := Engine.get_main_loop()
+	if laco == null:
+		return null
+	var g: Node = (laco as SceneTree).root.get_node_or_null("/root/Game")
+	return g.get("sfx") as Sfx if g != null else null
+
+
 func lido(i: int) -> bool:
 	## O documento do slot `i` já foi lido? (é o que decide ícone × VAZIO e se dá para abrir)
 	if i < 0 or i >= docs.size() or _state == null:
@@ -149,10 +159,17 @@ func fechar() -> void:
 
 func mover_lista(d: int) -> void:
 	## Anda um documento na lista (usado pelos diags e pelo movimento vertical da grade).
+	## Som: `cat 0 / id 4`, o mesmo "mover cursor" de sempre — na tela de arquivo ele aparece
+	## em `0x800638f4` (estado 8) e `0x800670f4`/`0x800672b0` (sub 5, `0x80066ca0`).
 	if not aberto or lendo:
 		return
+	var antes := sel
 	sel = posmod(sel + d, maxi(1, docs.size()))
 	pagina = 0
+	if sel != antes:
+		var som := _sfx()
+		if som != null:
+			som.menu_mover()
 	queue_redraw()
 
 
@@ -187,8 +204,13 @@ func mover_grade(dx: int, dy: int) -> void:
 			col = COLUNAS_GRADE - 1
 		else:
 			return
+	var antes := sel
 	sel = clampi(pag * por_pagina + lin * COLUNAS_GRADE + col, 0, docs.size() - 1)
 	pagina = 0
+	if sel != antes:
+		var som := _sfx()
+		if som != null:
+			som.menu_mover()                  ## id 4 (`0x800638f4`, `0x800670f4`)
 	queue_redraw()
 
 
@@ -203,28 +225,60 @@ func pagina_grade() -> int:
 
 func virar_pagina(d: int) -> void:
 	## Vira a página do documento aberto. Recebe A/D **e** W/S (WSAD), como pedido.
+	##
+	## ── SOM: `cat 0 / id 8`, MEDIDO (era o buraco que o dono apontou) ──
+	## No EXE a tela de ARQUIVO é o estado 8 da task do menu (`0x80063850`), e o virar página
+	## tem **dois** call sites de `0x800746c0`, um por direção, os dois com `a0 = 8`:
+	##   • `0x80063984` — para trás: exige `ctx+0xbd != 0`, faz `ctx+0xbd -= 1`, `ctx+0xc6 = 2`;
+	##   • `0x80063a2c` — para frente: exige `ctx+0xbd < u16 *(0x8009f2ac + ctx+0xbc*2) - 1`
+	##     (a tabela de nº de páginas por documento), faz `ctx+0xbd += 1`, `ctx+0xc6 = -2`.
+	## Os dois são os ÚNICOS pedidos do id 8 no EXE inteiro. Como a checagem de borda vem
+	## ANTES do pedido, o som **só sai quando a página realmente vira** — é por isso que aqui
+	## se compara o antes/depois em vez de tocar em toda tecla.
 	if not aberto or not lendo:
 		return
 	var doc: Dictionary = docs[sel]
 	var n := int(doc.get("n_pages", 1))
+	var antes := pagina
 	pagina = clampi(pagina + d, 0, n - 1)
+	if pagina != antes:
+		var som := _sfx()
+		if som != null:
+			som.arquivo_pagina()
 	queue_redraw()
 
 
 func confirmar() -> void:
+	## Sons MEDIDOS no estado 8 / sub 5 da task do menu:
+	##   • abrir a leitura de um documento → id **6** (o "confirmar" de `0x80066f00`, no
+	##     `0x80066ca0` que é justamente o sub-estado que põe `ctx+0x10 = 7` = ARQUIVO);
+	##   • slot ainda não lido → id **7** (o "inválido" de `0x800666bc`);
+	##   • sair da leitura → id **5** (`0x80063c20`, no mesmo estado 8).
 	if not aberto:
 		return
+	var som := _sfx()
 	if lendo:
+		if som != null:
+			som.menu_cancelar()                ## id 5 (`0x80063c20`)
 		fechar()
 	elif lido(sel):
+		if som != null:
+			som.menu_confirmar()               ## id 6 (`0x80066f00`)
 		lendo = true
 		pagina = 0
 	else:
+		if som != null:
+			som.menu_invalido()                ## id 7 (`0x800666bc`)
 		ultima_acao = "slot vazio: documento ainda não foi lido"
 	queue_redraw()
 
 
 func cancelar() -> void:
+	## Voltar/fechar: id **5** nos dois casos — `0x80063c20` (sair da leitura, estado 8) e
+	## `0x80063e74` (fechar a tela, estado 9 → 13).
+	var som := _sfx()
+	if som != null:
+		som.menu_cancelar()
 	if lendo:
 		lendo = false
 		queue_redraw()

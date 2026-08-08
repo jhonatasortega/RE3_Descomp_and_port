@@ -36,6 +36,20 @@ que `sfx.md §8` documentava como filas de som, são **vibração do controle**.
 | **id 9 = "abrir menu"** | rótulo desta nota | **ERRADO**: 9 = entrar no MAPA/ARQUIVO; abrir o inventário é **6** e fechar é **5** (§5.4) |
 | Banco de sala (`cat 2`) | só `R000.SND` | os outros **168 estão embutidos nos `R###.ARD`** (§11.4) |
 
+**Rodada de 2026-08-08 (2ª) — §12: os 155 call sites varridos de uma vez.** Em vez de perseguir
+som item a item, a lista inteira está fechada em `data/se_callsites.json` (155 linhas com função,
+`cat`/`id`, `a1`, evento e confiança). O que mudou de rótulo:
+
+| Assunto | Antes | Agora |
+|---|---|---|
+| `cat 0 / id 0` | `impacto_ataque` (o ataque do player conectou) | **DANO AO PLAYER** — anim 4; os ids 0..3 são as 4 variantes (§12.5.1) |
+| `cat 0 / id 8` (`acao_8`) | "não sei" | **VIRAR PÁGINA do documento** — 2 sítios, um por direção (§12.5.4) |
+| escolha do submenu do inventário | sempre id 6 | USE/EQUIP = **5**, CHECK = **6** (§12.5.2) |
+| combinação | sempre id 6, antes do resultado | **6** se fecha, **7** se não (§12.5.3) |
+| `acao_13` / `acao_14` | sem nome | `impacto_projetil` / `sala_entrada` (§12.5.5) |
+| recarga da arma | "não identificada" | **localizada** (`0x8003f5e8`, subestado 4), mas o **id vem de RAM** (§12.1) |
+| pegar item | "não identificado" | **`cat 0 / id 5`**, os 2 sítios de `0x80069c3c` (§12.3) |
+
 ---
 
 ## 1. A cadeia do som no EXE
@@ -389,11 +403,11 @@ Cada linha tem o call site medido; o **nome** é escolha do port até alguém ou
 | cat | id | call sites | nome no port | observação |
 |---:|---:|---|---|---|
 | 0 | 11 | `0x8003ad6c` (`lui a0,1; ori a0,a0,0xb`), `0x8003cf10` | `tiro` | `a1 = player+0x34` (posição). **`C_00`/`C_01` não definem o id 11** — só os `C_02..C_0D` de área. Coerente com "não há tiro no menu" |
-| 0 | 0 | `0x8003d208` (`lui a0,1`) | `impacto_ataque` | grava `player+0xc8 = 0x30004`, `player+6 = 1`; vizinho de `0x8003d14c` = "acerto conectado" (`exe_combat.md`) |
-| 0 | 1 / 2 / 3 | `0x8003d560` / `0x8003d82c` / `0x8003dac8` | `acao_1/2/3` | 3 ids consecutivos, 1 call site cada, na mesma região de ação do jogador |
-| 0 | 8 | `0x80063984` `0x80063a2c` | `acao_8` | `a1 = 0` → UI |
-| 0 | 13 | `0x80045b10` `0x80045e68` `0x800465fc` | `acao_13` | |
-| 0 | 14 | `0x80077f40` | `acao_14` | `a1 = 0` → UI |
+| 0 | 0 | `0x8003d208` (`lui a0,1`) | `dano_player` (**era `impacto_ataque` — errado, §12.5.1**) | grava `player+0xc8 = 0x30004`, `player+6 = 1`; vizinho de `0x8003d14c` = "acerto conectado" (`exe_combat.md`) |
+| 0 | 1 / 2 / 3 | `0x8003d560` / `0x8003d82c` / `0x8003dac8` | `dano_player_2/3/4` (§12.5.1) | 3 ids consecutivos, 1 call site cada, na mesma região de ação do jogador |
+| 0 | 8 | `0x80063984` `0x80063a2c` | **`arquivo_pagina`** (virar página — §12.5.4) | `a1 = 0` → UI |
+| 0 | 13 | `0x80045b10` `0x80045e68` `0x800465fc` | `impacto_projetil` (§12.5.5) | |
+| 0 | 14 | `0x80077f40` | `sala_entrada` (§12.5.5) | `a1 = 0` → UI |
 | 0 | 15 | `0x800485e4` | `acao_15` | `a1 = 0` → UI; nenhum banco `C_` define o id 15 nos arquivos do disco extraído |
 
 Distribuição completa dos 125 call sites com `a0` constante, por `(cat, idx)`, está no
@@ -602,11 +616,12 @@ blocos `<Text>`, 13 `{clear}` + 4 `{timed}`. `epilogue.xml`: 1 bloco, 13 `{clear
 | **Porta**: banco `cat 4` embutido nos 76 `DOOR??.DO1` | fechado (§4.4) | **ALTA** no formato / **MÉDIA** no nome (qual id é abrir vs fechar não foi medido) |
 | **Estouro da arma** = `cat 1 / id 0` do banco `A_{w}` | fechado (§11.1) | **ALTA** (tabela por arma `0x8009ced8` + `A_01` sem id 0) |
 | De-para **item do inventário → `w`** (qual `A_xx` em cada arma) | **NÃO MEDIDO** — o port usa faca=1 / resto=2, DECLARADO | BAIXA |
-| Nome das outras ações de jogo (item, recarga) | **DECLARADO** — call site provado, semântica não | BAIXA |
+| Nome das outras ações de jogo | **74 DECLARADO / 17 NÃO SEI** — tabela completa na §12.2 | — |
 | Quem preenche `SND_CTX + cat*4` | fechado: `0x8007809c`, chamado por `0x800495d0` (cat 0 = personagem) e `0x80043eb4` (cat 1 = arma) | **ALTA** |
 | **Som de PASSO** | **NÃO PROVADO** — 0 pedidos de SE nas 4 rotinas de locomoção do player, e não há segundo enfileirador (§11.2) | — |
-| Pegar item / recarga | **não identificados** | — |
-| `cat 3`, `cat 5`, `cat 6`, `cat 7` | call sites achados (`0x80078004`/`0x80078048`/`0x8007807c` para 5/6/7), banco de origem **não localizado** | — |
+| Pegar item | **`cat 0 / id 5`** (`0x80069ed0`, `0x80069fb0` em `0x80069c3c`) | ALTA no sítio |
+| Recarga | sítio **PROVADO** (`0x8003f5e8`, subestado 4), mas o **id vem de `u16@*(player+0xe4)`, que é RAM** | — |
+| `cat 3` = banco do INIMIGO (helpers `0x800775a0`/`0x80077618`), `cat 5/6/7` = ambiente | call sites achados, **banco de origem não localizado** | — |
 | De-para **sala → faixa de BGM** | fechado (§7): sha1 dos 676 blocos de SEQ dos 169 `.ARD` × os nomes do `Rofs7.dat` do PC | **ALTA** no nome / **MÉDIA** no render (32 salas `NAO_CASADO`) |
 | Banco de sala (`cat 2`) das 168 salas embutido no `.ARD` | localizado e validado (§11.4), **não extraído** | **ALTA** no layout |
 | Idioma real das 370 vozes e do `MAIN07` | **inferido** (§8) | MÉDIA — falta ouvir |
@@ -623,8 +638,9 @@ python tools/exe_audio.py --tabela A_02      # banco de ARMA: o id 0 é o estour
 # 1898 asserções que sustentam o de-para
 python tools/exe_audio.py --verificar
 
-# os 155 `jal 0x800746c0` com (cat, idx) + o achado negativo do PASSO (§11.1 / §11.2)
+# os 155 `jal 0x800746c0`: tabela completa (função, cat/idx, a1, evento, confiança) — §12
 python tools/exe_audio.py --callsites
+NOSTALGIA_OUT=port python tools/exe_audio.py --callsites --json   # + data/se_callsites.json
 
 # extrai os WAV dos 76 bancos de porta (147 amostras)
 NOSTALGIA_OUT=port python tools/exe_audio.py --portas
@@ -779,3 +795,257 @@ do arquivo da sala**. Medido nos 169 `.ARD` (mesmo método da §4.4, offsets do 
 Consequência prática: **extrair os 168 bancos de sala é possível** e é o caminho natural
 para fechar `porta_trancada`/`porta_destrancar`/`porta_emperrada` (§5, hoje sem amostra) e
 para procurar o passo no dado em vez de no código. **Não foi extraído nesta rodada.**
+
+---
+
+## 12. Rodada de 2026-08-08 (2ª) — **os 155 call sites, varridos de uma vez**
+
+> Por que esta seção existe: o dono do repo estava pedindo som **item a item** (o último foi o
+> de virar página do documento). Isso é falha de método. Como o anel `0x800e0de4` **só** é
+> escrito por `0x800746c0` e **só** é lido/zerado por `0x800744e0` (§2), **todo** som do jogo
+> passa por um dos 155 `jal`. Então a lista fechada responde a todas as perguntas de uma vez.
+
+Ferramenta: **`python tools/exe_audio.py --callsites [--json]`**. O JSON versionável é
+**`data/se_callsites.json`** (155 linhas: `jal`, função envolvente, `cat`/`id`, a instrução que
+produziu o `a0`, se o `a1` é 0 (UI) ou posição 3D, o evento e a confiança). O `--verificar`
+passou a checar a tabela (**1937 asserções, 0 falhas**).
+
+### 12.1 Placar
+
+| | n |
+|---|---:|
+| call sites de `0x800746c0` | **155** |
+| com `a0` constante (imediato recuperado por back-walk) | 129 |
+| com `a0` **dinâmico** (id vem de dado/argumento) | 26 |
+| funções distintas que pedem SE | 86 |
+| **evento PROVADO** (cat/id *e* evento saem da desmontagem) | **64** |
+| **evento DECLARADO** (cat/id medido, nome é escolha nossa) | **74** |
+| **NÃO SEI** (cat/id medido, evento não identificado) | **17** |
+
+Três sítios têm o `a0` **constante mas fora do bloco**: o back-walk linear pega a instrução do
+bloco vizinho, e o valor certo está no *delay slot* do desvio que entra no bloco do `jal`. Os
+três foram fechados enumerando **todos** os predecessores (`A0_POR_PREDECESSOR` na ferramenta):
+`0x800517d0` (a0 = `0x228`), `0x80068a10` (a0 = 6, **7 predecessores, todos com 6**) e
+`0x80069fb0` (a0 = 5).
+
+Um achado de forma que aparece 11 vezes: o **som de MECANISMO da arma** não tem id fixo —
+
+```
+v0 = u16 @ *(player+0xe4)        ; props da ARMA (RAM)
+if ((v0 & 0xf000) == 0) pula
+a0 = 0x10100 | ((v0 >> 12) - 1)  ; cat 1, id = nibble alto - 1
+```
+
+Não existe **nenhum** `sw` para `+0xe4` no `.text`, logo o de-para arma → nibble **não é
+extraível do estático**. Um dos 11 é `0x8003f5e8`, dentro do subestado **4 = RECARGA**
+(`recuo_tiro.md` §linha 50) — ou seja *a recarga está localizada, o id dela não*.
+
+### 12.2 A tabela (agrupada por evento; as 155 linhas estão no JSON)
+
+| evento | `cat`/`id` | n | call sites (`jal`) | função | conf |
+|---|---|---:|---|---|---|
+| porta: transição (o único cat 4 do EXE) | `4/1` | 1 | `0x800161c4` | `0x80016150` | PROVADO |
+| objeto: SE empacotado em u8@obj+0x19 | `?/u8@obj+0x19` | 3 | `0x8001c3e0` `0x8001c440` `0x8001c578` | `0x8001c38c` `0x8001c49c` | PROVADO |
+| objeto: SE de sala com idx = u16@obj+0x22 | `2/u16@obj+0x22` · `2/u16@obj+0x22 + (rand & 1)` | 2 | `0x8001c838` `0x8001c864` | `0x8001c5bc` | PROVADO |
+| inimigo t21: som de ação | `1/14` · `1/15` · `1/16` · `1/17` · `2/42` · `3/20` | 6 | `0x8001d464` `0x8001db0c` `0x8001dc64` `0x8001dce4` `0x8001dec8` `0x8001dfec` | `0x8001d210` `0x8001d7d0` | DECLARADO |
+| inimigo t22: som de ação | `1/10` | 1 | `0x8001e3ec` | `0x8001e0f4` | DECLARADO |
+| zumbi: som de ação | `2/14 ou 30` · `3/8 ou 24` | 2 | `0x8001ec4c` `0x8001edb8` | `0x8001e444` | DECLARADO |
+| **não identificado** — função de ator alcançada por tabela | `2/19` | 1 | `0x80021cdc` | `0x8002198c` | NAO_SEI |
+| abrir a tela de STATUS (id 6) | `0/6` | 1 | `0x80023d10` | `0x80023268` | PROVADO |
+| abrir a tela de STATUS (id 6, ctx+0x04 == 0) OU entrar no MAPA (id 9, ctx+0x04 == 4) | `0/9` | 1 | `0x80023db8` | `0x80023268` | PROVADO |
+| **não identificado** — região de DRAW/ator (emd_skinning.md §linha 362) | `2/46` | 1 | `0x80024f04` | `0x80024ce8` | NAO_SEI |
+| **não identificado** — chamada por 0x80024ce8 (DRAW/ator) | `2/46` | 2 | `0x80025038` `0x800250f0` | `0x80024f74` `0x800250cc` | NAO_SEI |
+| SE pedido pelo SCRIPT: cat 2, idx = próximo byte do stream | `2/byte do stream` | 1 | `0x80030010` | `0x8002fee8` | PROVADO |
+| caixa de mensagem: avançar (4) / fechar (5) | `0/4` · `0/5` | 4 | `0x800304e0` `0x8003054c` `0x8003088c` `0x800308f8` | `0x800303ec` `0x80030764` | DECLARADO |
+| **não identificado** — chamada por 0x80036d5c/0x80036f10/0x80036f40 | `2/19` · `2/2` | 2 | `0x80036934` `0x80036b8c` | `0x800366ec` | NAO_SEI |
+| mira: sub 2 -> 3 (mexe em player+0x6e e no contador u16 0x800d1f96) | `0/11` | 1 | `0x8003ad6c` | `0x8003a7d8` | NAO_SEI |
+| subir: início do movimento (grava +0xc8=6/+0xc9=0/+0xca=7 e vibra) | `2/0` | 1 | `0x8003b224` | `0x8003b1c4` | PROVADO |
+| subir: impacto (sub 5 com +0xc9 == 1) | `2/44` | 1 | `0x8003b3e8` | `0x8003b244` | DECLARADO |
+| player AGARRADO: voz (anim 18 + gs+0x785e++) | `0/11` | 1 | `0x8003cf10` | `0x8003cea0` | DECLARADO |
+| mordida do inimigo que agarrou (cat 3, id 3 ou 19 pelo tipo) | `3/3 ou 19` | 1 | `0x8003d114` | `0x8003cea0` | DECLARADO |
+| dano ao player | `0/0` | 1 | `0x8003d208` | `0x8003d1a8` | PROVADO |
+| dano ao player (variante) | `0/1` · `0/1 ou 2` · `0/2` · `0/3` | 4 | `0x8003d354` `0x8003d560` `0x8003d82c` `0x8003dac8` | `0x8003d2d8` `0x8003d4c0` `0x8003d780` `0x8003da3c` | PROVADO |
+| arma: som de mecanismo | `1/6` · `1/8` · `1/9` | 4 | `0x8003e750` `0x8003e82c` `0x8003e8f0` `0x8003e934` | `0x8003e4d0` | DECLARADO |
+| arma: mecanismo do sub 1 | `1/1` | 1 | `0x8003f190` | `0x8003ef08` | DECLARADO |
+| RECARGA da arma | `1/(u16@*(player+0xe4) >> 12) - 1` | 1 | `0x8003f5e8` | `0x8003f520` | PROVADO |
+| arma: mecanismo do sub 8 | `1/1` | 1 | `0x8003fd90` | `0x8003fb78` | DECLARADO |
+| arma: mecanismo | `1/1` | 2 | `0x8004029c` `0x8004070c` | `0x8003ffd8` `0x800402f4` | DECLARADO |
+| arma: mecanismo (id dinâmico) | `1/(u16@*(player+0xe4) >> 12) - 1` | 1 | `0x8004082c` | `0x80040764` | DECLARADO |
+| **não identificado** — subestado de arma (ids 18/19) | `1/18` · `1/19` | 3 | `0x8004097c` `0x80040bc0` `0x80040c5c` | `0x80040900` | NAO_SEI |
+| facada (A_01 define só os ids 6..10) | `1/(u16@*(player+0xe4) >> 12) - 1` | 1 | `0x80040f78` | `0x80040f34` | DECLARADO |
+| ESTOURO da arma (cat 1 / id 0) | `1/0` | 17 | `0x80041018` `0x80041184` `0x8004161c` `0x80041904` `0x80041ab8` `0x80041c6c` `0x80041e20` `0x80041fd8` `0x800422a0` `0x800424bc` `0x800426e8` `0x80042a7c` `0x80042b9c` `0x80042edc` `0x800433b0` `0x80043584` `0x80043a40` | `0x80040f90` `0x800410f8` `0x80041594` `0x800418cc` `0x80041a80` `0x80041c34` `0x80041de8` `0x80041f9c` `0x800421f8` `0x80042474` `0x80042660` `0x800427d8` `0x80042ae4` `0x80042e34` `0x80043328` `0x800434f8` `0x800439f8` | PROVADO |
+| arma: som de mecanismo (id = nibble dos props em RAM) | `1/(u16@*(player+0xe4) >> 12) - 1` | 7 | `0x800414e0` `0x80041a14` `0x80041bc8` `0x80041d7c` `0x80041f30` `0x80043244` `0x80043928` | `0x800410f8` `0x800418cc` `0x80041a80` `0x80041c34` `0x80041de8` `0x80042e34` `0x800434f8` | DECLARADO |
+| **não identificado** — chamada por 0x80038d34 (exe_combat.md §linha 268) | `1/4` | 1 | `0x800451d4` | `0x80045094` | NAO_SEI |
+| **não identificado** — vizinha de 0x80045094 (projétil) | `1/4` | 1 | `0x80045440` | `0x800452e8` | NAO_SEI |
+| impacto do projétil | `0/13` | 3 | `0x80045b10` `0x80045e68` `0x800465fc` | `0x80045950` | DECLARADO |
+| **não identificado** — chamada por 0x8002378c, dentro do fluxo de jogo 0x80023268 | `0/15` | 1 | `0x800485e4` | `0x80048520` | NAO_SEI |
+| porta: BLOQUEADA (Key_Type == 0xfe) + mensagem 0x11 | `2/38` | 1 | `0x80050dd8` | `0x80050d28` | PROVADO |
+| porta: TRANCADA para sempre (Key_Type == 0xff) + mensagem 0x12 | `2/22` | 1 | `0x80050e10` | `0x80050d28` | PROVADO |
+| porta: DESTRANCAR com a chave | `2/37` | 1 | `0x80050e74` | `0x80050d28` | PROVADO |
+| porta: TRANCADA — não tem a chave | `2/22` | 1 | `0x80050ed8` | `0x80050d28` | PROVADO |
+| porta: TRANCADA — não tem a chave (2º ramo) | `2/22` | 1 | `0x80050f14` | `0x80050d28` | PROVADO |
+| baú: abrir a caixa de itens | `2/20` | 1 | `0x80051578` | `0x800514f0` | DECLARADO |
+| sce 11: a0 = 0x228 vem do delay slot do bnez de 0x8005175c | `2/40` | 1 | `0x800517d0` | `0x800516a4` | NAO_SEI |
+| SE por script: cat/idx nos operandos | `?/operandos do opcode 0x77` | 1 | `0x80055164` | `0x80055038` | PROVADO |
+| ambiente por script: cat = arg + 5, idx 0 | `?/0` | 1 | `0x800553d0` | `0x8005518c` | PROVADO |
+| arquivo: confirmar já na última página (ctx+0xbd >= páginas-1) -> sub 4 | `0/4` | 1 | `0x800638f4` | `0x80063850` | PROVADO |
+| arquivo: VIRAR PÁGINA para trás (ctx+0xbd -= 1, ctx+0xc6 = 2) | `0/8` | 1 | `0x80063984` | `0x80063850` | PROVADO |
+| arquivo: VIRAR PÁGINA para frente (ctx+0xbd += 1, ctx+0xc6 = -2) | `0/8` | 1 | `0x80063a2c` | `0x80063850` | PROVADO |
+| arquivo: sair da leitura | `0/5` | 1 | `0x80063c20` | `0x80063850` | PROVADO |
+| arquivo: fechar a tela (estado 9 -> 13) | `0/5` | 1 | `0x80063e74` | `0x80063cac` | DECLARADO |
+| baú: confirmar / cancelar / mover | `0/4` · `0/5` · `0/6` | 3 | `0x80064500` `0x80064538` `0x80064684` | `0x8006446c` | DECLARADO |
+| baú: cancelar | `0/5` | 2 | `0x80064740` `0x800650f4` | `0x800646f0` `0x800650c4` | DECLARADO |
+| baú: confirmar | `0/6` | 1 | `0x80064aa4` | `0x800646f0` | DECLARADO |
+| baú: transferir item (cat 2 / id 0x15) | `2/21` | 4 | `0x80064b2c` `0x80064bc8` `0x80064d1c` `0x80064d90` | `0x800646f0` | DECLARADO |
+| inventário: confirmar em slot COM item | `0/6` | 1 | `0x8006669c` | `0x80066604` | PROVADO |
+| inventário: confirmar em slot VAZIO | `0/7` | 1 | `0x800666bc` | `0x80066604` | PROVADO |
+| inventário: botão MAPA (ctx+0x1c == -1 -> sub 4) | `0/9` | 1 | `0x800666f0` | `0x80066604` | PROVADO |
+| inventário: botão ARQ. (ctx+0x1c == -2 -> sub 5) | `0/9` | 1 | `0x80066728` | `0x80066604` | PROVADO |
+| inventário: FECHAR (cancelar ou botão SAIR) | `0/5` | 1 | `0x8006675c` | `0x80066604` | PROVADO |
+| inventário: mover o cursor da grade | `0/4` | 1 | `0x8006688c` | `0x80066604` | PROVADO |
+| comandos: mover | `0/4` | 1 | `0x80066a78` | `0x80066920` | DECLARADO |
+| arquivo: entrar / mover / cancelar | `0/4` · `0/5` · `0/6` | 4 | `0x80066e44` `0x80066f00` `0x800670f4` `0x800672b0` | `0x80066ca0` | DECLARADO |
+| equipar/usar: confirma e sai (comando 0) | `0/5` | 1 | `0x80067b40` | `0x800676b8` | PROVADO |
+| combinar: mover / recusado / cancelar | `0/4` · `0/5` · `0/7` | 4 | `0x80067c90` `0x80067e90` `0x80067ebc` `0x80067fc8` | `0x80067c14` | PROVADO |
+| combinar: receita NÃO fecha | `0/7` | 1 | `0x800687b0` | `0x80068024` | PROVADO |
+| combinar: DEU (7 predecessores, todos com a0 = 6) | `0/6` | 1 | `0x80068a10` | `0x80068024` | PROVADO |
+| combinar: cancelar | `0/5` | 2 | `0x80068a88` `0x80068b44` | `0x80068a5c` `0x80068abc` | DECLARADO |
+| examinar: entra no texto de exame | `0/6` | 1 | `0x80069454` | `0x80069280` | PROVADO |
+| examinar: sair do texto de exame | `0/5` | 1 | `0x80069470` | `0x80069280` | DECLARADO |
+| item PEGO (janela de obter) | `0/5` | 1 | `0x80069ed0` | `0x80069c3c` | PROVADO |
+| item PEGO — a0 vem do delay slot do beq de 0x80069eb8 (a0 = 5) | `0/5` | 1 | `0x80069fb0` | `0x80069c3c` | PROVADO |
+| confirmar / cancelar | `0/5` · `0/6` | 3 | `0x8006a2b4` `0x8006a340` `0x8006a514` | `0x8006a234` | DECLARADO |
+| entrar em sub-tela (id 9) | `0/9` | 1 | `0x8006dd40` | `0x8006d948` | PROVADO |
+| mapa: navegar | `0/5` · `0/6` · `2/43` | 8 | `0x8006f790` `0x8006f7d8` `0x8006f814` `0x8006f86c` `0x8006f8bc` `0x8006f914` `0x8006f954` `0x8006f988` | `0x8006f708` | DECLARADO |
+| mapa: navegar/sair | `0/4` · `0/5` · `0/7` · `0/9` | 5 | `0x8006fd58` `0x8006fdb4` `0x8006fdd0` `0x8006fdf8` `0x8006fe44` | `0x8006fc68` | DECLARADO |
+| mapa: sair | `0/5` | 1 | `0x8007021c` | `0x80070024` | DECLARADO |
+| inimigo: SE por id (cat 3) | `3/a2 (+0x10 quando o tipo casa)` · `3/a3 (+0x10 quando o tipo casa)` | 2 | `0x80077600` `0x80077698` | `0x800775a0` `0x80077618` | PROVADO |
+| impacto/ricochete de bala na sala (cat 2, idx = base + a0) | `2/s5` | 1 | `0x80077b50` | `0x800776b0` | PROVADO |
+| entrada de sala / ambiente global | `0/14` | 1 | `0x80077f40` | `0x80077ed4` | DECLARADO |
+| **não identificado** — ligador de ambiente cat 5/6/7 (idx 0), sob os bits 1/2/4 de um byte de estado | `5/0` · `6/0` · `7/0` | 3 | `0x80078004` `0x80078048` `0x8007807c` | `0x80077f60` | NAO_SEI |
+
+### 12.3 O que foi LIGADO no port nesta rodada
+
+Todos com o call site no comentário do código.
+
+| evento | ação do `Sfx` | `cat`/`id` | onde o port dispara |
+|---|---|---|---|
+| **virar página do documento** | `arquivo_pagina()` | 0/8 | `MenuArquivo.virar_pagina` (só quando a página muda de fato — o EXE também checa a borda antes de pedir) |
+| mover na grade de documentos | `menu_mover()` | 0/4 | `MenuArquivo.mover_grade` / `mover_lista` |
+| abrir a leitura de um documento | `menu_confirmar()` | 0/6 | `MenuArquivo.confirmar` |
+| documento não lido | `menu_invalido()` | 0/7 | `MenuArquivo.confirmar` |
+| sair da leitura / fechar | `menu_cancelar()` | 0/5 | `MenuArquivo.confirmar` / `cancelar` |
+| **item pego** | `item_pego()` | 0/5 | `World.usar` (quando `pegar_item_sob_o_player` devolve o AOT) |
+| **combinar: deu** | `combinar_ok()` | 0/6 | `MenuStatus.confirmar` (agora **depois** de saber o resultado) |
+| **combinar: não fecha** | `combinar_erro()` | 0/7 | idem |
+| **equipar / usar** | `equipar()` | 0/5 | `MenuStatus.confirmar`, escolha `EQUIP`/`USE` do submenu |
+| **examinar (CHECK)** | `examinar()` | 0/6 | `MenuStatus.confirmar`, escolha `CHECK` |
+| **dano ao player** (4 variantes) | `dano_player(0..3)` | 0/0..3 | API pronta; o gatilho vive no `player.gd` (§12.4) |
+| agarrado pelo inimigo | `agarrado()` | 0/11 | API pronta, sem gatilho ainda |
+| porta bloqueada | `porta_emperrada()` | 2/38 | API pronta (sem amostra) |
+| subir / descer | `subir()` / `subir_impacto()` | 2/0 · 2/44 | API pronta; `subir.sfx_pendente` já existe em `script_vm/subir.gd` |
+| baú | `bau_abrir()` / `bau_mover()` | 2/20 · 2/21 | API pronta, sem tela de baú no port |
+| impacto de projétil | `impacto_projetil()` | 0/13 | API pronta |
+| entrada de sala | `sala_entrada()` | 0/14 | API pronta |
+| caixa de mensagem | `mensagem_avanca()` / `mensagem_fecha()` | 0/4 · 0/5 | API pronta |
+
+**Detalhe que quase fez o som novo sair mudo:** `C_00`/`C_01` — os bancos de **menu** — **não
+definem o id 8**. Quem define são os `C_02..C_0D`, que é o banco de `cat 0` que o jogo carrega
+em sala (`0x800495d0`). O `re3_se.json` resolve isso pelo `banco_declarado` (cai no `C_02`), e o
+`World` chama `definir_banco_area()` no `_init`.
+
+### 12.4 O que NÃO tem gatilho no port — o mapa do que falta
+
+Duas categorias diferentes, e vale não confundir.
+
+**(a) Falta a AMOSTRA (`cat 2` = banco de SALA).** O único banco de sala no disco é
+`R000.SND`, cuja tabela de SE é toda `0xffffffff`; os outros **168 estão embutidos nos
+`R###.ARD`** (§11.4, layout validado em 168/169 e **não extraído**). Enquanto isso não for
+extraído, estes 26 pedidos de `cat 2` **não podem soar**, e o `Sfx` devolve `false` e reclama
+uma vez em vez de tocar som de outro banco:
+
+| evento | `cat`/`id` | call site |
+|---|---|---|
+| porta TRANCADA (sem chave / `Key_Type == 0xff`) | 2/22 | `0x80050e10` `0x80050ed8` `0x80050f14` |
+| porta DESTRANCAR com a chave | 2/37 | `0x80050e74` |
+| porta BLOQUEADA (`Key_Type == 0xfe`) | 2/38 | `0x80050dd8` |
+| subir/descer + impacto | 2/0 · 2/44 | `0x8003b224` `0x8003b3e8` |
+| baú: abrir · transferir | 2/20 · 2/21 | `0x80051578` · 4 sítios em `0x800646f0` |
+| impacto/ricochete de bala na sala | 2/`s5` | `0x80077b50` |
+| SE pedido pelo script (byte do stream) | 2/byte | `0x80030010` |
+| objeto do cenário (tipo 5/6) | 2/`u16@obj+0x22` | `0x8001c838` `0x8001c864` |
+| mapa / inimigos / atores (ids 2, 19, 40, 42, 43, 46) | 2/… | `0x80021cdc` `0x80024f04` `0x80025038` `0x800250f0` `0x80036934` `0x80036b8c` `0x8001db0c` `0x8001edb8` `0x8006f790` `0x800517d0` |
+
+**(b) Falta o EVENTO no port** (o código do jogo ainda não faz isso). É a lista do que
+implementar, e cada linha já vem com o id certo:
+
+| evento que falta no port | `cat`/`id` | call site |
+|---|---|---|
+| **porta trancada / destrancar** — o port não tem lógica de `Key_Type`/chave em `atravessar` | 2/22 · 2/37 | `0x80050ed8` · `0x80050e74` |
+| **recarga da arma** | 1/`nibble` | `0x8003f5e8` (subestado 4) |
+| mecanismo da arma (ferrolho, engate, faca) | 1/1, 1/6, 1/8, 1/9, 1/18, 1/19, `nibble` | `0x8003e750` `0x8003e82c` `0x8003e8f0` `0x8003e934` `0x8003f190` `0x8003fd90` `0x8004029c` `0x8004070c` `0x8004097c` `0x80040bc0` `0x80040c5c` + 11 dinâmicos |
+| **vozes/ações de inimigo** (`cat 3`, banco **não localizado**) | 3/3, 3/8, 3/19, 3/20, 3/24, 3/`arg` | `0x8001d464` `0x8001ec4c` `0x8003d114` `0x80077600` `0x80077698` |
+| **dano ao player** (a API existe, o gatilho não) | 0/0..3 | `0x8003d208` `0x8003d354` `0x8003d560` `0x8003d82c` `0x8003dac8` |
+| agarrado pelo inimigo | 0/11 | `0x8003cf10` |
+| tela de MAPA (o port não tem) | 0/4,5,6,7,9 | 14 sítios em `0x8006f708` `0x8006fc68` `0x80070024` |
+| tela do BAÚ (o port não tem) | 0/4,5,6 | 6 sítios em `0x8006446c` `0x800646f0` `0x800650c4` |
+| caixa de mensagem do script | 0/4 · 0/5 | `0x8003054c` `0x800308f8` · `0x800304e0` `0x8003088c` |
+| ambiente por script (`cat 5/6/7`) | 5/0 · 6/0 · 7/0 | `0x80078004` `0x80078048` `0x8007807c` + o opcode `0x78` (`0x800553d0`) |
+| SE por script (opcode `0x77`; cat e id vêm do bytecode) | ?/? | `0x80055164` |
+
+E o **gancho que falta em `port/actors/player.gd`** (não é meu arquivo). Em `player.gd:603` o
+`if subir.sfx_pendente != 0 and sfx != null:` tem um `pass`. O corpo certo é:
+
+```gdscript
+if subir.sfx_pendente == SubirObjeto.SFX_INICIO:
+    sfx.subir()            # cat 2 / id 0  (0x8003b224)
+else:
+    sfx.subir_impacto()    # cat 2 / id 44 (0x8003b3e8)
+```
+
+E o **dano**: onde o `player.gd` aplica dano (o equivalente da região
+`0x8003cea0..0x8003dac8`), chamar `sfx.dano_player(0..3)` — as 4 variantes já resolvem amostra
+do `C_02`.
+
+### 12.5 Erros corrigidos nesta rodada (registrados, como sempre)
+
+1. **`cat 0 / id 0` NÃO é "impacto do ataque do player" — é o player TOMANDO dano.** A §5.2
+   chamava o id 0 de `impacto_ataque` porque `0x8003d208` é vizinho de `0x8003d14c`
+   ("acerto conectado"). Mas os 5 pedidos de `cat 0 / ids 0..3` estão nas funções
+   `0x8003d1a8`, `0x8003d2d8`, `0x8003d4c0`, `0x8003d780` e `0x8003da3c`, e
+   `exe_combat.md` §1.3 já havia medido **por exaustão** (168 escritores de `player+0xc8`)
+   que as anims de *hurt* são 4/5/9/10/11/12, com escritores `0x8003d200`, `0x8003d52c`,
+   `0x8003d630`, `0x8003d6ec`, `0x8003d72c`, `0x8003d910` e `0x8003d990` — **todos dentro
+   dessas mesmas funções**. `0x8003d1a8` grava anim **4**. Renomeado para `dano_player` + 3
+   variantes (`acao_1/2/3` eram elas).
+2. **O som da escolha do submenu do inventário não é sempre o id 6.** O port tocava
+   `menu_confirmar` (6) para `EQUIP`, `USE`, `COMBINE` e `CHECK`. Medido: o executor do
+   comando 0 (USE/EQUIP, `0x800676b8`) pede **id 5** (`0x80067b40`, o único SE daquela
+   função), e o comando 2 (CHECK, `0x80069280`) pede **id 6** (`0x80069454`).
+3. **A combinação tem dois sons e o port tocava o de sucesso antes de saber o resultado.**
+   Medido: **id 6** em `0x80068a10` quando a receita fecha, **id 7** em `0x800687b0` quando não.
+4. **`acao_8` era "não sei" e é o VIRAR PÁGINA.** Os dois únicos call sites do id 8 no EXE são
+   `0x80063984` (para trás) e `0x80063a2c` (para frente), no estado 8 da task do menu, cada um
+   com a checagem de borda contra a tabela de páginas por documento `0x8009f2ac`.
+5. **`acao_13`/`acao_14` ganharam nome com base em quem chama**: id 13 é `impacto_projetil`
+   (as 3 chamadas estão em `0x80045950`, a colisão de projétil) e id 14 é `sala_entrada`
+   (`0x80077ed4` é chamada por `0x800495fc`, **dentro do room-loader** `0x800493ec`).
+6. **O caminho da porta trancada agora está inteiro** (a §5 só tinha o id 0x16):
+   `Key_Type == 0xfe` → id 38 (`0x80050dd8`, mensagem `0x11`), `Key_Type == 0xff` → id 22
+   (`0x80050e10`, mensagem `0x12`), com a chave → id 37 (`0x80050e74`), sem a chave → id 22
+   (`0x80050ed8`/`0x80050f14`).
+
+### 12.6 Resíduo honesto desta rodada
+
+* **17 sítios seguem `NÃO SEI`** (o `--verificar` fixa esse número, então se alguém identificar
+  um, o teste acusa): `0x80021cdc`, `0x80024f04`, `0x80025038`, `0x800250f0`, `0x80036934`,
+  `0x80036b8c`, `0x8003ad6c`, `0x8004097c`, `0x80040bc0`, `0x80040c5c`, `0x800451d4`,
+  `0x80045440`, `0x800485e4`, `0x800517d0`, `0x80078004`, `0x80078048`, `0x8007807c`.
+* **`cat 3` = banco do INIMIGO** (5 pedidos): o `cat` está provado pelos dois *helpers*
+  `0x800775a0`/`0x80077618`, mas **de qual arquivo vem o banco continua não localizado**.
+* **`cat 1` é pedido por IA de inimigo** (`0x8001d7d0` pede ids 14..17, `0x8001e0f4` pede 10).
+  Isso é estranho para um banco que a §11.1 provou ser da **ARMA equipada** — ou o inimigo usa
+  o banco da arma, ou existe outro carregador de `cat 1` que não foi achado. **Em aberto.**
+* **Extrair os 168 bancos de sala dos `R###.ARD`** segue sendo o passo que desbloqueia mais som
+  de uma vez (26 pedidos de `cat 2`): porta trancada, baú, subir, ricochete e o SE por script.
+  O layout está validado (§11.4); a extração **não foi feita**.

@@ -13,7 +13,10 @@ extends SceneTree
 ##   2. para cada ação: qual WAV, existe no disco, o stream carrega, e o pool toca?
 ##   3. o `screen.gd` monta o `World` e o `World` injeta o `Sfx` no `Player`?
 
-const ACOES := ["menu_mover", "menu_confirmar", "tiro", "impacto_ataque", "porta_abrir"]
+## `impacto_ataque` saiu: o id 0 é a reação de DANO do player, não o acerto do ataque (ver
+## `Sfx.dano_player`). As 4 últimas são as ligadas na varredura dos 155 call sites.
+const ACOES := ["menu_mover", "menu_confirmar", "tiro", "dano_player", "porta_abrir",
+	"arquivo_pagina", "item_pego", "combinar_ok", "equipar"]
 
 var _cena: Node
 var _quadros := 0

@@ -247,6 +247,70 @@ func run(t: Object) -> bool:
 	s.definir_banco_arma(0)
 	t.eq(s.banco_arma(), "", "w = 0 não é banco de arma (o fid 0xda não é um .VH de A_)")
 
+	# ── 6.1 a varredura dos 155 call sites de SE_pede ──
+	## Por que este bloco existe: o anel de pedidos `0x800e0de4` só é escrito por
+	## `0x800746c0` e só é lido/zerado por `0x800744e0`, logo TODO som do jogo passa por um
+	## dos 155 `jal`. `tools/exe_audio.py --callsites --json` publica a tabela inteira, e é
+	## dela que saem os ids ligados nesta rodada — em vez de caçar som item a item.
+	t.group("Audio/callsites")
+	var cs: Variant = AssetIO.json("se_callsites.json")
+	if t.check(cs is Dictionary, "data/se_callsites.json existe (exe_audio.py --callsites --json)"):
+		var sites: Array = (cs as Dictionary).get("sites", [])
+		t.eq(sites.size(), 155, "155 call sites de 0x800746c0")
+		var por_id := {}                     ## "cat/idx" -> [endereços]
+		var sem_evento := 0
+		for e: Variant in sites:
+			var st: Dictionary = e
+			if str(st.get("conf", "")) == "NAO_SEI":
+				sem_evento += 1
+			if st.get("cat") != null and st.get("idx") != null:
+				var k := "%d/%d" % [int(st["cat"]), int(st["idx"])]
+				if not por_id.has(k):
+					por_id[k] = [] as Array
+				(por_id[k] as Array).append(str(st.get("jal", "")))
+		t.eq(sem_evento, 17,
+			"17 sítios seguem com conf NAO_SEI — o evento não foi identificado, e o doc diz isso")
+		t.eq((por_id.get("1/0", []) as Array).size(), 17,
+			"o ESTOURO da arma (cat 1 / id 0) tem 17 sítios, um por handler de 0x8009ced8")
+		t.eq((por_id.get("0/8", []) as Array).size(), 2,
+			"o id 8 (virar página) tem 2 sítios: 0x80063984 (trás) e 0x80063a2c (frente)")
+		t.check((por_id.get("0/8", []) as Array).has("0x80063984")
+			and (por_id.get("0/8", []) as Array).has("0x80063a2c"),
+			"os dois sítios do id 8 são os do estado 8 da tela de ARQUIVO")
+		t.eq((por_id.get("4/1", []) as Array), ["0x800161c4"] as Array,
+			"cat 4 (porta) tem UM sítio no EXE inteiro")
+
+	# ── 6.2 as ações ligadas nesta rodada ──
+	t.group("Audio/eventos ligados")
+	s.definir_banco_area()                   ## C_02 = o banco de cat 0 que o jogo carrega
+	t.eq(s.acao_id("arquivo_pagina"), 8, "virar página do documento = SE id 8 (0x80063984)")
+	t.eq(s.acao_cat("arquivo_pagina"), 0, "virar página é cat 0 (banco de personagem)")
+	t.check(s.arquivo_pagina(), "Sfx.arquivo_pagina() resolve uma amostra")
+	t.eq(s.ultimo_tocado(), "C_02/C_02_05.wav",
+		"o id 8 NÃO existe no C_00/C_01 (banco de menu) — em jogo sai do C_02")
+	t.eq(s.acao_id("item_pego"), 5, "item pego = SE id 5 (0x80069ed0/0x80069fb0)")
+	t.eq(s.acao_id("combinar_ok"), 6, "combinação que fecha = SE id 6 (0x80068a10)")
+	t.eq(s.acao_id("combinar_erro"), 7, "combinação que não fecha = SE id 7 (0x800687b0)")
+	t.eq(s.acao_id("equipar"), 5, "USE/EQUIP = SE id 5 (0x80067b40)")
+	t.eq(s.acao_id("examinar"), 6, "CHECK/examinar = SE id 6 (0x80069454)")
+	t.eq(s.acao_id("dano_player"), 0, "dano ao player = SE id 0 (0x8003d208, anim 4)")
+	t.eq(s.acao_id("dano_player_4"), 3, "4ª variante de dano = SE id 3 (0x8003dac8)")
+	for i in 4:
+		t.check(s.dano_player(i), "dano_player(%d) resolve uma amostra do C_02" % i)
+	t.check(s.item_pego() and s.combinar_ok() and s.combinar_erro()
+		and s.equipar() and s.examinar(), "as 5 ações novas de menu tocam")
+	## cat 2 = banco de SALA: o port não tem essas amostras (só `R000.SND` está no disco e a
+	## tabela de SE dele é toda 0xffffffff; os outros 168 estão embutidos nos `R###.ARD`,
+	## exe_audio.md §11.4). O teste FIXA esse limite em vez de escondê-lo.
+	t.eq(s.acao_cat("subir"), 2, "subir/descer é cat 2 (banco de SALA)")
+	t.eq(s.acao_id("subir_impacto"), 0x2c, "impacto ao subir = cat 2 / id 44 (0x8003b3e8)")
+	t.eq(s.acao_wav("subir"), "", "sem banco de sala extraído, subir NÃO tem amostra")
+	t.check(not s.subir(), "subir() devolve false em vez de tocar som de outro banco")
+	t.check(not s.bau_abrir() and not s.bau_mover() and not s.porta_trancada(),
+		"baú e porta trancada também são cat 2: sem amostra, sem invenção")
+	t.check(not s.arma_mecanismo(0),
+		"arma_mecanismo(0) não toca: o id vem de u16@*(player+0xe4), que é RAM (NÃO MEDIDO)")
+
 	# ── 7. os WAV existem em disco e carregam ──
 	t.group("Audio/assets")
 	var faltando: Array[String] = []

@@ -835,16 +835,38 @@ func confirmar() -> String:
 	## a confirmar (e, junto com o id 9 do `alternar`, dois sons no mesmo evento).
 	var som := _sfx()
 	if combinar_de >= 0:
-		if som != null:
-			som.menu_confirmar()               ## sub-estado 0xc dispara 6,6,5 — id 6, DECLARADO
+		## ── CORRIGIDO na varredura dos 155: a combinação tem DOIS sons, e o port tocava
+		## sempre o de sucesso ANTES de saber o resultado. No executor genérico da combinação
+		## (`0x80068024`) o EXE pede:
+		##   • **id 6** em `0x80068a10` quando a receita FECHA (o `a0` não é imediato no bloco:
+		##     os 7 predecessores de `0x800689b0` carregam todos `a0 = 6`);
+		##   • **id 7** em `0x800687b0` quando NÃO fecha.
 		var feito := _combinar(combinar_de, cursor)
+		if som != null:
+			if feito.begins_with("combinou") or feito.begins_with("recarregou"):
+				som.combinar_ok()              ## id 6 (`0x80068a10`)
+			else:
+				som.combinar_erro()            ## id 7 (`0x800687b0`)
 		combinar_de = -1
 		queue_redraw()
 		ultima_acao = feito
 		return feito
 	if not sub_itens.is_empty():
+		## ── CORRIGIDO: o som da escolha do submenu depende do COMANDO, e não é sempre o 6 ──
+		## Cada comando tem seu executor, e cada executor pede o próprio SE:
+		##   • comando 0 = USE/EQUIP (`0x800676b8`) → **id 5**, em `0x80067b40` (é o único
+		##     pedido de SE daquela função);
+		##   • comando 2 = CHECK (`0x80069280`) → **id 6**, em `0x80069454` (e id 5 ao sair,
+		##     `0x80069470`);
+		##   • COMBINE entra no 2º cursor (`0x80067c14`, ids 5/7/7/4) — id 6 aqui é DECLARADO.
 		if som != null:
-			som.menu_confirmar()               ## escolha no submenu: id 6, DECLARADO
+			match sub_itens[sub_sel]:
+				"EQUIP", "USE":
+					som.equipar()              ## id 5 (`0x80067b40`)
+				"CHECK":
+					som.examinar()             ## id 6 (`0x80069454`)
+				_:
+					som.menu_confirmar()       ## COMBINE: id 6, DECLARADO
 		var escolha := sub_itens[sub_sel]
 		sub_itens.clear()
 		queue_redraw()

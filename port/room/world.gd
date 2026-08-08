@@ -694,6 +694,12 @@ func usar() -> bool:
 	var it := pegar_item_sob_o_player()
 	if it != null:
 		ultima_acao = "pegou item 0x%02x x%d" % [it.item_id, maxi(1, it.item_qtd)]
+		## SOM: `cat 0 / id 5` — a janela de OBTER ITEM (`0x80069c3c`, sub-estado 0xb) pede o
+		## SE duas vezes, em `0x80069ed0` (`a0 = 5` imediato) e `0x80069fb0` (o `a0` vem do
+		## delay slot do `beq` de `0x80069eb8`, também 5). É o MESMO id do "cancelar"; é o dado
+		## que manda.
+		if player != null and player.sfx != null:
+			player.sfx.item_pego()
 		item_pego.emit(it.item_id, maxi(1, it.item_qtd))
 		return true
 	var p := porta_sob_o_player()

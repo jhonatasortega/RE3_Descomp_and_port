@@ -423,7 +423,10 @@ func resumo() -> String:
 #        subir.avancar(pad.pressed(Pad.FWD) or pad.pressed(Pad.BACK))
 #        var c := subir.clipe()      # "anim06" -> "anim07"
 #        if c != "": tocar(c)        # senão mantém o clipe de ANDAR (arm00)
-#        if subir.sfx_pendente != 0: Sfx.tocar(subir.sfx_pendente)
+#        if subir.sfx_pendente == SFX_INICIO:  Sfx.subir()          # cat 2 / id 0
+#        elif subir.sfx_pendente != 0:         Sfx.subir_impacto()  # cat 2 / id 44
+#    (as duas ações existem no `Sfx` desde a varredura dos 155 call sites; hoje devolvem
+#     false porque o banco de SALA — `cat 2` — não foi extraído dos `R###.ARD`)
 #        if not subir.ativo: acao = 1 ; rotina = 0     # `player+4 = 1` de `0x8003b4e0`
 #
 # 4. A altura: no subestado `NO_TOPO` em diante o personagem já está em cima, então o passe de

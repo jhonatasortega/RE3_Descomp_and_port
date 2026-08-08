@@ -260,9 +260,154 @@ func banco_arma() -> String:
 	return _banco_arma
 
 
-func impacto_ataque() -> bool:
-	## SE id 0 (`0x8003d208`, vizinhança do "acerto conectado" `0x8003d14c`). DECLARADO.
-	return tocar_acao("impacto_ataque")
+func dano_player(variante := 0) -> bool:
+	## O player TOMOU dano. **Isto era `impacto_ataque` e o rótulo estava ERRADO** (dizia "o
+	## ataque do player conectou").
+	##
+	## MEDIDO na varredura dos 155 `jal 0x800746c0`: os 5 pedidos de `cat 0 / ids 0..3` estão
+	## todos em `0x8003d1a8`, `0x8003d2d8`, `0x8003d4c0`, `0x8003d780` e `0x8003da3c`, e essas
+	## cinco funções são a REAÇÃO DE DANO — `exe_combat.md §1.3` mediu por exaustão os 168
+	## escritores de `player+0xc8` e as anims de hurt são 4/5/9/10/11/12, com escritores
+	## `0x8003d200` (esta função, anim 4), `0x8003d52c`, `0x8003d630`, `0x8003d6ec`,
+	## `0x8003d72c`, `0x8003d910` e `0x8003d990` — todos dentro dessas mesmas funções. O idioma
+	## é idêntico nas cinco: `player+0xc8 = anim`, `player+6 = 1`, `SE_pede(..., a1 = player+0x34)`.
+	##
+	## `variante` 0..3 escolhe o id; qual gravidade é qual continua DECLARADO (o `0x8003d354`
+	## alterna entre 1 e 2 pela paridade de `u8 @ player+5`).
+	const NOMES := ["dano_player", "dano_player_2", "dano_player_3", "dano_player_4"]
+	return tocar_acao(NOMES[clampi(variante, 0, 3)])
+
+
+func agarrado() -> bool:
+	## Player AGARRADO/mordido: `cat 0 / id 11` em `0x8003cf10` — sub 0 da macro-ação 13
+	## (`0x8003cea0`), que grava anim 18 (`player+0xc8 = 0x30012`), liga `gs+0x77f4 |= 0x100`,
+	## INCREMENTA `u16 gs+0x785e` e, no mesmo bloco (`0x8003d114`), pede um SE de **cat 3**
+	## (banco do INIMIGO, id 3 ou 19 pelo tipo) — os dois soando juntos.
+	## Nome DECLARADO: o id 11 é o mesmo que a rotina 7 (mira) pede em `0x8003ad6c`.
+	return tocar_acao("agarrado")
+
+
+func arquivo_pagina() -> bool:
+	## VIRAR A PÁGINA de um documento. **`cat 0 / id 8`, MEDIDO** — era a peça que faltava.
+	##
+	## `0x80063850` é o estado 8 da task do menu (a tela de ARQUIVO). No sub-estado 0:
+	##   • `*(0x800cc830) & 0x8000` **e** `ctx+0xbd != 0` → `0x80063948` põe `a0 = 8`, faz
+	##     `ctx+0xbd -= 1`, grava `ctx+0xc6 = 2` e `ctx+0x11++`; o pedido é `0x80063984`;
+	##   • `*(0x800cc830) & 0x2000` **e** `ctx+0xbd < u16 *(0x8009f2ac + ctx+0xbc*2) - 1` →
+	##     `0x800639f0` põe `a0 = 8`, faz `ctx+0xbd += 1`, `ctx+0xc6 = -2`; pedido em `0x80063a2c`.
+	## Ou seja **os dois únicos call sites do id 8 no EXE são as duas direções de virar página**,
+	## cada um com a checagem de borda (`0x8009f2ac` = nº de páginas por documento). Só toca
+	## quando a página REALMENTE vira — é o que `MenuArquivo.virar_pagina` reproduz.
+	##
+	## Atenção ao banco: `C_00`/`C_01` (bancos de MENU) **não definem o id 8**; quem define são
+	## os `C_02..C_0D` de personagem, que é o banco de `cat 0` carregado em jogo
+	## (`definir_banco_area`). O `re3_se.json` já cai no `C_02` como `banco_declarado`.
+	return tocar_acao("arquivo_pagina")
+
+
+func item_pego() -> bool:
+	## Item entrou no inventário: `cat 0 / id 5` — o MESMO id do "cancelar", e é o dado que
+	## manda. Os dois pedidos da janela de OBTER ITEM (`0x80069c3c`, sub 0xb / kind 1) são
+	## `0x80069ed0` (`a0 = 5` imediato) e `0x80069fb0`, cujo `a0` sai do delay slot do
+	## `beq v0,a1,0x80069f9c` de `0x80069eb8` — único predecessor daquele bloco.
+	return tocar_acao("item_pego")
+
+
+func combinar_ok() -> bool:
+	## Combinação deu certo: `cat 0 / id 6` em `0x80068a10`, no executor genérico da combinação
+	## (`0x80068024`). O `a0` não é imediato no bloco: os **7** predecessores de `0x800689b0`
+	## (`0x8006857c` `0x800685c4` `0x80068660` `0x800686a4` `0x8006884c` `0x8006892c`
+	## `0x80068970`) carregam TODOS `a0 = 6`.
+	return tocar_acao("combinar_ok")
+
+
+func combinar_erro() -> bool:
+	## A receita não fecha: `cat 0 / id 7` em `0x800687b0`, mesmo executor `0x80068024`.
+	return tocar_acao("combinar_erro")
+
+
+func examinar() -> bool:
+	## CHECK/examinar: `cat 0 / id 6` em `0x80069454` (comando 2, `0x80069280`).
+	return tocar_acao("examinar")
+
+
+func equipar() -> bool:
+	## USE/EQUIP: `cat 0 / id 5` em `0x80067b40` — o ÚNICO pedido de SE do comando 0
+	## (`0x800676b8`).
+	return tocar_acao("equipar")
+
+
+func mensagem_avanca() -> bool:
+	## Caixa de mensagem avança: `cat 0 / id 4` (`0x8003054c`, `0x800308f8`).
+	return tocar_acao("mensagem_avanca")
+
+
+func mensagem_fecha() -> bool:
+	## Caixa de mensagem fecha: `cat 0 / id 5` (`0x800304e0`, `0x8003088c`).
+	return tocar_acao("mensagem_fecha")
+
+
+func subir() -> bool:
+	## SUBIR/DESCER (a macro-ação 9, que `port/script_vm/subir.gd` reimplementa): `cat 2 / id 0`
+	## em `0x8003b224`. **Banco de SALA** — e o port ainda não tem essas amostras (só existe
+	## `R000.SND` no disco e a tabela de SE dele é toda `0xffffffff`; os outros 168 bancos estão
+	## EMBUTIDOS nos `R###.ARD`, ver `exe_audio.md §11.4`). Devolve false e reclama uma vez,
+	## em vez de tocar som de outro banco.
+	return tocar_acao("subir")
+
+
+func subir_impacto() -> bool:
+	## Impacto ao terminar de subir/descer: `cat 2 / id 44` em `0x8003b3e8` (sub 5 com
+	## `+0xc9 == 1`) — é o `SFX_IMPACTO` que `subir.gd` já sinaliza. Banco de SALA: sem amostra.
+	return tocar_acao("subir_impacto")
+
+
+func bau_abrir() -> bool:
+	## Abrir a CAIXA DE ITENS: `cat 2 / id 20` em `0x80051578`, dentro do driver de tela
+	## `0x800514f0` que o `sce 9` instala em `gs+0x75e0`. Banco de SALA: sem amostra.
+	return tocar_acao("bau_abrir")
+
+
+func bau_mover() -> bool:
+	## Transferir item no baú: `cat 2 / id 0x15`, 4 sítios em `0x800646f0` (`0x80064b2c`,
+	## `0x80064bc8`, `0x80064d1c`, `0x80064d90`). Banco de SALA: sem amostra.
+	return tocar_acao("bau_mover")
+
+
+func impacto_projetil() -> bool:
+	## `cat 0 / id 13` (`0x80045b10`, `0x80045e68`, `0x800465fc`, todos em `0x80045950` = a
+	## colisão/integração de projétil). Nome DECLARADO.
+	return tocar_acao("impacto_projetil")
+
+
+func sala_entrada() -> bool:
+	## `cat 0 / id 14` (`0x80077f40` em `0x80077ed4`, chamada por `0x800495fc` DENTRO do
+	## room-loader `0x800493ec`). Nome DECLARADO.
+	return tocar_acao("sala_entrada")
+
+
+func arma_mecanismo(idx: int) -> bool:
+	## Som de MECANISMO da arma (ferrolho/recarga): `cat 1 / idx`, do banco `A_{w}`.
+	##
+	## O idioma é o mesmo em 11 dos 155 sítios (`0x8003f5e8` = **RECARGA**, subestado 4 do
+	## handler de arma; `0x8004082c`; `0x80040f78` = handler da FACA; e 7 dentro dos handlers
+	## por arma, ex. `0x800414e0`):
+	## ```
+	## v0 = u16 @ *(player+0xe4)     ; props da ARMA (RAM)
+	## if ((v0 & 0xf000) == 0) pula
+	## a0 = 0x10100 | ((v0 >> 12) - 1)
+	## ```
+	## Ou seja **o id vem do nibble alto do primeiro u16 dos props da arma**, e esses props
+	## vivem em RAM (`player+0xe4` = `0x800ccca8`, BSS) — não há `sw` para `+0xe4` em todo o
+	## `.text`, então o de-para arma → nibble **NÃO FOI MEDIDO**. Por isso o port exige o `idx`
+	## de quem chama, em vez de adivinhar: nada de tocar o id errado.
+	## Sanidade: `A_01` (faca) define só 6..10 e `A_02`/`A_03` definem 0..5.
+	if idx <= 0:
+		_reclamar("arma_mecanismo",
+			"id do mecanismo da arma NÃO MEDIDO (vem de u16@*(player+0xe4), que é RAM) — "
+			+ "nenhum som pedido, de propósito")
+		return false
+	return tocar_id(1, idx, _banco_arma)
 
 
 func porta_abrir() -> bool:
@@ -294,6 +439,12 @@ func porta_trancada() -> bool:
 	## O port **não tem a amostra**: o único banco de sala no disco é `R000.SND` e a tabela de
 	## SE dele é toda `0xffffffff`. Devolve false — sem inventar som de outro banco.
 	return tocar_acao("porta_trancada")
+
+
+func porta_emperrada() -> bool:
+	## Porta BLOQUEADA (`Key_Type == 0xfe`, 10 das 453 portas): `cat 2 / id 38` em
+	## `0x80050dd8`, junto da mensagem `0x11`. Mesma ressalva de amostra que `porta_trancada`.
+	return tocar_acao("porta_emperrada")
 
 
 func porta_destrancar() -> bool:

@@ -150,21 +150,107 @@ ACOES = {
         "da arma é a ação `tiro_arma` (cat 1 / id 0); este id 11 é pedido dentro da rotina 7 "
         "(mira, 0x8003a7d8), num trecho que mexe em player+0x6e (pitch) e num contador u16 "
         "@0x800d1f96 — não no hitscan. Fica como FALLBACK do port")),
-    "impacto_ataque": dict(cat=0, id=0, conf="DECLARADO", prova=(
-        "call site 0x8003d208 (`lui a0,1` -> a0=0x10000), grava player+0xc8=0x30004 e "
-        "player+6=1, na vizinhança de 0x8003d14c = 'acerto/hit conectado' "
-        "(exe_combat.md §linha 236). NÃO PROVADO")),
-    "acao_1": dict(cat=0, id=1, conf="DECLARADO", prova="call site 0x8003d560. NÃO PROVADO"),
-    "acao_2": dict(cat=0, id=2, conf="DECLARADO", prova="call site 0x8003d82c. NÃO PROVADO"),
-    "acao_3": dict(cat=0, id=3, conf="DECLARADO", prova="call site 0x8003dac8. NÃO PROVADO"),
-    "acao_8": dict(cat=0, id=8, conf="DECLARADO", prova=(
-        "call sites 0x80063984 0x80063a2c (a1=0 -> UI). NÃO PROVADO")),
-    "acao_13": dict(cat=0, id=13, conf="DECLARADO", prova=(
-        "call sites 0x80045b10 0x80045e68 0x800465fc. NÃO PROVADO")),
-    "acao_14": dict(cat=0, id=14, conf="DECLARADO", prova=(
-        "call site 0x80077f40 (a1=0 -> UI). NÃO PROVADO")),
+    # ---- DANO ao player: cat 0, ids 0..3 (CORRIGIDO na varredura dos 155) ----
+    # O que estava aqui: `impacto_ataque` (id 0) = "acerto do ataque do player conectou" e
+    # `acao_1/2/3` sem nome. **Errado.** Os 5 pedidos de cat 0 / ids 0..3 estão TODOS nas
+    # funções 0x8003d1a8, 0x8003d2d8, 0x8003d4c0, 0x8003d780 e 0x8003da3c, e as cinco são a
+    # REAÇÃO DE DANO do player: `exe_combat.md §1.3` mediu por exaustão os 168 escritores de
+    # `player+0xc8` e concluiu que as anims de hurt são 4/5/9/10/11/12, com escritores
+    # 0x8003d200, 0x8003d52c, 0x8003d630, 0x8003d6ec, 0x8003d72c, 0x8003d910 e 0x8003d990 —
+    # todos dentro dessas mesmas funções. E o idioma de cada uma é idêntico:
+    #     sub 0 (player+6 == 0): grava `player+0xc8 = 0x3____` (a anim), `player+6 = 1`
+    #                            e pede o SE com `a1 = player+0x34` (posição do player).
+    # Logo cat 0 / id 0 = o som que sai quando a Jill TOMA dano (anim 4), e 1/2/3 são as
+    # outras variantes de gravidade/direção. Qual é qual continua DECLARADO.
+    "dano_player": dict(cat=0, id=0, conf="MEDIA", prova=(
+        "0x8003d208 (`lui a0,1` -> a0=0x10000) em 0x8003d1a8, que grava player+0xc8=0x30004 "
+        "(anim 4) e player+6=1 com a1 = player+0x34. `exe_combat.md §1.3` mediu que as anims "
+        "de HURT do player são 4/5/9/10/11/12 e que 0x8003d200 (esta função) é um dos "
+        "escritores. É reação de DANO — não 'acerto do ataque', como esta tabela dizia")),
+    "dano_player_2": dict(cat=0, id=1, conf="DECLARADO", prova=(
+        "0x8003d560 (em 0x8003d4c0, que contém os escritores de anim de hurt 0x8003d52c/"
+        "0x8003d630/0x8003d6ec/0x8003d72c) e 0x8003d354 (em 0x8003d2d8, onde "
+        "`a0 = 0x10000 | ((u8 player+5 & 1) + 1)` = id 1 OU 2 por paridade da rotina). "
+        "Variante de dano; qual gravidade é DECLARADO")),
+    "dano_player_3": dict(cat=0, id=2, conf="DECLARADO", prova=(
+        "0x8003d82c (em 0x8003d780, com os escritores de hurt 0x8003d910/0x8003d990) e o "
+        "ramo par de 0x8003d354. Variante de dano")),
+    "dano_player_4": dict(cat=0, id=3, conf="DECLARADO", prova=(
+        "0x8003dac8 (em 0x8003da3c, última função da região de dano). Variante de dano")),
+    "agarrado": dict(cat=0, id=11, conf="DECLARADO", prova=(
+        "0x8003cf10, sub 0 da macro-ação 13 (0x8003cea0): grava `player+0xc8 = 0x30012` "
+        "(anim 18), `player+6 = 1`, liga `gs+0x77f4 |= 0x100`, INCREMENTA o contador u16 "
+        "`gs+0x785e` e, no mesmo bloco (0x8003d114), pede um SE de **cat 3 (banco do "
+        "INIMIGO)** com id 3 ou 19 conforme o tipo do inimigo (`u8 @ *(0x800cc858+...)+3`). "
+        "Player + inimigo soando juntos, com contador = **ser AGARRADO/mordido**. O id 11 é o "
+        "MESMO que a rotina 7 (mira) pede em 0x8003ad6c — por isso o nome segue DECLARADO")),
+    # ---- ARQUIVO: virar página é o id 8 (MEDIDO nesta rodada) ----
+    "arquivo_pagina": dict(cat=0, id=8, conf="ALTA", prova=(
+        "MEDIDO em 0x80063850, o estado 8 da tela (ARQUIVO — ver menu_pc_sys.md §6.1), "
+        "sub-estado 0: com `*(0x800cc830) & 0x8000` e `ctx+0xbd != 0` o fluxo cai em "
+        "0x80063948 (`a0 = 8`), faz `ctx+0xbd -= 1`, grava `ctx+0xc6 = 2` (direção do "
+        "deslize) e `ctx+0x11++` — o pedido é 0x80063984. Com `*(0x800cc830) & 0x2000` e "
+        "`ctx+0xbd < u16 *(0x8009f2ac + ctx+0xbc*2) - 1` cai em 0x800639f0 (`a0 = 8`), faz "
+        "`ctx+0xbd += 1` e `ctx+0xc6 = -2` — pedido em 0x80063a2c. Ou seja **os dois únicos "
+        "call sites do id 8 do EXE são as duas direções de VIRAR PÁGINA**, com a checagem de "
+        "borda (0x8009f2ac = nº de páginas por documento). O nome do botão físico "
+        "(0x8000 / 0x2000 no pad cru) NÃO foi medido. C_00/C_01 (bancos de MENU) não definem "
+        "o id 8 — só os C_02..C_0D de personagem: em jogo o banco de cat 0 é o C_02")),
+    "impacto_projetil": dict(cat=0, id=13, conf="DECLARADO", prova=(
+        "0x80045b10 0x80045e68 0x800465fc, todos em 0x80045950 — a rotina de "
+        "colisão/integração de projétil que `exe_combat.md` linha 268 encadeia como "
+        "0x80045094 -> 0x80045950 -> 0x80040d40. Nome DECLARADO")),
+    "sala_entrada": dict(cat=0, id=14, conf="DECLARADO", prova=(
+        "0x80077f40 (a1=0 -> UI/global) em 0x80077ed4, que é chamada por 0x800495fc — "
+        "DENTRO do room-loader 0x800493ec, o mesmo que carrega o banco de cat 0 em "
+        "0x800495d0. Som de entrada/ambiente de sala. Nome DECLARADO")),
     "acao_15": dict(cat=0, id=15, conf="DECLARADO", prova=(
-        "call site 0x800485e4 (a1=0 -> UI). NÃO PROVADO")),
+        "call site 0x800485e4 (a1=0 -> UI) em 0x80048520, chamada por 0x8002378c dentro do "
+        "fluxo de jogo 0x80023268. NÃO SEI o evento; nenhum banco C_ do disco define o "
+        "id 15, então não há amostra")),
+    # ---- inventário / comandos: ids de UI com evento MEDIDO no handler ----
+    "item_pego": dict(cat=0, id=5, conf="MEDIA", prova=(
+        "os 2 pedidos da JANELA DE OBTER ITEM (0x80069c3c, sub-estado 0xb / kind 1 — "
+        "`exe_items.md §2.3`) são 0x80069ed0 (`a0 = 5` imediato) e 0x80069fb0, cujo `a0` sai "
+        "do DELAY SLOT do `beq v0,a1,0x80069f9c` de 0x80069eb8 (`addiu a0,zero,5`) — único "
+        "predecessor do bloco. Ou seja pegar item usa o MESMO id do 'cancelar' (5); é o dado "
+        "que manda, não é erro de leitura")),
+    "combinar_ok": dict(cat=0, id=6, conf="MEDIA", prova=(
+        "0x80068a10, no executor genérico da COMBINAÇÃO (0x80068024, `menu_comandos.md §5`). "
+        "O `a0` não é imediato no bloco: o bloco 0x800689b0 tem 7 predecessores "
+        "(0x8006857c 0x800685c4 0x80068660 0x800686a4 0x8006884c 0x8006892c 0x80068970) e "
+        "**todos os 7 carregam `a0 = 6`** — logo a combinação bem-sucedida toca o id 6")),
+    "combinar_erro": dict(cat=0, id=7, conf="MEDIA", prova=(
+        "0x800687b0 (`a0 = 7` imediato), no mesmo executor 0x80068024 — o ramo em que a "
+        "receita não fecha. Mesma família do 'inválido' de 0x800666bc")),
+    "examinar": dict(cat=0, id=6, conf="MEDIA", prova=(
+        "0x80069454 (`a0 = 6`) em 0x80069280 = comando 2 = CHECK/examinar "
+        "(`menu_comandos.md §6`); o outro pedido da mesma função é o id 5 de sair "
+        "(0x80069470)")),
+    "equipar": dict(cat=0, id=5, conf="MEDIA", prova=(
+        "0x80067b40 (`a0 = 5`) em 0x800676b8 = comando 0 = USE/EQUIP "
+        "(`menu_comandos.md §3`) — é o ÚNICO pedido de SE dessa função")),
+    "bau_mover": dict(cat=2, id=0x15, conf="DECLARADO", prova=(
+        "4 pedidos de cat 2 / id 0x15 em 0x800646f0 (sub-estado 1 da tela do BAÚ, tabela "
+        "0x8009f4e4[1]): 0x80064b2c 0x80064bc8 0x80064d1c 0x80064d90 — a transferência de "
+        "item entre inventário e caixa. É banco de SALA (cat 2), logo SEM amostra no port")),
+    "bau_abrir": dict(cat=2, id=0x14, conf="DECLARADO", prova=(
+        "0x80051578 (`a0 = 0x214`) em 0x800514f0 = o driver da tela da CAIXA DE ITENS que o "
+        "`sce 9` instala em `gs+0x75e0` (`menu_bau.md`, 0x800514e0). Banco de SALA: sem "
+        "amostra no port")),
+    "subir": dict(cat=2, id=0, conf="MEDIA", prova=(
+        "0x8003b224 em 0x8003b1c4 = a macro-ação 9 (SUBIR/DESCER; o port a reimplementa em "
+        "`port/script_vm/subir.gd`). Antes do SE a função grava `+0xc8 = 6`, `+0xc9 = 0`, "
+        "`+0xca = 7` e depois chama a vibração 0x8003893c. Banco de SALA: sem amostra")),
+    "subir_impacto": dict(cat=2, id=0x2c, conf="DECLARADO", prova=(
+        "0x8003b3e8 (`a0 = 0x22c`) em 0x8003b244 = a animação da macro-ação 9, no sub 5 com "
+        "`+0xc9 == 1` — é o que `subir.gd` já chama de SFX_IMPACTO. Banco de SALA")),
+    "mensagem_avanca": dict(cat=0, id=4, conf="DECLARADO", prova=(
+        "0x8003054c e 0x800308f8 (`a0 = 4`, a1 = 0) nos dois desenhadores de mensagem "
+        "0x800303ec / 0x80030764, que o interpretador 0x8002fee8 chama em 0x800302e4 / "
+        "0x800302d4 (`menu_texto.md §linha 413`). Mesmo id do 'mover cursor'")),
+    "mensagem_fecha": dict(cat=0, id=5, conf="DECLARADO", prova=(
+        "0x800304e0 e 0x8003088c (`a0 = 5`) nos mesmos dois desenhadores de mensagem")),
     # ---- porta: banco cat 4, embutido nos DOOR*.DO1 ----
     # MEDIDO nesta rodada: o ÚNICO id de cat 4 que o motor toca é o **1**. A máquina de
     # estados da animação de porta é a tabela de 3 funções `0x800979f0` =
@@ -869,6 +955,31 @@ def verificar():
             "stage %d: usa dtex %d mas o array tem so %d entradas"
             % (s, max(usa.get(s, {0})), len(arr)))
 
+    # ── os 155 call sites de SE_pede (§12 do doc) ──
+    tab = tabela_callsites()
+    chk(len(tab) == 155, "esperava 155 `jal 0x800746c0`, achei %d" % len(tab))
+    chk(all(r["fn"] is not None for r in tab), "todo call site tem funcao envolvente")
+    chk(all(r["cat"] is not None or r["addr"] in A0_DINAMICO for r in tab),
+        "todo sitio sem `cat` constante tem entrada em A0_DINAMICO")
+    chk(all(r["idx"] is not None or r["idx_expr"] for r in tab),
+        "todo sitio sem `idx` constante explica de onde o idx sai")
+    chk(sum(1 for r in tab if r["cat"] == 1 and r["idx"] == 0) == 17,
+        "o ESTOURO da arma (cat 1 / id 0) tem 17 sitios")
+    chk(sum(1 for r in tab if r["cat"] == 0 and r["idx"] == 8) == 2,
+        "o id 8 (virar pagina do ARQUIVO) tem exatamente 2 sitios, um por direcao")
+    chk(sum(1 for r in tab if r["cat"] == 4) == 1,
+        "cat 4 (porta) tem UM sitio no EXE inteiro")
+    chk(sum(1 for r in tab if r["conf"] == "NAO_SEI") == 17,
+        "17 sitios seguem sem evento identificado (se mudar, atualize o doc §12)")
+    # cada acao nomeada com call site de cat/id constante tem de aparecer na tabela
+    pares = set((r["cat"], r["idx"]) for r in tab)
+    for nome, a in ACOES.items():
+        if nome.startswith("porta_som"):
+            continue                      # ids sem call site, declarados como tal
+        chk((a["cat"], a["id"]) in pares,
+            "a acao '%s' (cat %d / id %d) nao aparece em nenhum dos 155 sitios"
+            % (nome, a["cat"], a["id"]))
+
     print("verificacao: %d ok, %d falha" % (ok, falha))
     return ok, falha
 
@@ -890,6 +1001,257 @@ def tabela(nome):
 
 SE_PEDE = 0x800746C0
 
+# ═══════════════ Os 155 `jal 0x800746c0` — a tabela COMPLETA ═══════════════
+# Por que ela existe: o anel `0x800e0de4` só é escrito por `0x800746c0` e só é lido/zerado
+# por `0x800744e0` (§2 do doc), logo **todo** som do jogo passa por um destes 155 sítios.
+# Fechar a lista de uma vez é o que evita perseguir som item a item.
+#
+# `conf` (o mesmo critério do resto do repo):
+#   PROVADO   — o (cat, idx) E o evento saem da desmontagem, com endereço
+#   DECLARADO — o (cat, idx) é medido; o NOME do evento é escolha nossa
+#   NAO_SEI   — o (cat, idx) é medido e o evento não foi identificado
+#
+# `FN_ROTULO[fn] = (rótulo da função, evento padrão dos sítios dela, conf)`.
+FN_ROTULO = {
+    0x80016150: ("estado 2 da animação de PORTA (tabela 0x800979f0[2])",
+                 "porta: transição (o único cat 4 do EXE)", "PROVADO"),
+    0x8001C38C: ("tick de OBJETO do cenário", "objeto: SE empacotado em u8@obj+0x19", "PROVADO"),
+    0x8001C49C: ("tick de OBJETO do cenário (2ª variante)",
+                 "objeto: SE empacotado em u8@obj+0x19", "PROVADO"),
+    0x8001C5BC: ("tick de OBJETO tipo 5/6 (u8@obj+1)",
+                 "objeto: SE de sala com idx = u16@obj+0x22", "PROVADO"),
+    0x8001D210: ("IA do inimigo tipo 21 (sub-rotina)", "inimigo t21: som de ação", "DECLARADO"),
+    0x8001D7D0: ("IA do inimigo tipo 21 (exe_ai.md §linha 47, 2340 B)",
+                 "inimigo t21: som de ação", "DECLARADO"),
+    0x8001E0F4: ("IA do inimigo tipo 22 (exe_ai.md, 848 B)",
+                 "inimigo t22: som de ação", "DECLARADO"),
+    0x8001E444: ("IA do ZUMBI (tipo 23, exe_ai.md §2)", "zumbi: som de ação", "DECLARADO"),
+    0x8002198C: ("função de ator alcançada por tabela", "", "NAO_SEI"),
+    0x80023268: ("fluxo de jogo / task 0 (menu_pc_sys.md §linha 170)",
+                 "abrir a tela de STATUS (id 6) / entrar no MAPA (id 9)", "PROVADO"),
+    0x80024CE8: ("região de DRAW/ator (emd_skinning.md §linha 362)", "", "NAO_SEI"),
+    0x80024F74: ("chamada por 0x80024ce8 (DRAW/ator)", "", "NAO_SEI"),
+    0x800250CC: ("chamada por 0x80024ce8 (DRAW/ator)", "", "NAO_SEI"),
+    0x8002FEE8: ("interpretador do stream de mensagem/cena (opcodes 0xEA..0xFE, "
+                 "jump-table 0x80010508)",
+                 "SE pedido pelo SCRIPT: cat 2, idx = próximo byte do stream", "PROVADO"),
+    0x800303EC: ("desenhador de mensagem (menu_texto.md §linha 413)",
+                 "caixa de mensagem: avançar (4) / fechar (5)", "DECLARADO"),
+    0x80030764: ("desenhador de mensagem, 2ª variante",
+                 "caixa de mensagem: avançar (4) / fechar (5)", "DECLARADO"),
+    0x800366EC: ("chamada por 0x80036d5c/0x80036f10/0x80036f40", "", "NAO_SEI"),
+    0x8003A7D8: ("rotina 7 = MÁQUINA DE MIRA/TIRO (exe_combat.md §1.3)",
+                 "mira: fim do sub 2 / entrada no sub 3 (FOGO) — NÃO é o estouro", "NAO_SEI"),
+    0x8003B1C4: ("macro-ação 9 = SUBIR/DESCER (port: script_vm/subir.gd)",
+                 "subir: início do movimento", "PROVADO"),
+    0x8003B244: ("macro-ação 9, animação (menu_bau.md §linha 267)",
+                 "subir: impacto/aterrissagem", "DECLARADO"),
+    0x8003CEA0: ("macro-ação 13, sub 0: anim 18 + contador gs+0x785e + SE do inimigo",
+                 "player AGARRADO (voz) + mordida do inimigo (cat 3)", "DECLARADO"),
+    0x8003D1A8: ("reação de DANO do player, sub 0 (anim 4)", "dano ao player", "PROVADO"),
+    0x8003D2D8: ("reação de DANO do player (id 1 ou 2 por paridade de u8@player+5)",
+                 "dano ao player (variante)", "PROVADO"),
+    0x8003D4C0: ("reação de DANO do player (escritores de anim de hurt 0x8003d52c+)",
+                 "dano ao player (variante)", "PROVADO"),
+    0x8003D780: ("reação de DANO do player (escritores 0x8003d910/0x8003d990)",
+                 "dano ao player (variante)", "PROVADO"),
+    0x8003DA3C: ("reação de DANO do player (última função da região)",
+                 "dano ao player (variante)", "PROVADO"),
+    0x8003E4D0: ("handler da PISTOLA (exe_ai.md §linha 159; lê stats em 0x8009cf28)",
+                 "arma: som de mecanismo", "DECLARADO"),
+    0x8003EF08: ("subestado 1 da arma = hold/aim (recuo_tiro.md §linha 49)",
+                 "arma: mecanismo do sub 1", "DECLARADO"),
+    0x8003F520: ("subestado 4 da arma = **RECARGA** (recuo_tiro.md §linha 50)",
+                 "RECARGA da arma", "PROVADO"),
+    0x8003FB78: ("subestado 8 da arma (recuo_tiro.md §linha 51)",
+                 "arma: mecanismo do sub 8", "DECLARADO"),
+    0x8003FFD8: ("subestado de arma (2ª tabela)", "arma: mecanismo", "DECLARADO"),
+    0x800402F4: ("subestado de arma (2ª tabela)", "arma: mecanismo", "DECLARADO"),
+    0x80040764: ("subestado de arma (2ª tabela)", "arma: mecanismo (id dinâmico)", "DECLARADO"),
+    0x80040900: ("subestado de arma (ids 18/19)", "", "NAO_SEI"),
+    0x80040F34: ("handler da arma w=1 = FACA (0x8009ced8[0])",
+                 "facada (A_01 define só os ids 6..10)", "DECLARADO"),
+    0x80045094: ("chamada por 0x80038d34 (exe_combat.md §linha 268)", "", "NAO_SEI"),
+    0x800452E8: ("vizinha de 0x80045094 (projétil)", "", "NAO_SEI"),
+    0x80045950: ("colisão/integração de PROJÉTIL (0x80045094 -> 0x80045950 -> 0x80040d40)",
+                 "impacto do projétil", "DECLARADO"),
+    0x80048520: ("chamada por 0x8002378c, dentro do fluxo de jogo 0x80023268", "", "NAO_SEI"),
+    0x80050D28: ("sce 1 = produtor de PORTA (jump-table de SCE 0x8009e0bc[1])",
+                 "porta: trancada / destrancar / bloqueada", "PROVADO"),
+    0x800514F0: ("driver da tela da CAIXA DE ITENS (sce 9 grava em gs+0x75e0)",
+                 "baú: abrir", "DECLARADO"),
+    0x800516A4: ("sce 11 (jump-table de SCE 0x8009e0bc[11]); testa flag 0x80078930 e "
+                 "mostra a mensagem 0x72", "", "NAO_SEI"),
+    0x80055038: ("handler do opcode SCD 0x77", "SE por script: cat/idx nos operandos",
+                 "PROVADO"),
+    0x8005518C: ("handler do opcode SCD 0x78",
+                 "ambiente por script: cat = arg + 5, idx 0", "PROVADO"),
+    0x80063850: ("tela de ARQUIVO — estado 8 (menu_pc_sys.md §6.1)",
+                 "arquivo: virar página (8), cursor (4), sair (5)", "PROVADO"),
+    0x80063CAC: ("tela de ARQUIVO — estado 9 (carrega FILEI.TIM)",
+                 "arquivo: fechar a leitura", "DECLARADO"),
+    0x8006446C: ("tela do BAÚ — sub 0 (tabela 0x8009f4e4[0])",
+                 "baú: confirmar / cancelar / mover", "DECLARADO"),
+    0x800646F0: ("tela do BAÚ — sub 1 (tabela 0x8009f4e4[1])",
+                 "baú: transferir item (cat 2 / id 0x15)", "DECLARADO"),
+    0x800650C4: ("tela do BAÚ — outro sub", "baú: cancelar", "DECLARADO"),
+    0x80066604: ("GRADE do inventário — sub 0 (menu_pc_sys.md §6.2)",
+                 "inventário: confirmar/vazio/MAPA/ARQ./sair/mover", "PROVADO"),
+    0x80066920: ("lista de COMANDOS — sub 2 (menu_comandos.md §linha 34)",
+                 "comandos: mover", "DECLARADO"),
+    0x80066CA0: ("sub 5 = entrar no ARQUIVO (põe ctx+0x10 = 7)",
+                 "arquivo: entrar / mover / cancelar", "DECLARADO"),
+    0x800676B8: ("comando 0 = USE / EQUIP (menu_comandos.md §3)", "equipar/usar", "PROVADO"),
+    0x80067C14: ("2º cursor da COMBINAÇÃO — sub 0xf (menu_comandos.md §linha 372)",
+                 "combinar: mover / recusado / cancelar", "PROVADO"),
+    0x80068024: ("executor genérico da COMBINAÇÃO (menu_comandos.md §5)",
+                 "combinar: deu (6) / não combina (7)", "PROVADO"),
+    0x80068A5C: ("espera de mensagem da combinação (sub 4)", "combinar: cancelar", "DECLARADO"),
+    0x80068ABC: ("espera de resposta da combinação (sub 5)", "combinar: cancelar",
+                 "DECLARADO"),
+    0x80069280: ("comando 2 = CHECK / examinar (menu_comandos.md §6)",
+                 "examinar item", "PROVADO"),
+    0x80069C3C: ("janela de OBTER ITEM (exe_items.md §2.3)", "item pego", "PROVADO"),
+    0x8006A234: ("sub 0xc = confirmação/mensagem (menu_pc_sys.md §linha 289)",
+                 "confirmar / cancelar", "DECLARADO"),
+    0x8006D948: ("braço 5 da tabela de init 0x8001100c (kind 5 = mensagem/mapa por item)",
+                 "entrar em sub-tela (id 9)", "PROVADO"),
+    0x8006F708: ("MAPA — sub 0 (tabela 0x800a0500[0], menu_mapa.md §linha 656)",
+                 "mapa: navegar", "DECLARADO"),
+    0x8006FC68: ("MAPA — sub 2 (tabela 0x800a0500[2])", "mapa: navegar/sair", "DECLARADO"),
+    0x80070024: ("lógica do MAPA (ESP 5, menu_pc_sys.md §linha 262)", "mapa: sair",
+                 "DECLARADO"),
+    0x800775A0: ("helper: pede SE do INIMIGO (cat 3) com idx = argumento",
+                 "inimigo: SE por id (cat 3)", "PROVADO"),
+    0x80077618: ("helper: pede SE do INIMIGO (cat 3), 2ª variante",
+                 "inimigo: SE por id (cat 3)", "PROVADO"),
+    0x800776B0: ("SFX de tiro/impacto na SALA (exe_audio.md §6.4)",
+                 "impacto/ricochete na sala (cat 2, idx variável)", "PROVADO"),
+    0x80077ED4: ("chamada por 0x800495fc, dentro do room-loader 0x800493ec",
+                 "entrada de sala / ambiente global", "DECLARADO"),
+    0x80077F60: ("ligador de ambiente cat 5/6/7 (idx 0), sob os bits 1/2/4 de um byte de "
+                 "estado", "", "NAO_SEI"),
+}
+# Os 17 handlers POR ARMA da tabela `0x8009ced8[w-1]` — todos pedem o ESTOURO (cat 1 / id 0).
+for _fn in (0x80040F90, 0x800410F8, 0x80041594, 0x800418CC, 0x80041A80, 0x80041C34,
+            0x80041DE8, 0x80041F9C, 0x800421F8, 0x80042474, 0x80042660, 0x800427D8,
+            0x80042AE4, 0x80042E34, 0x80043328, 0x800434F8, 0x800439F8):
+    FN_ROTULO[_fn] = ("handler POR ARMA (tabela 0x8009ced8, índice w-1)",
+                      "ESTOURO da arma (cat 1 / id 0)", "PROVADO")
+
+# Sítios com evento próprio (sobrepõe o da função).
+SITE_EVENTO = {
+    0x80023D10: ("abrir a tela de STATUS (id 6)", "PROVADO"),
+    0x80023DB8: ("abrir a tela de STATUS (id 6, ctx+0x04 == 0) OU entrar no MAPA "
+                 "(id 9, ctx+0x04 == 4)", "PROVADO"),
+    0x8003AD6C: ("mira: sub 2 -> 3 (mexe em player+0x6e e no contador u16 0x800d1f96)",
+                 "NAO_SEI"),
+    0x8003B224: ("subir: início do movimento (grava +0xc8=6/+0xc9=0/+0xca=7 e vibra)",
+                 "PROVADO"),
+    0x8003B3E8: ("subir: impacto (sub 5 com +0xc9 == 1)", "DECLARADO"),
+    0x8003CF10: ("player AGARRADO: voz (anim 18 + gs+0x785e++)", "DECLARADO"),
+    0x8003D114: ("mordida do inimigo que agarrou (cat 3, id 3 ou 19 pelo tipo)", "DECLARADO"),
+    0x8003F5E8: ("RECARGA da arma", "PROVADO"),
+    0x80050DD8: ("porta: BLOQUEADA (Key_Type == 0xfe) + mensagem 0x11", "PROVADO"),
+    0x80050E10: ("porta: TRANCADA para sempre (Key_Type == 0xff) + mensagem 0x12", "PROVADO"),
+    0x80050E74: ("porta: DESTRANCAR com a chave", "PROVADO"),
+    0x80050ED8: ("porta: TRANCADA — não tem a chave", "PROVADO"),
+    0x80050F14: ("porta: TRANCADA — não tem a chave (2º ramo)", "PROVADO"),
+    0x80051578: ("baú: abrir a caixa de itens", "DECLARADO"),
+    0x800638F4: ("arquivo: confirmar já na última página (ctx+0xbd >= páginas-1) -> sub 4",
+                 "PROVADO"),
+    0x80063984: ("arquivo: VIRAR PÁGINA para trás (ctx+0xbd -= 1, ctx+0xc6 = 2)", "PROVADO"),
+    0x80063A2C: ("arquivo: VIRAR PÁGINA para frente (ctx+0xbd += 1, ctx+0xc6 = -2)",
+                 "PROVADO"),
+    0x80063C20: ("arquivo: sair da leitura", "PROVADO"),
+    0x80063E74: ("arquivo: fechar a tela (estado 9 -> 13)", "DECLARADO"),
+    0x8006669C: ("inventário: confirmar em slot COM item", "PROVADO"),
+    0x800666BC: ("inventário: confirmar em slot VAZIO", "PROVADO"),
+    0x800666F0: ("inventário: botão MAPA (ctx+0x1c == -1 -> sub 4)", "PROVADO"),
+    0x80066728: ("inventário: botão ARQ. (ctx+0x1c == -2 -> sub 5)", "PROVADO"),
+    0x8006675C: ("inventário: FECHAR (cancelar ou botão SAIR)", "PROVADO"),
+    0x8006688C: ("inventário: mover o cursor da grade", "PROVADO"),
+    0x80067B40: ("equipar/usar: confirma e sai (comando 0)", "PROVADO"),
+    0x800687B0: ("combinar: receita NÃO fecha", "PROVADO"),
+    0x80068A10: ("combinar: DEU (7 predecessores, todos com a0 = 6)", "PROVADO"),
+    0x80069454: ("examinar: entra no texto de exame", "PROVADO"),
+    0x80069ED0: ("item PEGO (janela de obter)", "PROVADO"),
+    0x80069FB0: ("item PEGO — a0 vem do delay slot do beq de 0x80069eb8 (a0 = 5)", "PROVADO"),
+    0x800517D0: ("sce 11: a0 = 0x228 vem do delay slot do bnez de 0x8005175c", "NAO_SEI"),
+    0x80077B50: ("impacto/ricochete de bala na sala (cat 2, idx = base + a0)", "PROVADO"),
+    0x80064740: ("baú: cancelar", "DECLARADO"),
+    0x80064AA4: ("baú: confirmar", "DECLARADO"),
+    0x80064B2C: ("baú: transferir item (cat 2 / id 0x15)", "DECLARADO"),
+    0x80064BC8: ("baú: transferir item (cat 2 / id 0x15)", "DECLARADO"),
+    0x80064D1C: ("baú: transferir item (cat 2 / id 0x15)", "DECLARADO"),
+    0x80064D90: ("baú: transferir item (cat 2 / id 0x15)", "DECLARADO"),
+    0x80069470: ("examinar: sair do texto de exame", "DECLARADO"),
+}
+# Os 7 sítios de `arma: mecanismo` que moram DENTRO dos handlers por arma — o evento é o do
+# sítio, não o da função (a função existe para o ESTOURO, mas este `jal` é o outro som).
+for _s in (0x800414E0, 0x80041A14, 0x80041BC8, 0x80041D7C, 0x80041F30, 0x80043244,
+           0x80043928):
+    SITE_EVENTO[_s] = ("arma: som de mecanismo (id = nibble dos props em RAM)", "DECLARADO")
+
+# Sítios em que o `a0` NÃO é imediato: `(cat, "idx", como_o_idx_sai)`.
+# `cat = None` = nem o cat é constante.
+A0_DINAMICO = {
+    0x8001C3E0: (None, "u8@obj+0x19", "cat = byte >> 6, idx = byte & 0x3f (0x8001c3b0+)"),
+    0x8001C440: (None, "u8@obj+0x19", "cat = byte >> 6, idx = byte & 0x3f (0x8001c410+)"),
+    0x8001C578: (None, "u8@obj+0x19", "cat = byte >> 6, idx = byte & 0x3f (0x8001c548+)"),
+    0x8001C838: (2, "u16@obj+0x22 + (rand & 1)", "objeto tipo 5 (u8@obj+1 == 5)"),
+    0x8001C864: (2, "u16@obj+0x22", "objeto tipo 6 (u8@obj+1 == 6)"),
+    0x8001DFEC: (1, "17", "`ori a0,a0,0x111` em 0x8001dfe0 com o `lui a0,1` fora da janela"),
+    0x8001EC4C: (3, "8 ou 24", "s0 = 8 / 0x18 por `u8@+0x12f == u8@(*0x800cc858)+3`"),
+    0x8001EDB8: (2, "14 ou 30", "s0 = 0xe / 0x1e pelo mesmo teste de tipo"),
+    0x80030010: (2, "byte do stream", "`lbu a0,(s0)` + `ori a0,a0,0x200`; s0 = PC do script"),
+    0x8003D114: (3, "3 ou 19", "v1 = 3 / 0x13 por `sltiu (u8@tipo - 1), 0x1e`"),
+    0x8003D354: (0, "1 ou 2", "`(u8@player+5 & 1) + 1`"),
+    0x8003F5E8: (1, "(u16@*(player+0xe4) >> 12) - 1",
+                 "props da ARMA em RAM; `andi 0xf000` + `srl 12` + `-1` (0x8003f5b0+)"),
+    0x8004082C: (1, "(u16@*(player+0xe4) >> 12) - 1", "mesmo idioma de 0x8003f5e8"),
+    0x80040F78: (1, "(u16@*(player+0xe4) >> 12) - 1", "mesmo idioma (FACA: A_01 tem 6..10)"),
+    0x800414E0: (1, "(u16@*(player+0xe4) >> 12) - 1", "mesmo idioma, após o hitscan"),
+    0x80041A14: (1, "(u16@*(player+0xe4) >> 12) - 1", "mesmo idioma"),
+    0x80041BC8: (1, "(u16@*(player+0xe4) >> 12) - 1", "mesmo idioma"),
+    0x80041D7C: (1, "(u16@*(player+0xe4) >> 12) - 1", "mesmo idioma"),
+    0x80041F30: (1, "(u16@*(player+0xe4) >> 12) - 1", "mesmo idioma"),
+    0x80043244: (1, "(u16@*(player+0xe4) >> 12) - 1", "mesmo idioma"),
+    0x80043928: (1, "(u16@*(player+0xe4) >> 12) - 1", "mesmo idioma"),
+    0x80055164: (None, "operandos do opcode 0x77",
+                 "a0 = (arg<<16) | (a3<<8) | (a2 & 0xff) — cat E idx vêm do script"),
+    0x800553D0: (None, "0", "a0 = (arg + 5) << 8 -> cat = arg + 5, idx 0 (opcode 0x78)"),
+    0x80077600: (3, "a2 (+0x10 quando o tipo casa)", "helper de SE de inimigo"),
+    0x80077698: (3, "a3 (+0x10 quando o tipo casa)", "helper de SE de inimigo"),
+    0x80077B50: (2, "s5", "s5 = base + a0, base em {0x17, 0x1a, ret&0x7f} ou 0x2d (§6.4)"),
+}
+
+# Sítios cujo `a0` é constante mas vem do DELAY SLOT de um desvio para o bloco do `jal`
+# (o back-walk linear pega a instrução do bloco vizinho, que não é o caminho executado).
+# Cada um foi conferido enumerando TODOS os predecessores do bloco.
+A0_POR_PREDECESSOR = {
+    0x800517D0: (0x228, "único predecessor: `bnez v0, 0x800517b8` em 0x8005175c, delay slot "
+                        "`addiu a0,zero,0x228`"),
+    0x80068A10: (0x6, "7 predecessores do bloco 0x800689b0 (0x8006857c 0x800685c4 0x80068660 "
+                      "0x800686a4 0x8006884c 0x8006892c 0x80068970) e TODOS com a0 = 6"),
+    0x80069FB0: (0x5, "único predecessor: `beq v0,a1,0x80069f9c` em 0x80069eb8, delay slot "
+                      "`addiu a0,zero,5`"),
+}
+
+
+def funcoes_do_exe(e):
+    """Endereços de início de função: `addiu $sp,$sp,-N` = palavra 0x27BD8xxx..0x27BDFxxx.
+
+    Mesmo critério do `exe_fn.Ana`, mas sem desmontar o `.text` inteiro (só compara a
+    palavra), o que deixa isto rápido o suficiente para rodar dentro do `--verificar`.
+    """
+    out = []
+    for o in range(0, len(e.text) - 4, 4):
+        w = struct.unpack_from("<I", e.text, o)[0]
+        if (w >> 16) == 0x27BD and (w & 0x8000):
+            out.append(e.base + o)
+    return out
+
 
 def callsites():
     """Os `jal 0x800746c0` do EXE com `(cat, idx)` recuperado por back-walk do imediato.
@@ -902,8 +1264,52 @@ def callsites():
         É o que sustenta o **NÃO PROVADO** do som de PASSO.
 
     Devolve [(addr, cat, idx, a0_bruto)]; `cat`/`idx` = None quando `a0` vem de registrador.
+    Para a tabela completa (função envolvente, `a1`, evento e confiança) use
+    `tabela_callsites()`.
+    """
+    return [(r["addr"], r["cat"], r["idx"], r["a0"]) for r in tabela_callsites()]
+
+
+def _back(md, e, h, reg, n=28):
+    """Última escrita CONSTANTE em `reg` na janela de `n` instruções antes de `h`.
+
+    Varredura linear (não segue fluxo): é o que resolve 126 dos 155 sítios. Onde ela falha
+    porque o valor vem do delay slot de um desvio, a resposta está em `A0_POR_PREDECESSOR`,
+    conferida enumerando os predecessores do bloco. Devolve (valor, texto da instrução).
+    """
+    lo = h - n * 4
+    val, lui, txt = None, None, ""
+    for i in md.disasm(e.text[e.off(lo):e.off(h) + 8], lo):
+        ops = [x.strip() for x in i.op_str.split(",")]
+        if not ops or ops[0] != reg:
+            continue
+        txt = "%s %s" % (i.mnemonic, i.op_str)
+        if i.mnemonic == "lui":
+            lui = int(ops[1], 0) << 16
+            val = lui
+        elif i.mnemonic in ("ori", "addiu", "addi"):
+            if ops[1] == "$zero":
+                val = int(ops[2], 0) & 0xFFFF
+            elif ops[1] == reg and lui is not None:
+                val = lui | (int(ops[2], 0) & 0xFFFF)
+            else:
+                val = None
+        elif i.mnemonic == "move" and len(ops) > 1 and ops[1] == "$zero":
+            val = 0
+        else:
+            val = None
+    return val, txt
+
+
+def tabela_callsites():
+    """A tabela COMPLETA dos 155 `jal 0x800746c0`, uma linha por sítio.
+
+    Cada linha: endereço do `jal`, função envolvente, `cat`/`idx` pedidos (com o texto da
+    instrução que produziu o `a0` — nada é deduzido), se o `a1` é 0 (UI, sem posição 3D) ou
+    um ponteiro de posição, o EVENTO de jogo e a CONFIANÇA.
     """
     from exe_parse import Exe
+    import bisect
     import capstone
 
     e = Exe(paths.extracted("SLUS_009.23"))
@@ -913,31 +1319,36 @@ def callsites():
     alvo = (3 << 26) | ((SE_PEDE & 0x0FFFFFFF) >> 2)          # jal = opcode 3
     hits = [e.base + o for o in range(0, len(e.text) - 4, 4)
             if struct.unpack_from("<I", e.text, o)[0] == alvo]
+    inicios = funcoes_do_exe(e)
 
     out = []
     for h in hits:
-        lo = h - 28 * 4
-        val, lui = None, None
-        for i in md.disasm(e.text[e.off(lo):e.off(h) + 8], lo):
-            ops = [x.strip() for x in i.op_str.split(",")]
-            if not ops or ops[0] != "$a0":
-                continue
-            if i.mnemonic == "lui":
-                lui = int(ops[1], 0) << 16
-                val = lui
-            elif i.mnemonic in ("ori", "addiu", "addi"):
-                if ops[1] == "$zero":
-                    val = int(ops[2], 0) & 0xFFFF
-                elif ops[1] == "$a0" and lui is not None:
-                    val = lui | (int(ops[2], 0) & 0xFFFF)
-                else:
-                    val = None
-            else:
-                val = None
-        if val is None:
-            out.append((h, None, None, None))
-        else:
-            out.append((h, (val >> 8) & 0xFF, val & 0xFF, val))
+        val, txt = _back(md, e, h, "$a0")
+        a1, txt1 = _back(md, e, h, "$a1")
+        k = bisect.bisect_right(inicios, h) - 1
+        fn = inicios[k] if k >= 0 else None
+        rot, evento, conf = FN_ROTULO.get(fn, ("", "", "NAO_SEI"))
+        origem = txt
+        if h in A0_POR_PREDECESSOR:
+            val, origem = A0_POR_PREDECESSOR[h][0], A0_POR_PREDECESSOR[h][1]
+        cat = idx = None
+        idx_txt = ""
+        if val is not None:
+            cat, idx = (val >> 8) & 0xFF, val & 0xFF
+            idx_txt = str(idx)
+        if h in A0_DINAMICO:
+            c, ix, como = A0_DINAMICO[h]
+            cat, idx, idx_txt, origem = c, None, ix, "%s [%s]" % (txt, como)
+        if h in SITE_EVENTO:
+            evento, conf = SITE_EVENTO[h]
+        out.append({
+            "addr": h, "fn": fn, "fn_rotulo": rot,
+            "cat": cat, "idx": idx, "idx_expr": idx_txt, "a0": val,
+            "a0_origem": origem,
+            "a1": ("0 (UI, sem posição 3D)" if a1 == 0 else
+                   ("posição: %s" % txt1 if txt1 else "?")),
+            "evento": evento, "conf": conf,
+        })
     return out
 
 
@@ -947,23 +1358,33 @@ PLAYER_ACOES_N = 16
 
 
 def imprimir_callsites():
-    cs = callsites()
-    print("jal 0x800746c0: %d call sites (%d com a0 constante)"
-          % (len(cs), sum(1 for c in cs if c[1] is not None)))
-    print(" addr      a0        cat idx")
-    for addr, cat, idx, bruto in cs:
-        if cat is None:
-            print(" %08x  (registrador)" % addr)
-        else:
-            print(" %08x  0x%-7x %3d %3d" % (addr, bruto, cat, idx))
+    tab = tabela_callsites()
+    cs = [(r["addr"], r["cat"], r["idx"], r["a0"]) for r in tab]
+    id_conf = {}
+    for r in tab:
+        id_conf.setdefault(r["conf"], 0)
+        id_conf[r["conf"]] += 1
+    print("jal 0x800746c0: %d call sites (%d com a0 constante) — %s"
+          % (len(cs), sum(1 for c in cs if c[3] is not None),
+             ", ".join("%s %d" % (k, v) for k, v in sorted(id_conf.items()))))
+    print(" addr      fn        cat idx   a1        conf       evento")
+    for r in tab:
+        print(" %08x  %08x %3s %-5s %-9s %-10s %s"
+              % (r["addr"], r["fn"] or 0,
+                 "?" if r["cat"] is None else r["cat"], r["idx_expr"] or "?",
+                 "0" if r["a1"].startswith("0") else "pos", r["conf"],
+                 r["evento"] or "(NÃO SEI) " + r["fn_rotulo"]))
     por_cat = {}
-    for _a, cat, idx, _b in cs:
-        if cat is not None:
-            por_cat.setdefault(cat, []).append(idx)
-    print("\npor cat:")
+    for r in tab:
+        if r["cat"] is not None:
+            por_cat.setdefault(r["cat"], []).append(r["idx"])
+    print("\npor cat (idx None = pedido com id dinâmico):")
     for cat in sorted(por_cat):
-        ids = sorted(set(por_cat[cat]))
-        print("  cat %d: %d pedidos, ids %s" % (cat, len(por_cat[cat]), ids))
+        ids = sorted(set(i for i in por_cat[cat] if i is not None))
+        din = sum(1 for i in por_cat[cat] if i is None)
+        print("  cat %d: %d pedidos (%d dinâmicos), ids %s"
+              % (cat, len(por_cat[cat]), din, ids))
+    print("  sem cat constante: %d" % sum(1 for r in tab if r["cat"] is None))
     n_arma = sum(1 for _a, cat, idx, _b in cs if cat == 1 and idx == 0)
     print("\ncat 1 / id 0 (estouro da arma, tabela 0x8009ced8): %d call sites" % n_arma)
 
@@ -986,9 +1407,57 @@ def imprimir_callsites():
     print("  => som de PASSO: NÃO PROVADO (nenhum call site amarrável)")
 
 
+CALLSITES_JSON = "se_callsites.json"
+
+
+def gerar_callsites():
+    """Escreve `<out>/data/se_callsites.json` — os 155 sítios, versionáveis."""
+    tab = tabela_callsites()
+    por_conf, por_cat = {}, {}
+    for r in tab:
+        por_conf[r["conf"]] = por_conf.get(r["conf"], 0) + 1
+        c = "?" if r["cat"] is None else str(r["cat"])
+        por_cat[c] = por_cat.get(c, 0) + 1
+    dados = {
+        "_meta": {
+            "descricao": "Os 155 `jal 0x800746c0` (SE_pede) do SLUS_009.23, com a função "
+                         "envolvente, o (cat, idx) pedido, o a1 e o EVENTO de jogo. Gerado "
+                         "por tools/exe_audio.py --callsites. Ver "
+                         "docs/decomp/notes/exe_audio.md §12.",
+            "PROVA": "o anel de pedidos 0x800e0de4 só é escrito por 0x800746c0 e só é lido/"
+                     "zerado por 0x800744e0, logo TODO som do jogo passa por um destes 155 "
+                     "sítios. `a0` recuperado por back-walk do imediato (nada deduzido); os "
+                     "3 sítios cujo a0 vem do delay slot de um desvio estão em "
+                     "A0_POR_PREDECESSOR, com todos os predecessores enumerados.",
+            "conf": {"PROVADO": "cat/idx E evento saem da desmontagem",
+                     "DECLARADO": "cat/idx medido, NOME do evento é escolha do port",
+                     "NAO_SEI": "cat/idx medido, evento não identificado"},
+            "total": len(tab), "por_conf": por_conf, "por_cat": por_cat,
+        },
+        "sites": [{
+            "jal": "0x%08x" % r["addr"],
+            "fn": "0x%08x" % (r["fn"] or 0),
+            "fn_rotulo": r["fn_rotulo"],
+            "cat": r["cat"], "idx": r["idx"], "idx_expr": r["idx_expr"],
+            "a0": None if r["a0"] is None else "0x%x" % r["a0"],
+            "a0_origem": r["a0_origem"], "a1": r["a1"],
+            "evento": r["evento"], "conf": r["conf"],
+        } for r in tab],
+    }
+    p = paths.data(CALLSITES_JSON)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(dados, f, ensure_ascii=False, indent=1, sort_keys=False)
+    print("%s: %d sitios (%s)" % (p, len(tab),
+          ", ".join("%s %d" % (k, v) for k, v in sorted(por_conf.items()))))
+    return dados
+
+
 def main(argv):
     if "--callsites" in argv:
         imprimir_callsites()
+        if "--json" in argv:
+            gerar_callsites()
         return 0
     if "--verificar" in argv:
         return 1 if verificar()[1] else 0
@@ -1003,6 +1472,7 @@ def main(argv):
         return 0
     gerar()
     gerar_portas_salas()
+    gerar_callsites()
     return 0
 
 

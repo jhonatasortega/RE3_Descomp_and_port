@@ -141,6 +141,34 @@ func run(t: Object) -> bool:
 	t.eq(sfx.ultimo_tocado(), sfx.acao_wav("menu_cancelar"),
 		"fechar toca a amostra do id 5")
 
+	# ── VIRAR PÁGINA TEM SOM: cat 0 / id 8 (o buraco que faltava) ──
+	## MEDIDO no estado 8 da task do menu (`0x80063850`, a tela de ARQUIVO). Os DOIS únicos
+	## call sites do id 8 em todo o EXE são as duas direções do virar página:
+	##   `0x80063984` (para trás: exige `ctx+0xbd != 0`, faz `-= 1` e `ctx+0xc6 = 2`) e
+	##   `0x80063a2c` (para frente: exige `ctx+0xbd < páginas-1`, faz `+= 1`, `ctx+0xc6 = -2`).
+	## A checagem de borda vem ANTES do pedido — por isso o som só sai quando a página vira.
+	t.group("ARQUIVO / som de virar página")
+	t.eq(sfx.acao_id("arquivo_pagina"), 8,
+		"virar página = SE id 8 (0x80063984 / 0x80063a2c)")
+	t.eq(sfx.acao_cat("arquivo_pagina"), 0, "é cat 0 (banco de personagem)")
+	t.check(sfx.acao_wav("arquivo_pagina") != sfx.acao_wav("menu_mover"),
+		"a amostra do virar página não é a do mover cursor")
+	## `MenuArquivo` só toca quando a página REALMENTE muda. O teste usa a contagem de
+	## `ultimo_tocado` porque o `Sfx` do harness está fora da árvore (não há `play()`).
+	var arq_som := MenuArquivo.new()
+	t.check(arq_som.carregar(st), "MenuArquivo carrega (2ª instância, para o teste de som)")
+	arq_som.abrir()
+	arq_som.sel = 0
+	arq_som.lendo = true
+	arq_som.pagina = 0
+	var np := int((arq_som.docs[0] as Dictionary).get("n_pages", 1))
+	t.check(np > 1, "o documento 0 tem mais de uma página (%d)" % np)
+	arq_som.virar_pagina(-1)
+	t.eq(arq_som.pagina, 0, "na capa, virar para trás não muda de página")
+	arq_som.virar_pagina(1)
+	t.eq(arq_som.pagina, 1, "virar para frente anda uma página")
+	arq_som.free()
+
 	# ── CURSOR DA GRADE COM O ARQUIVO POR CIMA (defeito relatado) ──
 	## `0x8006c22c` (`bltz ctx+0x1c`) não emite o cursor quando a seleção é negativa — e ela é -2
 	## enquanto o sub-estado 5 (ARQUIVO) está ativo. Pelo caminho de USAR um documento o jogo troca
