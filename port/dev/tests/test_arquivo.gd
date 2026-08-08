@@ -159,6 +159,101 @@ func run(t: Object) -> bool:
 		"tela de arquivo por cima: o cursor da grade NÃO é desenhado")
 	a.fechar()
 	t.check(m.cursor_visivel(), "e volta a aparecer quando o arquivo fecha")
+
+	# ── USAR num documento LIBERA O SLOT (relato do dono) ──
+	## O que o EXE faz está medido e é OUTRO: `0x800676b8` faz `sltiu (cat-1), 6` (`0x80067708`) e,
+	## com `cat >= 7`, o `beqz` de `0x8006770c` cai em `0x80067b50` = só `ctx+0x11 = 3` — o USE de
+	## documento não mexe em slot. E o idioma que libera slot
+	## (`sb zero,0 / sb zero,1 / sh zero,2` + MoveImage) existe em exatamente 9 sítios do `.text`
+	## (`0x800679e8` cura, `0x80064a50` baú, 7 na combinação), **nenhum** no caminho de documento.
+	## Liberar é **comportamento confirmado pelo dono do repo (observação de jogo), endereço não
+	## localizado** — desvio declarado.
+	t.group("ARQUIVO / usar documento libera o slot")
+	var st2 := GameState.new()
+	st2.novo_jogo()
+	var a2 := MenuArquivo.new()
+	a2.carregar(st2)
+	var m2 := MenuStatus.new()
+	m2.set("_state", st2)
+	m2.arquivo = a2
+	## Carga de jogo novo (`0x800a018c`): Hand Gun, Reloading Tool e as **duas Instruções**
+	## (`0x83` no slot 2, `0x84` no slot 3) — as duas são categoria **6** no descritor `0x800a0514`.
+	t.eq(int(st2.main_slots[2].get("id", 0)), 0x83, "slot 2 do jogo novo = Instruções A (0x83)")
+	t.eq(int(st2.main_slots[3].get("id", 0)), 0x84, "slot 3 do jogo novo = Instruções B (0x84)")
+	t.check(Itens.eh_documento(0x83) and Itens.eh_documento(0x84),
+		"eh_documento cobre as duas faixas (cat 6 inicial e cat 7 de 0x85..0xa3)")
+	var ocupados_antes := st2.item_count()
+	t.check(not st2.arquivo_lido(0x83), "as Instruções A começam NÃO lidas")
+	m2.cursor = 2
+	var r2 := String(m2.call("_usar"))
+	t.check(r2.begins_with("leu o documento"), "USAR na Instrução A lê o documento (%s)" % r2)
+	t.eq(int(st2.main_slots[2].get("id", 0)), 0, "e o SLOT 2 fica vazio (id = 0)")
+	t.eq(int(st2.main_slots[2].get("qtd", 0)), 0, "quantidade zerada")
+	t.eq(int(st2.main_slots[2].get("flags", 0)), 0, "flags zeradas (slot livre de verdade)")
+	t.eq(st2.item_count(), ocupados_antes - 1, "um slot ocupado a menos que antes")
+	t.eq(st2.find_by_id(0), 2, "o 1º slot livre passa a ser o 2 (o que o documento ocupava)")
+	## O CONHECIMENTO fica: o documento continua na tela de ARQUIVO, no slot fixo dele.
+	t.check(st2.arquivo_lido(0x83), "o documento continua LIDO depois de sair do inventário")
+	t.check(st2.arquivo_lido(0x85),
+		"e lido pelo item canônico (0x83 -> doc 0 -> 0x85), como marcar_arquivo_lido guarda")
+	a2.abrir()
+	t.eq(a2.docs.size(), 31, "a grade de documentos continua com os 31 slots fixos")
+	t.check(a2.lido(0), "o documento 0 aparece LIDO na grade de arquivo")
+	t.eq(a2.n_lidos(), 1, "e é o único lido")
+	a2.ir_para_doc(0)
+	t.check(a2.lendo, "dá para ABRIR a leitura dele mesmo sem o item no inventário")
+	## a Instrução B (0x84 -> doc 28) segue o mesmo caminho, e é o outro extremo do de-para
+	m2.cursor = 3
+	m2.call("_usar")
+	t.eq(int(st2.main_slots[3].get("id", 0)), 0, "USAR na Instrução B também libera o slot")
+	t.check(st2.arquivo_lido(0x84), "e ela fica lida (doc 28)")
+	t.eq(st2.item_count(), ocupados_antes - 2, "dois slots livres a mais que no início")
+	## um documento da faixa CAT 7 (0x85..0xa3), o caso comum
+	st2.add_item(0x8a, 1)
+	var onde := st2.find_by_id(0x8a)
+	m2.cursor = onde
+	m2.call("_usar")
+	t.eq(int(st2.main_slots[onde].get("id", 0)), 0, "documento de cat 7 (0x8a) também libera o slot")
+	t.check(st2.arquivo_lido(0x8a), "e fica lido")
+	## item que NÃO é documento não pode ser afetado por esta regra
+	m2.cursor = 0
+	t.eq(int(st2.main_slots[0].get("id", 0)), 0x03, "slot 0 continua com a Hand Gun")
+	m2.free()
+	a2.free()
+
+	# ── A TRILHA NÃO PARA COM O INVENTÁRIO ABERTO ──
+	## Relato do dono: "entrar no inventário pausa o game (trilha também)". Pausar o MUNDO está
+	## certo — no EXE abrir a tela faz `task_suspend(0)` (`0x8006d97c`) e fechar faz
+	## `task_resume(0)` (`0x8006e248`), os dois únicos sítios do `.text`; no port isso é "não chamar
+	## `mundo.tick`". Parar a BGM não: no PS1 ela é SPU/CD e roda fora da task do mundo.
+	##
+	## **MEDIDO na cena real** (`godot --path port --script res://dev/diag_bgm_menu.gd`): abrindo a
+	## tela pelo bit MENU do pad e deixando 180 quadros, `bgm_player.playing = true`,
+	## `stream_paused = false` e a posição de leitura anda **2,2814 s** (contra 0,0232 s em 1 quadro
+	## fora do menu) — a trilha **NÃO para**. `get_tree().paused = false` e `Engine.time_scale = 1`
+	## em todas as amostras. Não reproduzi o defeito.
+	##
+	## O que este teste protege é o CAMINHO: nenhum arquivo da tela pode mexer na BGM nem pausar a
+	## árvore. É guarda estática porque no harness (RefCounted, fora da árvore) `play()` não roda.
+	t.group("ARQUIVO / a trilha continua tocando")
+	for rel: String in ["res://present/menu_status.gd", "res://present/menu_arquivo.gd",
+			"res://present/ecg.gd"]:
+		var src := FileAccess.get_file_as_string(rel)
+		t.check(src != "", "%s carrega" % rel)
+		for proibido: String in ["parar_bgm", "bgm_player", "pediu_parar_bgm",
+				"time_scale", "get_tree().paused"]:
+			t.check(not src.contains(proibido),
+				"%s não usa `%s` (a tela não mexe na trilha)" % [rel.get_file(), proibido])
+	## O `screen.gd` toca em `bgm_player` de propósito, mas só no ciclador de faixa F5/F6
+	## (`_ciclar_trilha`), que é ferramenta de diagnóstico — e em nenhum caminho de menu.
+	var src_scr := FileAccess.get_file_as_string("res://present/screen.gd")
+	t.check(not src_scr.contains("parar_bgm"), "screen.gd não chama parar_bgm em lugar nenhum")
+	t.check(not src_scr.contains("time_scale") and not src_scr.contains("get_tree().paused"),
+		"screen.gd não pausa a árvore nem mexe no time_scale")
+	var i_ciclar := src_scr.find("func _ciclar_trilha")
+	t.check(i_ciclar > 0, "screen.gd tem o ciclador de faixa F5/F6")
+	t.check(src_scr.find("bgm_player") > i_ciclar,
+		"e o único uso de bgm_player está DENTRO dele (não no caminho do menu)")
 	## `free()` explícito: `MenuStatus`/`MenuArquivo`/`Sfx` são Nodes criados FORA da árvore (o
 	## harness é `RefCounted`), então ninguém os coleta e o motor reclama de vazamento no fim.
 	m.free()

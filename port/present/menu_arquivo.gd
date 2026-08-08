@@ -344,13 +344,26 @@ func _setas_pagina(n: int, px: int, py: int, alt: int) -> void:
 		Texto.desenhar_seta(self, Texto.SETA_DIREITA, Vector2i(px - 18, y), COR_SETA, 1.0, true)
 
 
+static var _itens_json: Dictionary = {}
+
+
 func _nome_do_doc(doc: Dictionary) -> String:
+	## ── POR QUE O CACHE (medido) ──
+	## Esta função era chamada por `MenuStatus._desenhar_arquivo` **a cada quadro** e relia +
+	## reparseava o `res://data/re3_items.json` (104 KB) toda vez. Medido: **9,85 ms por parse**
+	## (60 parses = 590,9 ms), num orçamento de 16 ms de quadro. O efeito na tela de ARQUIVO, com
+	## um documento lido (é o que faz o nome ser desenhado): **19,69 ms/quadro (51 fps)** contra
+	## 12,68 ms sem o nome e 11,31 ms no mundo — ou seja o desenho do NOME custava ~7 ms sozinho.
+	## Engasgo desse tamanho é o que faz o jogo parecer "pausado" e faz o áudio picar; era uma
+	## das suspeitas do relato "entrar no inventário pausa o game". Agora o JSON é lido UMA vez.
+	if _itens_json.is_empty():
+		var raw: Variant = JSON.parse_string(
+			FileAccess.get_file_as_string("res://data/re3_items.json"))
+		if raw is Dictionary:
+			_itens_json = (raw as Dictionary).get("by_id", {})
 	var id := int(doc.get("item_id", 0))
-	var raw: Variant = JSON.parse_string(
-		FileAccess.get_file_as_string("res://data/re3_items.json"))
-	if raw is Dictionary:
-		var e: Variant = ((raw as Dictionary).get("by_id", {}) as Dictionary).get("0x%02x" % id)
-		if e is Dictionary:
-			return String((e as Dictionary).get("name_pt",
-				(e as Dictionary).get("name_en", "documento %d" % id)))
+	var e: Variant = _itens_json.get("0x%02x" % id)
+	if e is Dictionary:
+		return String((e as Dictionary).get("name_pt",
+			(e as Dictionary).get("name_en", "documento %d" % id)))
 	return "documento %d" % id

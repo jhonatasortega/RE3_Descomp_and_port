@@ -222,6 +222,7 @@ var _retratos: Texture2D = null         ## stmain0u paleta 2
 var _palavras: Texture2D = null         ## STMOJIU — HD (1024x288) ou o PNG do PS1
 var _palavras_fator := 1                ## 4 quando o atlas é o HD
 var _icones: Dictionary = {}            ## item_id -> Texture2D (itema/NNN.png)
+var _placas: Dictionary = {}            ## item_id -> Texture2D da placa grande (ITEMG/HD)
 var _paletas: Dictionary = {}           ## índice de CLUT -> atlas do STMOJIU naquela paleta
 var _paleta_fator: Dictionary = {}      ## e o fator de escala dele (4 = HD)
 ## Botão destacado: -1 = nenhum · 0 EXIT · 1 FILE · 2 MAP.
@@ -930,17 +931,46 @@ func _usar() -> String:
 		return "sem item"
 	var slot: Dictionary = _state.main_slots[cursor]
 	var id := int(slot.get("id", 0))
-	## USAR num DOCUMENTO = ler: marca no arquivo e abre a leitura naquele documento. É o que faz
-	## as Instruções A/B entrarem na lista (elas começam no inventário e nunca foram "pegas").
-	## USAR num DOCUMENTO = ler. Vale para os `0x85..0xa3` (categoria 7) **e para os dois itens
-	## iniciais `0x83`/`0x84`, que são categoria 6** — era esse o furo do "usar não funciona nos
-	## files".
+	## USAR num DOCUMENTO = ler: marca no arquivo, abre a leitura naquele documento e **LIBERA O
+	## SLOT**. Vale para os `0x85..0xa3` (categoria 7) **e para os dois itens iniciais `0x83`/`0x84`,
+	## que são categoria 6** — `Itens.eh_documento` cobre as duas faixas.
+	##
+	## ── O QUE O EXE FAZ (medido) × O QUE O PORT FAZ (escolha do dono) ──
+	## No original o USE da tela de status **não mexe no slot de documento nenhum**:
+	##  • `0x800676b8` lê `cat = *(u8*)(0x800a0514 + id*4)` e faz `sltiu (cat-1), 6`
+	##    (`0x80067708`); com `cat >= 7` o `beqz` de `0x8006770c` desvia para **`0x80067b50`**, que
+	##    só grava `ctx+0x11 = 3` e retorna. Nada de slot, nada de tela, nada de SE. Isso cobre
+	##    **categoria 7 (arquivo, `0x85..0xa3`) e 8 (mapa, `0xa4..0xab`)** — conferi o descritor:
+	##    `0x83`/`0x84` são cat **6**, `0x85..0xa3` são cat **7**, `0xa4..0xab` cat **8**.
+	##  • os de cat 6 (`0x83`/`0x84`) caem em `0x80067a20` pela tabela `0x80010e34`: ele testa
+	##    `flag_test(gs+0x2474, slot.id)` (`0x80078930`) — o bitfield de "itens usáveis AQUI", que
+	##    o script da sala mantém —, e se passa só grava `gs+0x7812 = slot.id` e faz `ctx+0x10++`
+	##    (sai da tela). Quem consumiria o item seria o SCRIPT, não o menu.
+	##  • **Achado negativo forte:** o idioma que libera slot é
+	##    `sb zero,0 / sb zero,1 / sh zero,2` + `MoveImage(célula, 0x0b)`, e ele existe em
+	##    **exatamente 9 sítios** do EXE — `0x800679e8` (cura, `0x80067934`), `0x80064a50` (baú) e
+	##    7 na combinação (`0x8006854c`, `0x800685cc`, `0x8006862c`, `0x800687e4`, `0x800688ac`,
+	##    `0x800688f8`, `0x80068978`). **Nenhum** no caminho de documento. (Varredura do `.text`
+	##    inteiro; o `0x8006d0a8` do doc de itens é o DECREMENTO de quantidade e não tem `jal`
+	##    nenhum apontando para ele.)
+	##
+	## Ainda assim o slot é liberado aqui: **comportamento confirmado pelo dono do repo, que
+	## conhece o jogo ("usar num documento libera o slot, como todo consumível") — endereço NÃO
+	## LOCALIZADO.** É desvio DECLARADO do que eu medi, não invenção nem descuido.
+	## O documento **não sai do jogo**: `marcar_arquivo_lido` guarda o conhecimento em
+	## `GameState.arquivos_lidos` e a grade da tela de ARQUIVO tem slot fixo por `doc`, então ele
+	## continua listado e legível depois de sair do inventário.
 	if Itens.eh_documento(id):
 		_state.marcar_arquivo_lido(id)
+		var doc := Itens.doc_do_item(id)
+		_state.main_slots[cursor] = {"id": 0, "qtd": 0, "flags": 0}
+		if _state.equipped == cursor:
+			_state.equipped = -1               ## por segurança: documento não é equipável (cat 6/7)
 		if arquivo != null:
 			arquivo.call("abrir")
-			arquivo.call("ir_para_doc", Itens.doc_do_item(id))
-		return "leu o documento"
+			arquivo.call("ir_para_doc", doc)
+		queue_redraw()
+		return "leu o documento e liberou o slot"
 	var pl := _player()
 	if pl == null:
 		return "sem personagem"
@@ -1144,8 +1174,16 @@ func _desenhar_placa(t: float) -> void:
 	# 4× não exige conta nenhuma aqui.
 	# `exists` antes de `texture`: pedir um HD que não existe faria o AssetIO logar aviso a cada
 	# quadro (só 96 das 134 placas têm par HD), e aviso repetido some no meio do log.
-	var rel_hd := "MENU/status/hd/plate/%03d.webp" % id
-	var tex := AssetIO.texture(rel_hd) if AssetIO.exists(rel_hd) else 		AssetIO.texture("ETC/items/%03d.png" % id)
+	## CACHE LOCAL (como `_icone`): o `AssetIO` tem LRU de **24** entradas (`MAX_CACHE`), e a tela
+	## de status toca em muito mais textura que isso por quadro (chrome, retratos, 5 paletas do
+	## STMOJIU, 10 ícones, a placa, os ícones do arquivo). Sem guardar a referência aqui, a placa
+	## de 448×288 podia ser EXPULSA do cache e redecodificada do disco a cada quadro; guardar a
+	## referência resolve, porque o LRU do AssetIO só solta a entrada, não o objeto.
+	if not _placas.has(id):
+		var rel_hd := "MENU/status/hd/plate/%03d.webp" % id
+		var rel_sd := "ETC/items/%03d.png" % id
+		_placas[id] = AssetIO.texture(rel_hd) if AssetIO.exists(rel_hd) else AssetIO.texture(rel_sd)
+	var tex: Texture2D = _placas[id]
 	if tex == null:
 		return
 	var destino := Rect2(float(PLACA[4]), float(PLACA[5]), float(PLACA[2]), float(PLACA[3]))

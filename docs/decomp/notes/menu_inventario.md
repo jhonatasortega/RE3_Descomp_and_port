@@ -923,3 +923,117 @@ ESC (o 5 do `cancelar` mais o 9 do `alternar`).
   **evento** e nunca fica "pressionada", então a borda nunca acontecia. Passou para `_input` com
   `InputEventMouseButton`, acumulando em `Screen._rolagem` e sendo consumida pelo tick de 30 Hz.
   Verificado injetando eventos de roda na cena real: `port/dev/diag_roda.gd`.
+
+---
+
+## 17. USAR num documento — o que o EXE faz, e o desvio declarado do port
+
+**Relato do dono:** *"files ainda no inventário mesmo após clicar em usar"* — as duas Instruções
+do Jogo (`0x83`/`0x84`, que vêm no template de jogo novo `0x800a018c`) seguiam ocupando slot.
+
+### 17.1 O que o EXE faz (MEDIDO)
+
+**O USE da tela de status não libera slot de documento — não faz nada com ele.**
+
+`0x800676b8` (subestado 6, comando USE/EQUIP) resolve a categoria no descritor
+`0x800a0514 + id*4` e faz:
+
+```
+800676fc  lbu $v0, ($v1)          ; cat = descritor[id].cat
+80067704  addiu $v1, $v0, -1
+80067708  sltiu $v0, $v1, 6       ; (cat-1) < 6 ?
+8006770c  beqz  $v0, 0x80067b50   ; NAO  -> 0x80067b50
+80067714/1c/20/28                 ; SIM  -> tabela 0x80010e34[cat-1], jr
+
+80067b50  addiu $v0, $zero, 3
+80067b54  sb    $v0, 0x11($s1)    ; ctx+0x11 = 3  (fecha a lista de comandos)
+80067b58  ...epilogo, jr $ra      ; e mais nada
+```
+
+Categorias conferidas no descritor (dump de `0x800a0514`): **`0x81`/`0x82`/`0x83`/`0x84` = cat 6**,
+**`0x85..0xa3` = cat 7 (arquivo)**, **`0xa4..0xab` = cat 8 (mapa)**. Logo:
+
+* **cat 7 e 8** (`cat-1 >= 6`) caem em `0x80067b50`: sem slot, sem tela, **sem SE**;
+* **cat 6** (as duas Instruções) vão para `0x80067a20` pela tabela
+  `0x80010e34 = {0x80067730, 0x8006779c, 0x800677bc, 0x80067a20, 0x80067a20, 0x80067a20}`. Lá:
+  `flag_test(gs+0x2474, slot.id)` (`0x80078930`, o bitfield de "itens usáveis AQUI" que o script
+  da sala mantém) — se falha, mensagem 7 ("não pode usar aqui", `0x80067ad0`); se passa, grava
+  `gs+0x7812 = slot.id` (`0x80067a3c`) e faz `ctx+0x10++` (`0x80067ac8`), saindo da tela. Quem
+  consumiria o item seria o **script**, não o menu.
+
+**Achado negativo, por varredura do `.text` inteiro:** o idioma que libera um slot é
+`sb zero,0(rX) / sb zero,1(rX) / sh zero,2(rX)` seguido de `MoveImage(célula, 0x0b)`
+(`jal 0x8006ae20`), e ele aparece em **exatamente 9 sítios**:
+
+| endereço | contexto |
+|---|---|
+| `0x800679e8` | cura, aplicação `0x80067934` (o F. Aid Box `0x2a` só decrementa, `0x80067a08`) |
+| `0x80064a50` | kind 2 (baú) |
+| `0x8006854c` `0x800685cc` `0x8006862c` `0x800687e4` `0x800688ac` `0x800688f8` `0x80068978` | combinação (`0x80068024`+) |
+
+**Nenhum** no caminho de documento. (E o `0x8006d0a8` que o `exe_items.md` chama de "usar/consumir"
+é o **decremento de quantidade** — não há um único `jal` para ele em todo o `.text`.)
+
+Também vale registrar: a tela de LER ARQUIVO (kind 3) não toca no inventário. O `menu_init`
+converte kind 1 → 3 quando a mensagem cai em `[0x85, 0xa3]` (`0x8006dbd0`), grava
+`ctx+0xbc = msg - 0x85` e chama `flag_set(0x800d212c, doc)` (`0x8006dc00`) — só o bit de "lido".
+
+### 17.2 O que o port faz (DESVIO DECLARADO)
+
+**Confirmado pelo dono do repo, que conhece o jogo: usar um documento LIBERA o slot, como todo
+consumível. Endereço NÃO LOCALIZADO** — pelo que medi acima, o EXE não faz isso em nenhum dos 9
+sítios de liberação. Fica registrado como desvio consciente, não como invenção nem descuido.
+
+`MenuStatus._usar`, para `Itens.eh_documento(id)` (cobre cat 6 **e** cat 7):
+
+1. `GameState.marcar_arquivo_lido(id)` — guarda pelo item CANÔNICO (`doc + 0x85`), então `0x83`
+   marca o documento 0 e `0x84` o 28;
+2. `main_slots[cursor] = {id: 0, qtd: 0, flags: 0}` — **libera o slot** (e solta o `equipped` se
+   por acidente apontasse para ele);
+3. abre a tela de ARQUIVO na leitura daquele documento.
+
+**O documento sai do inventário mas não sai do jogo:** a grade de documentos tem slot fixo por
+`doc` e o que decide ícone × VAZIO é `arquivo_lido`, então ele continua listado e legível. Travado
+em `test_arquivo.gd` (276 asserções): slot zerado, `item_count` cai 1, `find_by_id(0)` passa a ser
+aquele slot, `arquivo_lido` continua true, `lido(0)` na grade e `ir_para_doc` ainda abre.
+
+### 17.3 A trilha NÃO para com o inventário aberto
+
+Outro relato: *"entrar no inventário pausa o game (trilha também)"*. Pausar o **mundo** está
+certo — `task_suspend(0)` em `0x8006d97c` e `task_resume(0)` em `0x8006e248` são os dois únicos
+sítios do `.text`, e no port isso é "não chamar `mundo.tick`". Parar a BGM não seria.
+
+**Medido na cena real** (`godot --path port --script res://dev/diag_bgm_menu.gd`), abrindo a tela
+pelo bit MENU do pad e deixando 180 quadros:
+
+| amostra | `playing` | `stream_paused` | posição |
+|---|---|---|---|
+| mundo rodando | true | false | 0,865 s |
+| mundo rodando (+1 quadro) | true | false | 0,877 s |
+| menu aberto (0) | true | false | 0,940 s |
+| menu aberto (60) | true | false | 1,753 s |
+| menu aberto (120) | true | false | 2,490 s |
+| menu aberto (fim, 180) | true | false | 3,222 s |
+
+A posição andou **2,2814 s** em 180 quadros de menu aberto, `get_tree().paused = false` e
+`Engine.time_scale = 1` em todas as amostras. **A trilha não para — não reproduzi o defeito.**
+Também não há `parar_bgm`/`bgm_player`/`time_scale`/`paused` em nenhum arquivo da tela (guarda
+estática no teste).
+
+**O que EU achei de real nessa vizinhança, e que faz o jogo parecer travado:** engasgo por quadro
+na tela de ARQUIVO. `MenuArquivo._nome_do_doc` relia e reparseava `data/re3_items.json` (104 KB)
+**a cada quadro** — medido em **9,85 ms por parse** (60 parses = 590,9 ms). Efeito, com um
+documento lido (é o que faz o nome ser desenhado):
+
+| cena | antes | depois |
+|---|---|---|
+| mundo | 11,31 ms (88 fps) | 11,50 ms (87 fps) |
+| status aberto | 13,76 ms | 14,42 ms |
+| **arquivo aberto** | **19,69 ms (51 fps)** | **12,68 ms (79 fps)** |
+| **documento aberto** | **18,72 ms (53 fps)** | **13,00 ms (77 fps)** |
+
+Reproduz com `godot --path port --script res://dev/diag_fps_menu.gd`. Consertado com cache
+estático do JSON; e, no mesmo espírito, a **placa** do item (448×288) passou a ter cache local em
+`MenuStatus._placas`, porque o LRU do `AssetIO` tem só **24** entradas (`MAX_CACHE`) e a tela toca
+em mais textura que isso por quadro — sem guardar a referência, a placa podia ser redecodificada
+do disco quadro a quadro.
