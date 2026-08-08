@@ -63,6 +63,16 @@ var mask := 0                       ## máscara do tick atual
 var prev_mask := 0                  ## máscara do tick anterior (para "acabou de apertar")
 var recording := false
 
+## ── DELTA DO MOUSE (extensão do PORT, não existe no PS1) ──
+## O pad do PS1 é digital: não há analógico nem mouse. Estes dois campos guardam o quanto o
+## ponteiro andou DESDE O POLL ANTERIOR, em pixels de tela, e servem para mirar com o mouse
+## (pedido do usuário). Ficam em 0 no `set_mask` (teste/replay), então nada de gravação/replay
+## depende deles — o replay determinístico continua valendo para os BITS.
+var mouse_dx := 0
+var mouse_dy := 0
+var _mouse_pos := Vector2i.ZERO
+var _mouse_tem_pos := false
+
 var _record: PackedInt32Array = PackedInt32Array()
 var _replay: PackedInt32Array = PackedInt32Array()
 var _replay_pos := 0
@@ -107,6 +117,16 @@ const MOUSEMAP := {
 
 
 func _read_live() -> int:
+	## delta do ponteiro desde o poll anterior (posição GLOBAL de tela: não depende de viewport)
+	var agora := DisplayServer.mouse_get_position()
+	if _mouse_tem_pos:
+		mouse_dx = agora.x - _mouse_pos.x
+		mouse_dy = agora.y - _mouse_pos.y
+	else:
+		mouse_dx = 0
+		mouse_dy = 0
+		_mouse_tem_pos = true
+	_mouse_pos = agora
 	var m := 0
 	for tecla: int in KEYMAP:
 		if Input.is_key_pressed(tecla as Key):
@@ -118,7 +138,8 @@ func _read_live() -> int:
 
 
 func set_mask(m: int) -> void:
-	## Injeta uma máscara (harness/teste), respeitando a gravação.
+	## Injeta uma máscara (harness/teste), respeitando a gravação. O delta do mouse NÃO é injetado
+	## aqui: quem testa a mira com mouse escreve `mouse_dx`/`mouse_dy` na mão.
 	prev_mask = mask
 	mask = m
 	if recording:

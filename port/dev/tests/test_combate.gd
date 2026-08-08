@@ -112,6 +112,45 @@ func run(t: Object) -> bool:
 		or not AssetIO.exists("PLD/PL00W03_WPN.glb"),
 		"a malha da Hand Gun (item 0x03) é a PL00W03_WPN")
 
+	# ── MIRA COM O MOUSE (extensão do port; o pad do PS1 é digital) ──
+	var p7 := Player.new()
+	p7.equipped_weapon = 0x03
+	p7.pos = Vector3i.ZERO
+	p7.facing = 0
+	var pad7 := Pad.new()
+	for _i in 12:
+		pad7.set_mask(Pad.AIM)
+		p7.tick(pad7)
+	t.eq(p7.mira_sub, Player.Mira.FOGO, "chegou ao hold para testar o mouse")
+	# horizontal gira o corpo, com teto de 3× o giro normal por tick
+	pad7.mouse_dx = 10
+	p7.tick(pad7)
+	t.eq(p7.facing, PS1Math.wrap_angle(-10 * Player.MIRA_MOUSE_GIRO),
+		"mouse para a direita gira o corpo (8 unidades de ângulo por pixel)")
+	pad7.mouse_dx = 500
+	var antes_f := p7.facing
+	p7.tick(pad7)
+	t.eq(PS1Math.angle_diff(antes_f, p7.facing), -Player.GIRO_POR_FRAME * 3,
+		"o giro por tick tem teto de 3× o normal (o ponteiro não teleporta a Jill)")
+	# vertical escolhe a altura da mira, com zona morta
+	pad7.mouse_dx = 0
+	pad7.mouse_dy = Player.MIRA_MOUSE_ZONA / 2
+	p7.tick(pad7)
+	t.eq(p7.mira_alto, 0, "dentro da zona morta a altura não muda")
+	pad7.mouse_dy = Player.MIRA_MOUSE_ZONA
+	p7.tick(pad7)
+	t.eq(p7.mira_alto, -1, "ponteiro para BAIXO = mira baixa")
+	t.eq(p7.clipe_atual(), "mira06", "e a pose vira a `mira06` (hold baixo)")
+	pad7.mouse_dy = -Player.MIRA_MOUSE_ZONA * 3
+	p7.tick(pad7)
+	t.eq(p7.mira_alto, 1, "ponteiro para CIMA = mira alta")
+	t.eq(p7.clipe_atual(), "mira04", "e a pose vira a `mira04` (hold alto)")
+	# soltar a mira zera o acumulador vertical
+	pad7.set_mask(0)
+	pad7.mouse_dy = 0
+	p7.tick(pad7)
+	t.eq(p7.mira_mouse_y, 0, "sair da mira zera o acumulador do mouse")
+
 	# ── auto-lock: alvo dentro e fora da caixa ──
 	var p2 := Player.new()
 	p2.estado = st

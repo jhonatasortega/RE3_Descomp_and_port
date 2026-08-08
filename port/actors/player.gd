@@ -76,6 +76,12 @@ const MIRA_ARCO := 0x1000                 ## clamp do arco do auto-lock (~90°)
 const MIRA_ALCANCE := 3000                ## meia-extensão do descritor `0x80098064`
 const MIRA_LARGURA := 1000                ## idem, largura
 const MIRA_ALTURA := 1600                 ## idem, altura
+## Sensibilidade do mouse na mira (**declarado**: escolha do port). 8 unidades de ângulo por
+## pixel ≈ 512 px para uma volta completa (4096 unidades = 360°). `MIRA_MOUSE_ZONA` é a zona morta
+## vertical em pixels antes de trocar a altura da mira.
+const MIRA_MOUSE_GIRO := 8
+const MIRA_MOUSE_ZONA := 30
+var mira_mouse_y := 0
 const LEVANTAR_QUADROS := 6               ## duração do sub 0 (declarado: não medi o nº de quadros)
 var mira_sub: Mira = Mira.LEVANTAR
 var mira_tier := 0                        ## 0..3 pela elevação do alvo (auto-lock)
@@ -362,6 +368,7 @@ func _sair_da_mira() -> void:
 	mira_quadro = 0
 	tiro_pendente = -1
 	mira_alvo = -1
+	mira_mouse_y = 0
 	municao_vazia = false
 	_set_acao(Acao.PARADO)
 
@@ -377,6 +384,22 @@ func _tick_mira(pad: Pad) -> void:
 	var dir_m := pad.pressed(Pad.HELD_RIGHT)
 	if esq_m != dir_m:
 		facing = PS1Math.wrap_angle(facing + (GIRO_POR_FRAME if esq_m else -GIRO_POR_FRAME))
+	## MIRA COM O MOUSE (pedido do usuário; extensão do port — o pad do PS1 é digital):
+	## o movimento HORIZONTAL do ponteiro gira o corpo e o VERTICAL escolhe a altura da mira.
+	## O giro por tick é limitado a 3× o giro normal para o ponteiro não teleportar a Jill.
+	if pad.mouse_dx != 0:
+		var giro := clampi(-pad.mouse_dx * MIRA_MOUSE_GIRO, -GIRO_POR_FRAME * 3,
+			GIRO_POR_FRAME * 3)
+		facing = PS1Math.wrap_angle(facing + giro)
+	if pad.mouse_dy != 0 and mira_alvo < 0:
+		mira_mouse_y = clampi(mira_mouse_y + pad.mouse_dy, -MIRA_MOUSE_ZONA * 2,
+			MIRA_MOUSE_ZONA * 2)
+		if mira_mouse_y > MIRA_MOUSE_ZONA:
+			mira_alto = -1                     ## ponteiro para BAIXO = mira baixa
+		elif mira_mouse_y < -MIRA_MOUSE_ZONA:
+			mira_alto = 1                      ## para CIMA = mira alta
+		else:
+			mira_alto = 0
 	if mira_alvo < 0:
 		if pad.pressed(Pad.FWD):
 			mira_alto = 1                      ## W = mira ALTA
@@ -496,8 +519,9 @@ func _travar_alvo() -> int:
 	## local da mira e testa a caixa de meia-extensões do descritor `0x80098064`
 	## (3000 de alcance, ±1000 de largura, 1600 de altura), com clamp de arco de ±0x1000.
 	## Devolve o índice do alvo mais PRÓXIMO dentro da caixa, ou -1.
+	## NÃO zera `mira_alto` aqui: sem alvo travado a altura é ESCOLHA do jogador (W/S ou o mouse),
+	## e zerar todo tick apagava essa escolha — era o que fazia a mira do mouse não subir/descer.
 	mira_tier = 0
-	mira_alto = 0
 	if not mira_trava():
 		return -1                          ## DIFÍCIL: não gruda em ninguém
 	if not alvos.is_valid():
