@@ -293,11 +293,27 @@ func carregar(state: GameState) -> bool:
 	return _pronto
 
 
-func alternar() -> void:
-	var som_a := _sfx()
-	if som_a != null:
-		som_a.menu_abrir()                    ## `0x800746c0` id 9 = abrir/fechar a tela
+func alternar(com_som := true) -> void:
 	## Botão de menu: abre com animação de 6 quadros, fecha com outros 6.
+	##
+	## ── SOM DE ABRIR ≠ SOM DE FECHAR (corrigido; era o mesmo id 9 nos dois) ──
+	## Os dois estão MEDIDOS no `SLUS_009.23`:
+	##   • **abrir** = SE **id 6** — `0x80023d60` arma a task e pede o SE em `0x80023db8`; o
+	##     `bne ctx+0x04, 4` de `0x80023da4` é TOMADO no modo 0 (= tela de status, gravado em
+	##     `0x80023cb0` pelo botão de menu), então vale o `a0 = 6` do delay slot `0x80023da8`.
+	##   • **fechar** = SE **id 5** — `0x80066628`..`0x80066634` (cancelar: `raw_edge & 0x20` ou
+	##     `log_edge & 0x2000`) desvia para `0x80066744` (`a0 = 5`, `jal` em `0x8006675c`) e
+	##     incrementa `ctx+0x10` (`0x80066760`), que leva ao estado 13 = fechamento.
+	## O **id 9** que estava aqui é de outra coisa: entrar no MAPA/ARQUIVO (ver `Sfx.menu_abrir`).
+	##
+	## `com_som = false` para quem já pediu o SE do próprio caminho (`cancelar`, o botão SAIR) —
+	## senão o mesmo evento tocaria dois sons, que é o que acontecia antes.
+	var som_a := _sfx()
+	if som_a != null and com_som:
+		if aberto and not _fechando:
+			som_a.menu_fechar()               ## id 5 (`0x8006675c`)
+		elif not aberto:
+			som_a.menu_status_abrir()         ## id 6 (`0x80023db8` com ctx+0x04 = 0)
 	if not _pronto:
 		return
 	if aberto and not _fechando:
@@ -368,8 +384,15 @@ func mover_cursor(dx: int, dy: int) -> void:
 	## `x = col*40, y = lin*30`). Subindo da primeira linha sai da grade: o jogo permite o índice
 	## de seleção chegar a **-1..-4** (a auditoria corrigiu o alcance: o teste `slti < -2` roda
 	## ANTES do decremento, então -4 é alcançável) e são essas posições que dão nos botões
-	## EXIT/FILE/MAP. **O de-para de qual índice negativo é qual botão NÃO foi medido**; aqui:
-	## -1 = FILE/MAP (pela coluna) e -2 = EXIT. É escolha do port, declarada.
+	## EXIT/FILE/MAP.
+	## ── O de-para índice negativo → botão AGORA ESTÁ MEDIDO (era "declarado") ──
+	## No handler da grade (`0x80066604`): UP faz `sel -= 2` (grade de 2 colunas), então da coluna
+	## ESQUERDA sai `-2` e da DIREITA sai `-1`. E no confirmar: `sel == -1` → sub-estado **4**
+	## (`0x800666f0`, e o sub 4 `0x80066adc` põe `ctx+0x10 = 4` = **MAPA**); `sel == -2` →
+	## sub-estado **5** (`0x80066728`; o sub 5 `0x80066ca0` põe `ctx+0x10 = 7` = **ARQUIVO**);
+	## `sel < -2` (`slti` em `0x80066738`) → **SAIR** (id 5 + `ctx+0x10++`).
+	## Ou seja: coluna esquerda → ARQ., coluna direita → MAPA, mais um passo para cima → SAIR.
+	## É exatamente o que o código abaixo já fazia — só deixou de ser palpite.
 	if not aberto or _anim > 0:
 		return
 	var som := _sfx()
@@ -801,16 +824,26 @@ func confirmar() -> String:
 	## Enter/ação. Devolve o que aconteceu (também fica em `ultima_acao`).
 	if not aberto or _anim > 0:
 		return ""
+	## ── O SOM DO "CONFIRMAR" NÃO É UM SÓ (medido em `0x80066604`, o handler da grade) ──
+	## O EXE escolhe o id pelo que está sob o cursor, e é isso que reproduz o feedback do jogo:
+	##   `ctx+0x1c >= 0` com item no slot → id **6** (`0x8006669c`);  slot vazio → id **7**
+	##   (`0x800666bc`);  `== -1` → id **9** + sub-estado 4 = MAPA (`0x800666f0`);  `== -2` →
+	##   id **9** + sub-estado 5 = ARQUIVO (`0x80066728`);  `< -2` (SAIR) → id **5**
+	##   (`0x80066744`) e `ctx+0x10++` = fechamento.
+	## Antes daqui saía id 6 em TODOS os casos, inclusive ao SAIR — o que fazia fechar soar igual
+	## a confirmar (e, junto com o id 9 do `alternar`, dois sons no mesmo evento).
 	var som := _sfx()
-	if som != null:
-		som.menu_confirmar()
 	if combinar_de >= 0:
+		if som != null:
+			som.menu_confirmar()               ## sub-estado 0xc dispara 6,6,5 — id 6, DECLARADO
 		var feito := _combinar(combinar_de, cursor)
 		combinar_de = -1
 		queue_redraw()
 		ultima_acao = feito
 		return feito
 	if not sub_itens.is_empty():
+		if som != null:
+			som.menu_confirmar()               ## escolha no submenu: id 6, DECLARADO
 		var escolha := sub_itens[sub_sel]
 		sub_itens.clear()
 		queue_redraw()
@@ -840,11 +873,21 @@ func confirmar() -> String:
 				ultima_acao = "examinou: %s" % mensagem.substr(0, 40)
 		return ultima_acao
 	if selecao_botao == 0:
-		alternar()                                ## EXIT fecha
+		## SAIR = o caminho `ctx+0x1c < -2` de `0x80066738`: **id 5** e `ctx+0x10++` (fechamento).
+		## `alternar(false)` porque o som já saiu aqui — chamar com som tocaria o id 5 duas vezes.
+		if som != null:
+			som.menu_fechar()
+		alternar(false)                           ## EXIT fecha
 		ultima_acao = "EXIT"
 		return ultima_acao
 	if selecao_botao == 1:
 		# ARQ. abre a tela de arquivo (o `screen kind 3` do menu do jogo)
+		## `ctx+0x1c == -2` → sub-estado 5 (ARQUIVO) com **id 9** (`0x80066728`). E a COLUNA decide
+		## qual botão: UP faz `sel -= 2` (grade de 2 colunas), então da coluna esquerda sai -2
+		## (ARQUIVO) e da direita -1 (MAPA) — é exatamente o que `mover_cursor` já fazia, e agora
+		## está MEDIDO em vez de declarado.
+		if som != null:
+			som.menu_abrir()
 		var g := get_node_or_null("/root/Game")
 		var scr: Node = get_parent()
 		if scr != null and scr.get("menu_arquivo") != null:
@@ -854,6 +897,8 @@ func confirmar() -> String:
 			ultima_acao = "tela de arquivo não montada"
 		return ultima_acao
 	if selecao_botao == 2:
+		if som != null:
+			som.menu_abrir()                       ## `ctx+0x1c == -1` → sub 4 (MAPA), id 9
 		ultima_acao = "MAP: a tela de mapa ainda não foi ligada"
 		return ultima_acao
 	# está na grade: abre o submenu do item, se houver item
@@ -861,8 +906,12 @@ func confirmar() -> String:
 		return ""
 	var id := int(_state.main_slots[cursor].get("id", 0)) if cursor < _state.main_slots.size() else 0
 	if id == 0:
+		if som != null:
+			som.menu_invalido()                    ## slot vazio = id 7 (`0x800666bc`)
 		ultima_acao = "slot vazio"
 		return ultima_acao
+	if som != null:
+		som.menu_confirmar()                       ## slot com item = id 6 (`0x8006669c`)
 	sub_itens = []
 	sub_itens.append("EQUIP" if _equipavel(id) else "USE")
 	sub_itens.append("COMBINE")
@@ -989,7 +1038,9 @@ func cancelar() -> void:
 		sub_itens.clear()
 		queue_redraw()
 		return
-	alternar()
+	## `false`: o id 5 já saiu no topo desta função, e é justamente o id do fechamento
+	## (`0x80066744`). Com `alternar()` "com som" o mesmo ESC tocaria dois SE.
+	alternar(false)
 
 
 func _equipavel(item_id: int) -> bool:
@@ -1155,9 +1206,34 @@ func _desenhar_qtd(qtd: int, onde: Vector2i, t: float, paleta := 2) -> void:
 		x += dw
 
 
-func _desenhar_cursor(t: float) -> void:
+func cursor_visivel() -> bool:
+	## O quadro do cursor da grade deve ser desenhado? (as portas estão explicadas em
+	## `_desenhar_cursor`; isto existe separado para o teste poder checar sem renderizar).
 	if selecao_botao >= 0:
-		return                                   ## a seleção está nos botões, não na grade
+		return false
+	if arquivo != null and bool(arquivo.get("aberto")):
+		return false
+	return true
+
+
+func _desenhar_cursor(t: float) -> void:
+	## ── DUAS PORTAS, as duas MEDIDAS em `0x8006c210`..`0x8006c22c` ──
+	## O primitivo do cursor (B146) só é emitido se `ctx+0x18 & 0x04000000` **e**
+	## `ctx+0x1c >= 0` (o `bltz $v0, 0x8006c258` de `0x8006c22c` pula a emissão). `ctx+0x1c` é o
+	## slot selecionado, e ele fica NEGATIVO enquanto a seleção está nos botões — daí o `return`
+	## abaixo.
+	## TELA DE ARQUIVO POR CIMA: o cursor da grade **não** é desenhado. Duas provas, uma para cada
+	## caminho de abrir o arquivo:
+	##  • pelo botão ARQ. → sub-estado 5 com `ctx+0x1c == -2` (`0x80066728`), e -2 < 0 cai no
+	##    `bltz` de `0x8006c22c`;
+	##  • USANDO um documento do inventário (itens `0x83`/`0x84`/`0x85..0xa3`) → o `menu_init`
+	##    troca para o **kind 3** (`0x8006dbd0`: `msg - 0x85 < 0x1f` → `ctx+0x04 = 3`), cuja rotina
+	##    de desenho é OUTRA (`0x8006e3f8` na tabela `0x8001104c`, contra `0x8006e3c0` do kind 0) —
+	##    ela não monta a grade de itens, logo não há cursor.
+	## Era esse o defeito relatado: usar o livro vermelho abria o arquivo e o quadro vermelho
+	## continuava piscando na grade, por cima.
+	if not cursor_visivel():
+		return
 	var col := cursor % GRADE_COLUNAS
 	var lin := cursor / GRADE_COLUNAS
 	var r := CURSOR.duplicate()

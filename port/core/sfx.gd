@@ -166,8 +166,47 @@ func menu_invalido() -> bool:
 
 
 func menu_abrir() -> bool:
-	## Abriu o menu/arquivo. SE id 9 (5 call sites, ex.: `0x80023db8`).
+	## **CORRIGIDO nesta rodada: o id 9 NÃO é "abrir a tela de status".** Ele é *entrar em outra
+	## SUB-TELA* — mapa ou arquivo. Os 5 call sites, todos medidos:
+	##   • `0x80023db8` com `a0 = 9` **só quando `*(u8*)0x800e01c4 (ctx+0x04) == 4`**, que é o
+	##     modo MAPA (setado pelo L2 em `0x80023cd0`; ver `menu_pc_sys.md §5`). Quando o modo é
+	##     0 (= a tela de STATUS, setada pelo botão de menu em `0x80023cb0`) o **mesmo** `jal`
+	##     recebe `a0 = 6` — o `bne ctx+0x04, 4` de `0x80023da4` escolhe entre os dois com o
+	##     imediato no delay slot (`addiu a0, zero, 6` em `0x80023da8`).
+	##   • `0x800666f0` (cursor da grade em `ctx+0x1c == -1` → sub-estado 4 = MAPA) e
+	##     `0x80066728` (`ctx+0x1c == -2` → sub-estado 5 = ARQUIVO), no handler da grade
+	##     `0x80066604`.
+	##   • `0x8006dd40`, no braço 5 da tabela de init `0x8001100c` (kind 5 = mensagem/mapa por
+	##     item usado).
+	##   • `0x8006fdb4`, no sub-dispatcher do mapa.
+	## Ou seja: use isto para ARQ./MAPA, **não** para abrir/fechar o inventário.
 	return tocar_acao("menu_abrir")
+
+
+func menu_status_abrir() -> bool:
+	## Abrir a tela de STATUS/INVENTÁRIO pelo botão de menu: **SE id 6** (o mesmo do "confirmar").
+	##
+	## MEDIDO: `0x80023c9c` testa `log_edge & 0x4000` (botão de menu), liga `0x800d1f2c |= 0x200`
+	## e grava `ctx+0x04 = 0` (`0x80023cb0`). Ainda no mesmo quadro, `0x80023d58` vê a flag `0x200`
+	## e cai em `0x80023d60`, que arma a task (`0x800c7961 = 1`, `0x800d1f2c |= 0x100`) e pede o SE
+	## em `0x80023db8` — com `a0 = 6`, porque `ctx+0x04` é 0 e o `bne ..., 4` de `0x80023da4` é
+	## TOMADO (delay slot `addiu a0, zero, 6`). O `a0 = 9` de `0x80023dac` só roda no modo 4.
+	return tocar_acao("menu_confirmar")
+
+
+func menu_fechar() -> bool:
+	## FECHAR a tela de status: **SE id 5** (o de cancelar) — e é por isso que fechar soa
+	## diferente de abrir, sem precisar de id próprio.
+	##
+	## MEDIDO no handler da grade (`0x80066604`, sub-estado 0 da tabela `0x800a0100`): o teste
+	## `(raw_edge & 0x0020) | (log_edge & 0x2000)` em `0x80066628`..`0x80066634` desvia para
+	## `0x80066744`, que carrega `a0 = 5`, pede o SE em `0x8006675c` e **incrementa `ctx+0x10`**
+	## em `0x80066750`/`0x80066760` — o estado 2 vira 3, cujo handler (`0x8006a888`) põe
+	## `ctx+0x10 = 13` = o FECHAMENTO (`0x8006e4cc`).
+	##
+	## O botão SAIR cai no MESMO código: com `ctx+0x1c < -2` (`slti` em `0x80066738`) o fluxo
+	## desce para `0x80066744`. Logo os dois caminhos de fechar usam o id 5, e **nenhum** usa o 9.
+	return tocar_acao("menu_cancelar")
 
 
 func tiro() -> bool:

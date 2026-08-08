@@ -67,8 +67,9 @@ var menu_arquivo: MenuArquivo
 var _mouse_antes := false               ## borda do botão esquerdo (clique = toque no menu)
 var laser: MeshInstance3D               ## mira LASER (só no modo fácil)
 var _arma_atual := -1                   ## item cuja malha está na mão
-var _scroll_cima := false
-var _scroll_baixo := false
+## Passos de roda acumulados desde o último tick (+ desce/avança, − sobe/volta). Ver `_scroll`.
+var _rolagem := 0
+const ROLAGEM_MAX := 3                  ## teto por tick, para um giro rápido não pular 10 páginas
 var cam3d: Camera3D
 var sun: DirectionalLight3D
 var room: RoomData
@@ -737,17 +738,33 @@ func _atualizar_laser() -> void:
 
 func _scroll() -> int:
 	## Roda do mouse: **+1 desce/avança, -1 sobe/volta**. Pedido do usuário para o texto de exame e
-	## para a página do documento. É lido por borda, como o clique.
-	var cima := Input.is_mouse_button_pressed(MOUSE_BUTTON_WHEEL_UP)
-	var baixo := Input.is_mouse_button_pressed(MOUSE_BUTTON_WHEEL_DOWN)
-	var d := 0
-	if baixo and not _scroll_baixo:
-		d = 1
-	elif cima and not _scroll_cima:
-		d = -1
-	_scroll_cima = cima
-	_scroll_baixo = baixo
+	## para a página do documento.
+	##
+	## ── POR QUE NÃO FUNCIONAVA (e o conserto) ──
+	## Estava lido por POLLING, com `Input.is_mouse_button_pressed(MOUSE_BUTTON_WHEEL_UP/DOWN)`,
+	## copiando a receita do clique. A roda em Godot **não é um botão que fica pressionado**: ela
+	## chega como `InputEventMouseButton` com `pressed = true` e nunca solta, então
+	## `is_mouse_button_pressed` devolve `false` em todo quadro e a borda nunca acontecia — o
+	## `rol` era sempre 0. Agora o evento é acumulado em `_input` (`_rolagem`) e o tick só
+	## CONSOME o acumulado, o que mantém a lógica no tick de 30 Hz.
+	var d := clampi(_rolagem, -ROLAGEM_MAX, ROLAGEM_MAX)
+	_rolagem = 0
 	return d
+
+
+func _input(e: InputEvent) -> void:
+	## A RODA DO MOUSE vive aqui, não no polling do tick: é evento puro (ver `_scroll`).
+	## `_input` e não `_unhandled_input` porque o `Frame` (`SubViewportContainer`) repassa o evento
+	## para o `SubViewport` do mundo 3D, e daí ele pode não voltar como "não tratado".
+	if not (e is InputEventMouseButton):
+		return
+	var mb: InputEventMouseButton = e
+	if not mb.pressed:
+		return                                    ## a roda também emite o "solta"; conta uma vez
+	if mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+		_rolagem += 1
+	elif mb.button_index == MOUSE_BUTTON_WHEEL_UP:
+		_rolagem -= 1
 
 
 func _clique() -> bool:

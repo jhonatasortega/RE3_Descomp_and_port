@@ -125,6 +125,60 @@ func run(t: Object) -> bool:
 	e3.avancar()
 	t.eq(e3.fase, 2, "um tick de 30 Hz anda 2 quadros")
 
+	# ── a onda como POLIGONAL (o desenho em resolução de tela) ──
+	t.group("ECG / poligonal")
+	t.eq(Ecg.valores(0).size(), 80, "a poligonal tem um vértice por par da tabela (80)")
+	t.eq(int(Ecg.valores(0)[0]), 15, "o primeiro vértice é a linha de base 15")
+	t.eq(int(Ecg.valores(0)[Ecg.K_LIMITE - 1]), 15, "e a última coluna alcançável volta para 15")
+	t.eq(Ecg.valores_da_condicao(4), Ecg.valores_da_condicao(5),
+		"POISON e VIRUS compartilham a poligonal (mesma tabela 0x800a0f3c)")
+	## REPROJEÇÃO: o segmento entre dois vértices tem de cobrir o span `(y0, y0+h)` do EXE. Nas
+	## 370 colunas alcançáveis, 298 batem exato; o resto erra 1 px (69) ou 2 px (3) porque as
+	## tabelas do jogo misturam duas convenções de `h` (ver o comentário de `Ecg.valores`).
+	## Este teste TRAVA esses números: se alguém mexer na regra de reconstrução, ele acusa.
+	var exatas := 0
+	var erro1 := 0
+	var pior := 0
+	var vmin := 999
+	var vmax := -999
+	for i in 5:
+		var w2 := Ecg.onda(i)
+		var v2 := Ecg.valores(i)
+		for k in Ecg.K_LIMITE:
+			var y0b := int(w2[k * 2])
+			var y1b := y0b + int(w2[k * 2 + 1])
+			var a := int(v2[k - 1]) if k > 0 else int(w2[0])
+			var b := int(v2[k])
+			var d := maxi(absi(mini(a, b) - y0b), absi(maxi(a, b) - y1b))
+			if d == 0:
+				exatas += 1
+			elif d == 1:
+				erro1 += 1
+			pior = maxi(pior, d)
+			vmin = mini(vmin, b)
+			vmax = maxi(vmax, b)
+	t.eq(exatas + erro1 + 3, 370, "370 colunas alcançáveis (5 tabelas × 74)")
+	t.eq(exatas, 298, "298 colunas reprojetam o span do EXE byte a byte")
+	t.eq(erro1, 69, "69 erram 1 px (o `h` da descida de 1 px do dado original)")
+	t.eq(pior, 2, "e o pior caso é 2 px, nunca mais")
+	t.eq(Ecg.Y_ORIGEM + vmin, 41, "a poligonal tem o mesmo topo dos spans (y=41)")
+	t.eq(Ecg.Y_ORIGEM + vmax, 64, "e o mesmo fundo (y=64) — segue dentro do painel")
+	var ep := Ecg.new()
+	ep.fase = 0
+	t.eq(ep.pontos(0).size(), 32, "fase 0: 32 vértices, um por coluna visível")
+	t.eq(Vector2(ep.pontos(0)[0]["p"]).x, 75.0, "o primeiro vértice cai em x=75 (k=0)")
+	t.eq(Color(ep.pontos(0)[31]["cor"]), Color8(32, 255, 32),
+		"a cabeça da poligonal usa a cor cheia, como em `segmentos`")
+	ep.fase = -31
+	t.eq(ep.pontos(0).size(), 1, "fase -31: um vértice só (sem segmento a desenhar)")
+	ep.fase = Ecg.FASE_INICIO
+	t.eq(ep.pontos(0).size(), 0, "fase -32: nenhum vértice, igual a `segmentos`")
+	for f2 in range(Ecg.FASE_INICIO, Ecg.FASE_FIM):
+		ep.fase = f2
+		t.check(ep.pontos(0).size() == ep.segmentos(0).size(),
+			"fase %d: a janela da poligonal é a mesma dos spans" % f2)
+	t.eq(Ecg.ESPESSURA_SD, 1.0, "espessura = 1 px de 320×240 = 4 px de tela (proporcional)")
+
 	# ── flash da cura ──
 	t.group("ECG / flash da cura")
 	var e4 := Ecg.new()

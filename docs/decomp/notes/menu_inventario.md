@@ -862,3 +862,64 @@ de forma independente: a tabela de offsets, o tamanho 40x30 e a paleta dos ícon
 contagem/índices da Tabela A, 134 vs 135 entradas de `0x8009F678`, tpage do retrato,
 alcance de `sel`, a inferência sobre a 5ª linha com capacidade 8, e duas citações de prova
 que não cobriam o número (valores corretos).
+
+---
+
+## 16. Rodada de 2026-08-08 — quatro defeitos relatados pelo dono do repo
+
+Os quatro vieram de jogar, não de ler código. Cada conserto tem o endereço que o justifica.
+
+### 16.1 O cursor da grade continuava por cima da tela de ARQUIVO
+
+**Sintoma:** usar um documento do inventário (o "livro vermelho") abria a tela de arquivo e o
+quadro vermelho do cursor seguia piscando na grade de itens, por cima.
+
+**O EXE não faz isso — duas portas, as duas em `0x8006c210`..`0x8006c22c`:**
+
+```
+8006c210  lw   $v0, 0x18($s3)        ; flags de desenho
+8006c218  beqz $v0, ...              ; if (!(ctx+0x18 & 0x04000000)) nao emite
+8006c224  lb   $v0, 0x1c($s3)        ; sel
+8006c22c  bltz $v0, 0x8006c258       ; if (sel < 0)  NAO EMITE o cursor
+8006c250  jal  0x8006e8bc            ; emite B146 = 0x8009FF68 (146*12 + 0x8009f890)
+```
+
+* pelo **botão ARQ.**: entrar no sub-estado 5 vem de `sel == -2` (`0x80066728`), e `sel` fica em
+  −2 enquanto a tela está aberta → o `bltz` já barra o cursor;
+* **USANDO um documento**: o `menu_init` troca para o **kind 3** (`0x8006dbd0`:
+  `msg − 0x85 < 0x1f` → `ctx+0x04 = 3`), cuja rotina de desenho é OUTRA (`0x8006e3f8` na tabela
+  `0x8001104c`, contra `0x8006e3c0` do kind 0): ela não monta a grade de itens.
+
+No port isso virou `MenuStatus.cursor_visivel()` (consultável, e travado em `test_arquivo.gd`):
+sem cursor quando a seleção está nos botões **ou** quando `arquivo.aberto`.
+
+### 16.2 De-para índice negativo → botão: agora MEDIDO
+
+A §5 declarava "**não medido**". Está medido, e o que o port fazia por palpite estava certo:
+
+* UP faz `sel -= 2` (grade de 2 colunas, `0x80066780`..`0x80066798`), então da **coluna esquerda**
+  sai `-2` e da **direita** `-1`;
+* `sel == -1` → sub-estado **4** (`0x800666f0`), e o sub 4 (`0x80066adc`) põe `ctx+0x10 = 4` =
+  **MAPA**;
+* `sel == -2` → sub-estado **5** (`0x80066728`), e o sub 5 (`0x80066ca0`) põe `ctx+0x10 = 7` =
+  **ARQUIVO**;
+* `sel < -2` (`slti` em `0x80066738`) → **SAIR**.
+
+Logo: coluna esquerda → ARQ., coluna direita → MAPA, um passo acima → SAIR.
+
+### 16.3 Som de abrir ≠ som de fechar
+
+Está em [`exe_audio.md §5.4`](exe_audio.md): abrir a tela = SE **6** (`0x80023db8` com
+`ctx+0x04 = 0`), fechar = SE **5** (`0x80066744`/`0x8006675c` + `ctx+0x10++`), e o **id 9** —
+que o port usava nos dois — é *entrar no MAPA/ARQUIVO*. Também estava tocando **dois** SE por
+ESC (o 5 do `cancelar` mais o 9 do `alternar`).
+
+### 16.4 O ECG em "blocão" e a roda do mouse
+
+* ECG: ver [`menu_ecg.md §3`](menu_ecg.md) — a onda é poligonal e passou a ser desenhada com
+  `draw_line` antialiasado, rasterizando em 1280×960 em vez de 32 retângulos de 1 px × escala 4.
+* **Roda do mouse** (não avançava a página de EXAMINAR nem a de documento): era lida por
+  **polling** (`Input.is_mouse_button_pressed(MOUSE_BUTTON_WHEEL_UP/DOWN)`). A roda em Godot é
+  **evento** e nunca fica "pressionada", então a borda nunca acontecia. Passou para `_input` com
+  `InputEventMouseButton`, acumulando em `Screen._rolagem` e sendo consumida pelo tick de 30 Hz.
+  Verificado injetando eventos de roda na cena real: `port/dev/diag_roda.gd`.

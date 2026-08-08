@@ -1,6 +1,10 @@
 extends SceneTree
 ## Prova da tela de ARQUIVO pelo caminho real: abre o menu (I), navega até ARQ., confirma, e
-## salva a LISTA e uma PÁGINA aberta.
+## salva a LISTA e uma PÁGINA aberta — em `port/dev/`, que é onde as capturas moram (nada de PNG
+## na raiz do `port/`).
+##
+## Também serve de prova do conserto de 2026-08-08: na captura da LISTA **não** pode aparecer o
+## quadro vermelho do cursor sobre a grade de itens (ver `menu_inventario.md` §16.1).
 var _cena: Node
 var _t := 0
 var _fase := 0
@@ -55,7 +59,7 @@ func _process(_d: float) -> bool:
 		return false
 	if _fase == 2:
 		get_root().get_texture().get_image().save_png(
-			ProjectSettings.globalize_path("res://%s" % _nome))
+			ProjectSettings.globalize_path("res://dev/%s" % _nome))
 		print("[ar] salvo %s" % _nome)
 		# abre o documento e vira para a página de texto
 		arq.call("confirmar")
@@ -69,6 +73,6 @@ func _process(_d: float) -> bool:
 		_fase = 4
 		return false
 	get_root().get_texture().get_image().save_png(
-		ProjectSettings.globalize_path("res://%s" % _nome))
+		ProjectSettings.globalize_path("res://dev/%s" % _nome))
 	print("[ar] salvo %s (pagina %s)" % [_nome, arq.get("pagina")])
 	return true

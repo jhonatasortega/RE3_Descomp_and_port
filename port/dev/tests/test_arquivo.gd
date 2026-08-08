@@ -118,4 +118,50 @@ func run(t: Object) -> bool:
 	t.check(a.aberto and not a.lendo, "ESC sai da leitura e fica na grade")
 	a.cancelar()
 	t.check(not a.aberto, "ESC de novo fecha a tela")
+
+	# ── SOM DE ABRIR ≠ SOM DE FECHAR (defeito relatado; os dois usavam o id 9) ──
+	## Ids medidos no `SLUS_009.23`:
+	##   abrir a tela de status = **6** (`0x80023db8` com `ctx+0x04 = 0`; o `bne ..., 4` de
+	##   `0x80023da4` é tomado e vale o `a0 = 6` do delay slot);
+	##   fechar = **5** (`0x80066744`/`0x8006675c`, seguido do `ctx+0x10++` de `0x80066760`);
+	##   id **9** = entrar no MAPA/ARQUIVO, não abrir o inventário.
+	t.group("ARQUIVO / som de abrir e fechar")
+	var sfx := Sfx.new()
+	t.check(sfx.carregar(), "re3_se.json carrega")
+	t.eq(sfx.acao_id("menu_confirmar"), 6, "abrir a tela de status = SE id 6 (0x80023db8)")
+	t.eq(sfx.acao_id("menu_cancelar"), 5, "fechar a tela de status = SE id 5 (0x8006675c)")
+	t.eq(sfx.acao_id("menu_abrir"), 9, "id 9 = entrar no MAPA/ARQUIVO (0x800666f0/0x80066728)")
+	t.check(sfx.acao_wav("menu_cancelar") != sfx.acao_wav("menu_confirmar"),
+		"e as AMOSTRAS são diferentes: fechar não soa como abrir")
+	t.check(sfx.menu_status_abrir(), "menu_status_abrir() resolve uma amostra")
+	var wav_abrir := sfx.ultimo_tocado()
+	t.check(sfx.menu_fechar(), "menu_fechar() resolve uma amostra")
+	t.check(sfx.ultimo_tocado() != wav_abrir,
+		"abrir e fechar tocam WAV diferentes (%s vs %s)" % [wav_abrir, sfx.ultimo_tocado()])
+	t.eq(sfx.ultimo_tocado(), sfx.acao_wav("menu_cancelar"),
+		"fechar toca a amostra do id 5")
+
+	# ── CURSOR DA GRADE COM O ARQUIVO POR CIMA (defeito relatado) ──
+	## `0x8006c22c` (`bltz ctx+0x1c`) não emite o cursor quando a seleção é negativa — e ela é -2
+	## enquanto o sub-estado 5 (ARQUIVO) está ativo. Pelo caminho de USAR um documento o jogo troca
+	## para o kind 3, que tem outra rotina de desenho (`0x8006e3f8`) e não monta a grade.
+	t.group("ARQUIVO / cursor da grade")
+	var m := MenuStatus.new()
+	m.arquivo = a
+	a.fechar()
+	m.selecao_botao = -1
+	t.check(m.cursor_visivel(), "grade sem arquivo aberto: o cursor aparece")
+	m.selecao_botao = 1
+	t.check(not m.cursor_visivel(), "seleção nos botões: não aparece (ctx+0x1c < 0)")
+	m.selecao_botao = -1
+	a.abrir()
+	t.check(not m.cursor_visivel(),
+		"tela de arquivo por cima: o cursor da grade NÃO é desenhado")
+	a.fechar()
+	t.check(m.cursor_visivel(), "e volta a aparecer quando o arquivo fecha")
+	## `free()` explícito: `MenuStatus`/`MenuArquivo`/`Sfx` são Nodes criados FORA da árvore (o
+	## harness é `RefCounted`), então ninguém os coleta e o motor reclama de vazamento no fim.
+	m.free()
+	sfx.free()
+	a.free()
 	return true

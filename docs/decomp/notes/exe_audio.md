@@ -33,6 +33,7 @@ que `sfx.md §8` documentava como filas de som, são **vibração do controle**.
 | `cat 1` | "ambiente de área" | **banco da ARMA equipada** (`w = player+0x46`) |
 | Som de PASSO | "não identificado" | **NÃO PROVADO**, com o achado negativo medido (§11.2) |
 | BGM sala → faixa | "NÃO MEDIDO" | **PROVADO byte-exato** nas 169 salas (§7) — a §7 antiga estava errada |
+| **id 9 = "abrir menu"** | rótulo desta nota | **ERRADO**: 9 = entrar no MAPA/ARQUIVO; abrir o inventário é **6** e fechar é **5** (§5.4) |
 | Banco de sala (`cat 2`) | só `R000.SND` | os outros **168 estão embutidos nos `R###.ARD`** (§11.4) |
 
 ---
@@ -312,10 +313,10 @@ Banco `C_00` (idêntico em `C_01`):
 | id | ação | tom | vag | WAV |
 |---:|---|---:|---:|---|
 | **4** | mover cursor | 5 | 4 | `C_00/C_00_02.wav` |
-| **5** | cancelar / voltar | 6 | 5 | `C_00/C_00_03.wav` |
-| **6** | confirmar | 7 | 6 | `C_00/C_00_04.wav` |
+| **5** | cancelar / voltar — **e FECHAR a tela de status** (§5.4) | 6 | 5 | `C_00/C_00_03.wav` |
+| **6** | confirmar — **e ABRIR a tela de status** (§5.4) | 7 | 6 | `C_00/C_00_04.wav` |
 | **7** | inválido | 8 | 2 | `C_00/C_00_00.wav` |
-| **9** | abrir menu | 12 | 3 | `C_00/C_00_01.wav` |
+| **9** | entrar no MAPA / ARQUIVO (**não** é "abrir menu" — §5.4) | 12 | 3 | `C_00/C_00_01.wav` |
 
 Por que é ALTA — quatro evidências independentes que convergem:
 
@@ -347,6 +348,39 @@ Exemplo de call sites (a0 constante recuperado por back-walk do imediato):
 > som". Ela mapeia, mas os **valores** `4/5/6/7/9` não vêm de nenhuma tabela em
 > `0x800746c0` — são **imediatos no fluxo de instruções** de cada tela (`addiu a0, zero, 5`
 > etc.). A tabela que traduz id → amostra é a do `.VH` (§4).
+
+### 5.4 Abrir ≠ fechar a tela de status — e o id 9 **não** é "abrir menu" (2026-08-08)
+
+O port tocava o **id 9** ao abrir *e* ao fechar o inventário (`MenuStatus.alternar`), porque esta
+nota chamava o 9 de "abrir menu". O rótulo estava **errado**. Desmontando os 5 call sites do id 9
+e o caminho de abertura/fechamento da task do menu (contexto `0x800e01c0`, ver
+[`menu_pc_sys.md`](menu_pc_sys.md) §4-§6):
+
+| evento | id | prova |
+|---|---:|---|
+| **ABRIR a tela de status** (botão de menu) | **6** | `0x80023c9c` `log_edge & 0x4000` → `0x800d1f2c \|= 0x200` e `ctx+0x04 = 0` (`0x80023cb0`). No mesmo quadro `0x80023d58` vê a flag e cai em `0x80023d60`, que arma a task (`0x800c7961 = 1`) e pede o SE em `0x80023db8`. O `a0` sai de `0x80023da4`: `bne ctx+0x04, 4` **TOMADO** (modo 0) ⇒ vale o delay slot `addiu a0, zero, 6` de `0x80023da8` |
+| **ABRIR o MAPA** (L2, direto do jogo) | **9** | mesmo `jal` de `0x80023db8`, mas com `ctx+0x04 = 4` (`0x80023cd0`, `raw_edge & 1`) ⇒ o `bne` NÃO é tomado e vale `addiu a0, zero, 9` de `0x80023dac` |
+| **FECHAR a tela de status** (cancelar) | **5** | `0x80066628`..`0x80066634`: `(raw_edge & 0x20) \| (log_edge & 0x2000)` desvia para `0x80066744` (`a0 = 5`), pede em `0x8006675c` e faz `ctx+0x10++` (`0x80066750`/`0x80066760`) → estado 3 (`0x8006a888`) → estado 13 = **fechamento** (`0x8006e4cc`) |
+| **botão SAIR** da tela | **5** | mesmo bloco: `slti ctx+0x1c, -2` em `0x80066738` cai em `0x80066744` |
+| **botão ARQ.** (cursor em `-2`) | **9** | `0x80066728`, junto com `ctx+0x11 = 5` (sub-estado 5 = ARQUIVO) |
+| **botão MAPA** (cursor em `-1`) | **9** | `0x800666f0`, junto com `ctx+0x11 = 4` (sub-estado 4 = MAPA) |
+| confirmar em slot **com** item | **6** | `0x8006669c` (o `lbu (s1)` de `0x80066660` é o id do slot) |
+| confirmar em slot **vazio** | **7** | `0x800666bc` |
+| 5º call site do id 9 | **9** | `0x8006dd40`, braço **5** da tabela de init `0x8001100c` (kind 5 = mensagem/mapa por item usado) — e `0x8006fdb4`, no sub-dispatcher do mapa |
+
+Ou seja o id 9 é **"entrar em outra sub-tela"**, nunca "abrir/fechar o inventário". Resumo do
+que o port passou a fazer (`port/core/sfx.gd`: `menu_status_abrir` = 6, `menu_fechar` = 5,
+`menu_abrir` = 9 só para ARQ./MAPA):
+
+* abrir inventário → 6 · fechar (ESC, SAIR) → 5 · ARQ./MAPA → 9 · slot com item → 6 ·
+  slot vazio → 7 · mover cursor → 4.
+
+**Efeito colateral corrigido:** `MenuStatus.cancelar()` tocava o id 5 e depois chamava
+`alternar()`, que tocava o 9 — **dois SE no mesmo ESC**. Agora `alternar(false)` cala o segundo.
+
+**De-para índice negativo → botão, que a nota do inventário declarava NÃO MEDIDO, também
+fechou:** UP faz `sel -= 2` (grade de 2 colunas), então da coluna esquerda sai `-2` (ARQUIVO) e
+da direita `-1` (MAPA); `sel < -2` é SAIR. Ver `menu_pc_sys.md` §6.2 (subs 4 e 5).
 
 ### 5.2 Ids de jogo — call site provado, **semântica DECLARADA**
 
@@ -564,6 +598,7 @@ blocos `<Text>`, 13 `{clear}` + 4 `{timed}`. `epilogue.xml`: 1 bloco, 13 `{clear
 | Descritor: `b1` bits0-3 e `b3` bits1-7 | **NÃO PROVADO** | — |
 | `cat` == id de banco VAB | fechado (§3) | **ALTA** |
 | De-para dos 5 sons de menu | fechado (§5.1) | **ALTA** (4 evidências independentes) |
+| **Qual id em abrir / fechar / ARQ. / MAPA / slot vazio** | fechado (§5.4) | **ALTA** (imediato no fluxo de cada caminho, com o endereço do `jal`) |
 | **Porta**: banco `cat 4` embutido nos 76 `DOOR??.DO1` | fechado (§4.4) | **ALTA** no formato / **MÉDIA** no nome (qual id é abrir vs fechar não foi medido) |
 | **Estouro da arma** = `cat 1 / id 0` do banco `A_{w}` | fechado (§11.1) | **ALTA** (tabela por arma `0x8009ced8` + `A_01` sem id 0) |
 | De-para **item do inventário → `w`** (qual `A_xx` em cada arma) | **NÃO MEDIDO** — o port usa faca=1 / resto=2, DECLARADO | BAIXA |

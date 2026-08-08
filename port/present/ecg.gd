@@ -64,14 +64,28 @@ extends RefCounted
 ## painel. A fase anda +3 por quadro e o estado 3 do "usar item" (`0x80067934`) encerra quando
 ## `fase >= 0x51`: limpa o bit e volta `fase = -32`.
 ##
-## ── ENGATE (este arquivo NÃO é ligado em `menu_status.gd` de propósito) ──
+## ── ENGATE (já ligado em `menu_status.gd`) ──
 ##     var _ecg := Ecg.new()                     # membro de MenuStatus
 ##     func avancar():  ...;  _ecg.avancar()     # 1 tick de 30 Hz
-##     func _draw():    ...;  _ecg.desenhar(self, cnd, t)   # DEPOIS do laço `for r in MOLDURA`
-##     # ao usar item de cura:  _ecg.flash()
+##     func _draw():    ...;  _ecg.desenhar(self, cnd)      # DEPOIS do laço `for r in MOLDURA`
+##     # ao usar item de cura:  _ecg.flash()     # (ainda não chamado por `_usar`)
+##
+## ── DESENHO EM RESOLUÇÃO DE TELA (conserto de 2026-08-08) ──
+## O relato do dono do repo era "as linhas do ECG estão em SD, um blocão". Estava: eu emitia
+## 32 `draw_rect` de **1 px de largura no espaço 320×240**, e como o nó do menu tem `scale = 4`
+## cada um saía como um bloco de 4×4 px na tela, o que transformava toda subida/descida em
+## escada. A onda, porém, é VETORIAL: a tabela é uma poligonal (ver `valores()`), então agora ela
+## é desenhada com `draw_line` antialiasado entre os vértices — coordenadas FLOAT no mesmo espaço
+## 320×240 (a geometria medida não muda) e rasterização depois da escala, isto é em 1280×960.
+## As LISTRAS de fundo do gráfico já vinham em HD e continuam: elas são batidas no bitmap do
+## painel B1, e o `menu_status.gd` desenha B1 do bloco `MENU/status/hd/chrome_9b.webp` (4× da
+## metade direita do `STMAIN0U`). Conferido no arquivo: 10 listras verdes opacas de 2 px, com
+## passo de 12 px, em `v = 332..442` do bloco — que é exatamente `GRADE_N = 10` e
+## `GRADE_PASSO = 3` do SD multiplicados por 4. Não há par HD "das listras" para casar: elas não
+## são asset separado.
 ##
 ## Nada aqui é chute: todo número tem endereço. O que é escolha do port está marcado
-## "declarado" no comentário da constante.
+## "declarado" no comentário da constante (`ESPESSURA_SD` e a regra de `valores()`).
 
 # ── Tabelas do EXE, copiadas byte a byte ────────────────────────────────────────────────────────
 
@@ -116,6 +130,17 @@ const PASSO := 1                        ## `0x8006e31c`
 const PASSO_FLASH := 3                  ## `0x8006e310`
 const ALFA_SEMITRANS := 0.5             ## code 0x42 + tpage 0x9b (abr = 0) → 50% fundo/50% frente
 
+## ── ESPESSURA DA LINHA (o conserto do "blocão") ──
+## O primitivo do PS1 é `LINE_F2` com `x0 == x1`: **1 pixel de 320×240** de largura. O port
+## desenha nesse mesmo espaço com `scale = 4`, então 1 px virava um quadrado de 4×4 na tela —
+## foi isso que o dono do repo viu como blocos. A onda, porém, é VETORIAL (a tabela é uma
+## poligonal: ver `valores()`), então dá para desenhá-la como linha de verdade e deixar o
+## rasterizador da tela resolver em 1280×960.
+## `1.0` = exatamente a espessura do original (1 px de 320×240 = 4 px de tela), que é a
+## proporção fiel. É o único número deste arquivo que é ESCOLHA e não medida — está aqui para
+## poder afinar (0.5 = 2 px de tela, traço mais fino/HD).
+const ESPESSURA_SD := 1.0
+
 ## O menu do PS1 roda a 60 Hz e o port a 30 Hz (`menu_pc_sys.md` §8): 2 quadros do original por
 ## tick do port. Ponha 1 aqui para ver o ECG na metade da velocidade.
 const QUADROS_POR_TICK := 2
@@ -133,6 +158,7 @@ var fase := 0                            ## `ctx+0x32` (s16); init em 0 (`0x8006
 var em_flash := false                    ## `ctx+0x18 & 0x00800000`
 
 static var _ondas: Array[PackedByteArray] = []
+static var _valores: Array[PackedInt32Array] = []
 
 
 static func onda(indice: int) -> PackedByteArray:
@@ -145,6 +171,56 @@ static func onda(indice: int) -> PackedByteArray:
 
 static func onda_da_condicao(cond: int) -> PackedByteArray:
 	return onda(int(ONDA_POR_CONDICAO[clampi(cond, 0, ONDA_POR_CONDICAO.size() - 1)]))
+
+
+static func valores(indice: int) -> PackedInt32Array:
+	## A tabela como **poligonal**: um valor de `y` (deslocamento, sem o `Y_ORIGEM`) por coluna.
+	##
+	## ── POR QUE A TABELA É UMA POLIGONAL (medido no dado) ──
+	## Cada coluna é um par `(y0, h)` e o EXE desenha o segmento VERTICAL `[y0, y0+h]`
+	## (`0x8006c5c4`..`0x8006c5d8`). Lendo as 5 tabelas, os spans de colunas vizinhas **se
+	## encostam**: em `0x800a0cbc`, k=20 é `(0x14,0)` = 20..20, k=21 é `(0x10,4)` = 16..20,
+	## k=22 é `(0x08,8)` = 8..16, k=23 é `(0x05,3)` = 5..8 — 20, 16, 8, 5 é o valor da onda, e
+	## cada `h` é o |Δ| até o vizinho. Ou seja o span vertical de uma coluna é a PROJEÇÃO do
+	## segmento que liga o valor da coluna anterior ao da coluna atual: a "linha grossa" do PS1 é
+	## o traço diagonal colapsado num pixel de largura.
+	##
+	## Regra usada para recuperar o valor (DECLARADA — é reconstrução, não campo do dado):
+	##     a    = clamp(v[k-1], y0, y0+h)
+	##     v[k] = y0  se  |y0 - a| > |y0+h - a|,  senão  y0+h
+	## isto é, o extremo do span mais LONGE de onde a onda estava (com o valor anterior trazido
+	## para dentro do span antes de comparar). Semente `v[-1] = y0[0]` — as 5 tabelas começam com
+	## 12 a 19 colunas de `(0x0f, 0)` (a linha de base 15), então a semente não muda nada.
+	##
+	## ── O QUANTO ISSO É EXATO (medido, `test_ecg.gd`) ──
+	## Reprojetando a poligonal de volta em spans, nas 370 colunas alcançáveis (5 tabelas × 74):
+	## **298 batem byte a byte**, 69 erram **1 px** e 3 erram 2 px, sempre no extremo distante.
+	## A diferença é do DADO, não da regra: em `0x800a0cbc` k=13 o span é `(0x0e,0)` = 14..14 vindo
+	## de 15 — o autor escreveu `h = 0` numa descida de 1 px, e não `h = 1`; no k=21 da mesma
+	## tabela, uma descida de 4 px traz `h = 4`, ou seja incluindo o ponto de partida. As duas
+	## convenções convivem na mesma tabela, então NÃO existe regra exata para as 370.
+	## Os LIMITES não se movem: o `y` da poligonal fica em [4, 27] = tela [41, 64], exatamente o
+	## mesmo intervalo dos spans, logo a onda continua inteira dentro do buraco do painel.
+	if _valores.is_empty():
+		for i in ONDA_HEX.size():
+			var w := onda(i)
+			var n := w.size() / 2
+			var v := PackedInt32Array()
+			v.resize(n)
+			var ant := int(w[0])
+			for k in n:
+				var y0 := int(w[k * 2])
+				var y1 := y0 + int(w[k * 2 + 1])
+				var a := clampi(ant, y0, y1)
+				var atual := y0 if absi(y0 - a) > absi(y1 - a) else y1
+				v[k] = atual
+				ant = atual
+			_valores.append(v)
+	return _valores[clampi(indice, 0, _valores.size() - 1)]
+
+
+static func valores_da_condicao(cond: int) -> PackedInt32Array:
+	return valores(int(ONDA_POR_CONDICAO[clampi(cond, 0, ONDA_POR_CONDICAO.size() - 1)]))
 
 
 func reiniciar() -> void:
@@ -217,17 +293,71 @@ func segmentos(cond: int, origem := Vector2i.ZERO) -> Array:
 	return fora
 
 
+func pontos(cond: int, origem := Vector2i.ZERO) -> Array:
+	## A onda como POLIGONAL: `[{ p: Vector2, cor: Color8 }, …]` da cauda (i=0) para a cabeça
+	## (i = n-1), com um vértice por coluna visível. Mesma janela e mesmo guarda de `segmentos`
+	## (`k = fase + i`, `0 <= k < 0x4a` de `0x8006c550`/`0x8006c558`), mesma origem (75,37) e mesmo
+	## rastro de cor de `0x8006c560`. O que muda é a REPRESENTAÇÃO: vértice em vez de span, para
+	## desenhar linha de verdade na resolução da tela (ver `ESPESSURA_SD`).
+	##
+	## Não vale no flash (`ctx+0x18 & 0x800000`): lá o EXE desenha barras de altura CHEIA
+	## (`0x8006c5ec`/`0x8006c5f8`), que não são onda nenhuma — `desenhar` continua usando
+	## `segmentos` nesse caso.
+	var n := n_colunas()
+	var c: Array = COR[clampi(cond, 0, COR.size() - 1)]
+	var v := valores_da_condicao(cond)
+	var fora: Array = []
+	for i in n:
+		var k := fase + i
+		if k < 0 or k >= K_LIMITE:
+			continue
+		var f := n - 1 - i                    ## `0x8006c564`: (n - i) - 1
+		fora.append({
+			"p": Vector2(float(origem.x + X_ORIGEM + k), float(origem.y + Y_ORIGEM + v[k])),
+			"cor": Color8(int(c[0] - c[3] * f) & 0xFF,
+				int(c[1] - c[4] * f) & 0xFF,
+				int(c[2] - c[5] * f) & 0xFF),
+		})
+	return fora
+
+
 func desenhar(alvo: CanvasItem, cond: int, alfa := 1.0, origem := Vector2i.ZERO) -> void:
 	## Desenha no espaço 320×240 do `alvo` (o mesmo em que `menu_status.gd` desenha).
 	## Chamar DEPOIS do painel B1 — no PS1 o painel entra com `ot = 3` (`0x8006b99c`) e o ECG com
 	## `ot = 1` (`0x8006c654`), e a Ordering Table desenha o índice menor por cima.
+	##
+	## ── RESOLUÇÃO DE TELA ──
+	## Antes eram 32 `draw_rect` de 1 px de largura no espaço 320×240; com a escala 4 do nó, cada
+	## um saía como um bloco de 4 px e a onda ficava em escada. Agora são segmentos de reta entre
+	## os vértices da poligonal (`pontos`), com `antialiased = true`: as coordenadas continuam em
+	## 320×240 (a geometria MEDIDA não muda), mas são FLOAT e a rasterização acontece depois da
+	## escala, ou seja em 1280×960. A espessura vem de `ESPESSURA_SD`.
 	if alfa <= 0.0:
 		return
-	for s: Dictionary in segmentos(cond, origem):
-		var cor: Color = s["cor"]
+	if em_flash:
+		## FLASH da cura: barras de altura cheia, 1 px de largura — é retângulo no original
+		## (`0x8006c5ec`/`0x8006c5f8`) e continua retângulo aqui.
+		for s: Dictionary in segmentos(cond, origem):
+			var cf: Color = s["cor"]
+			cf.a = ALFA_SEMITRANS * alfa
+			var fy0: int = s["y0"]
+			var fy1: int = s["y1"]
+			alvo.draw_rect(Rect2(float(s["x"]), float(mini(fy0, fy1)),
+				1.0, float(absi(fy1 - fy0) + 1)), cf)
+		return
+	var ps := pontos(cond, origem)
+	if ps.size() < 2:
+		## uma coluna só (a onda entrando ou saindo da janela): sem segmento, marca o pixel — é o
+		## que o `LINE_F2` de altura 0 do original desenha.
+		if ps.size() == 1:
+			var c1: Color = ps[0]["cor"]
+			c1.a = ALFA_SEMITRANS * alfa
+			var p1: Vector2 = ps[0]["p"]
+			alvo.draw_rect(Rect2(p1.x, p1.y, 1.0, 1.0), c1)
+		return
+	for i in range(1, ps.size()):
+		## A COR é a da coluna de destino (índice `i`), como no original: cada primitivo do PS1
+		## leva a cor do seu `i`, e o segmento i é a projeção da coluna i.
+		var cor: Color = ps[i]["cor"]
 		cor.a = ALFA_SEMITRANS * alfa
-		var y0: int = s["y0"]
-		var y1: int = s["y1"]
-		# LINE_F2 com x0 == x1: coluna de 1 px, com os DOIS extremos inclusive (por isso o +1).
-		alvo.draw_rect(Rect2(float(s["x"]), float(mini(y0, y1)),
-			1.0, float(absi(y1 - y0) + 1)), cor)
+		alvo.draw_line(ps[i - 1]["p"], ps[i]["p"], cor, ESPESSURA_SD, true)
