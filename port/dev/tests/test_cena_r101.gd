@@ -124,7 +124,13 @@ func run(t) -> bool:
 	## decodificada, `cena_r10d.md` §7-1), então aqui se cobra a ORDEM DE GRANDEZA. O valor medido
 	## pelo caminho real do jogo (`R10D -> R101`, `port/dev/diag_cena_r101_jogo.gd`) é **1362**
 	## quadros ≈ 45 s, e o `test_cena_world.gd` cobra esse trajeto inteiro.
-	t.check(q > 1200 and q < 1700, "e dura ~1300-1600 quadros (~45 s a 30 Hz)", "%d" % q)
+	t.check(q > 1200 and q < 1800, "e dura ~1300-1800 quadros (~45-60 s a 30 Hz)", "%d" % q)
+	## 🟡 DÍVIDA REGISTRADA: a função 13 (a que devolve o controle) faz
+	## `10 06 0a 00` / `4e 00 1a 05 09 00` = `while (var[26] != 9)`, e `var[26]` é escrita pelo
+	## MOTOR, não pelo script — o port rompe essa espera pelo freio de `while` de `ScriptVM`.
+	t.check(", ".join(w.cena_debitos).contains("`while`"),
+		"e a espera que o port não sabe satisfazer fica registrada como dívida",
+		", ".join(w.cena_debitos))
 	t.eq(cams, [24, 10, 25, 26, 25, 26, 27, 21, 19, 17, 10] as Array[int],
 		"as câmeras da cena chegam ao `world.camera`, na ordem do bytecode")
 	t.check(seqs.size() >= 10, "e o player recebe as SEQ do `0x80` (mais de 10 trocas)",
@@ -183,7 +189,7 @@ func run(t) -> bool:
 	# Varredura das 19 funções: nenhum `0x40`/`0x41` nos membros 0x09 (X) ou 0x0b (Z) do work 1:0.
 	# O que existe é `40 0f 02 00` (+0x005c da func 3) = `player+0x09 = 2` = nível 2 ⇒ y = -3600.
 	t.eq(World._nivel_da_cena_de_entrada(SALA), 2,
-		"`CENAS_LIGADAS[R101].chegada_nivel` = 2, o que o `40 0f 02 00` declara")
+		"`CENAS_METADADOS[R101].chegada_nivel` = 2, o que o `40 0f 02 00` declara")
 	var emp := World._chegada_emprestada(SALA, 2)
 	if t.check(not emp.is_empty(), "há chegada MEDIDA nesse andar para emprestar"):
 		t.eq(str(emp["src"]), "R102", "e é a da porta R102 -> R101")

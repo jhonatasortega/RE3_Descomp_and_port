@@ -135,6 +135,9 @@ var simular_movimento := true          ## ver `VELOCIDADE_DECLARADA`
 ## `VELOCIDADE_DECLARADA`, que já era declarada.
 var atores_externos: Dictionary = {}
 var max_quadros := 20000               ## rede de segurança
+## Dívidas que a cena acumulou (esperas rompidas pelo freio de `while`, etc). O `world.gd` copia
+## para `cena_debitos` — o teste cobra o registro em vez de eu fingir que está tudo medido.
+var debitos: Array[String] = []
 
 
 func iniciar(vm_sala: ScriptVM, func_id: int, gs: GameState = null) -> bool:
@@ -153,6 +156,7 @@ func iniciar(vm_sala: ScriptVM, func_id: int, gs: GameState = null) -> bool:
 	eventos = []
 	troca_de_sala = {}
 	fade_ativo = {}
+	debitos = []
 	quadro_atual = 0
 	camera = -1
 	camera_anterior = -1
@@ -208,6 +212,190 @@ func viva() -> bool:
 # `atravessar()` já existe lá e já sabe carregar a sala e aplicar a chegada. ⚠ A chegada desta
 # porta é (0,0,0) no dado (ver `aot_exec`), então o desencrave de chegada de `world.gd` vai
 # entrar em ação — é o comportamento certo até o grupo do RVD estar medido.
+
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# ⭐ O PADRÃO — uma cena roda POR DADO, sem código novo (pedido do dono, 2026-08-08)
+#
+# *"não dá para a gente ficar extraindo as cenas uma por uma, precisa de um padrão."* Este bloco
+# é o padrão. Em vez de uma lista branca de salas escrita à mão, o port **audita o bytecode da
+# cena** e decide: se ela só usa opcodes que o intérprete sabe atravessar, ela roda; se usa algo
+# que faria a cena MENTIR ou PRENDER o jogador, ela não roda e o port diz qual opcode faltou.
+# Assim a cobertura cresce sozinha conforme os opcodes entram.
+#
+# O critério tem TRÊS níveis, e a divisão saiu do censo (`tools/scd_cena_censo.py` →
+# `port/data/cena_opcodes.json`, 169 salas varridas):
+#
+#  1. **IMPLEMENTADO** — semântica medida no EXE e executada aqui (`OPS_IMPLEMENTADOS`).
+#  2. **INÓCUO** — o tamanho está na tabela (lida dos avanços de PC dos handlers) e o opcode
+#     **não mexe no fluxo nem no sincronismo**: o intérprete anda o PC e conta. Não pode prender
+#     nem corromper nada; no máximo a cena perde um efeito visual. É o caso de `0x82`, `0x5b`,
+#     `0x77`, `0x70`… — a maioria do censo.
+#  3. **BLOQUEANTE** (`OPS_BLOQUEANTES`) — os dois jeitos de a cena dar errado de verdade:
+#     • **controle de fluxo não implementado**: o port andaria o PC em linha reta e executaria o
+#       corpo de todos os ramos. `0x18`/`0x1a` (quadro de laço, `0x80053770`/`0x80053824`) e
+#       `0x12`/`0x13` (`0x80053464`/`0x800534c8`) estão aqui. O `switch` (`0x14`/`0x15`/`0x16`/
+#       `0x17`/`0x1b`) **saiu** desta lista neste round: está decodificado em `vm.gd`.
+#     • **`0x7a` = FMV**: a cena tocaria um filme e o port pularia calado. 7 salas / 11 cenas.
+#
+# E há um quarto caso, que é o mais importante e **não** é uma lista: a **condição de `while`**.
+# O `0x10` (`0x80053364`) avalia a condição despachando o opcode em `PC+4` (`0x80053550`) e usa o
+# RETORNO como verdade. Se o port não sabe avaliar aquele opcode, `_avaliar_condicao()` devolve
+# **falso** — e o laço sai na hora, isto é a cena **corre adiantada** em vez de esperar. Isso é
+# mentir sobre o tempo, então uma cena cuja condição de `while` o port não avalia também não roda.
+# Censo das condições de `while` em todo o jogo — são **seis** opcodes, e só isto:
+#     0x4c 204 cenas (IMPLEMENTADO) · 0x43 50 · 0x4e 17 · 0x6c 4 · 0x1d 2 · 0x6d 1
+# ➜ implementar `0x43` e `0x4e` como condição destrava 67 cenas. Está registrado, não feito.
+const OPS_CONDICAO_IMPLEMENTADAS := {0x4C: true, 0x4E: true, 0x43: true}
+
+## Opcodes com semântica MEDIDA e executada (`ScriptVM._passo_cena` + o `match` de EXECUÇÃO).
+## Cada um tem o handler citado no arquivo onde é tratado.
+const OPS_IMPLEMENTADOS := {
+	# fluxo e tempo
+	0x00: true, 0x01: true, 0x02: true, 0x06: true, 0x07: true, 0x08: true,
+	0x09: true, 0x0A: true, 0x0D: true, 0x0F: true, 0x10: true, 0x11: true, 0x19: true,
+	0x12: true, 0x13: true,                                           # do-while (novo)
+	0x14: true, 0x15: true, 0x16: true, 0x17: true, 0x1B: true,       # switch (novo)
+	0x03: true, 0x04: true,                                           # threads
+	# variáveis e membros
+	0x20: true, 0x40: true, 0x41: true, 0x42: true, 0x47: true,
+	# flags e comparações
+	0x4C: true, 0x4D: true, 0x4E: true, 0x43: true,
+	# câmera e fade
+	0x50: true, 0x51: true, 0x46: true,
+	# ator
+	0x80: true, 0x81: true, 0x8F: true,
+	# cenário / AOT
+	0x61: true, 0x62: true, 0x63: true, 0x64: true, 0x65: true, 0x66: true,
+	0x67: true, 0x68: true, 0x6E: true, 0x7F: true,
+	# personagem e som (registrados com os operandos crus)
+	0x7D: true, 0x57: true, 0x58: true, 0x59: true,
+}
+
+## Opcodes que IMPEDEM a cena de rodar (nível 3 acima).
+## ⚠ O `0x18` está aqui por MEDIÇÃO, não por preguiça — e o achado é arquitetural.
+## `0x80053770` faz `PC += s16@+4` (delay slot `0x800537b8  sw $a1, 0x1c($a0)`), isto é um SALTO
+## RELATIVO. Varri os 344 `0x18` do jogo: **217 têm deslocamento NEGATIVO** = aresta de volta, ou
+## seja **laço infinito por desenho**. O exemplo canônico é a função 41 do `R10D`
+## (`04 05 19 29` no init): dois `0x30` e um `evt_next` por quadro e `18 ff ff 00 d7 ff` voltando
+## 41 bytes — é a **thread de AMBIENTE da rua**, que no motor roda para sempre EM PARALELO ao
+## gameplay. O port hoje só sabe rodar cena como coisa que SUSPENDE o jogo (`World.cena`), então
+## abrir uma dessas como "cena" congelaria o jogador até a rede de segurança.
+## ➜ Falta um modelo de **thread concorrente** (thread de ambiente vs. cinemática), não o opcode.
+const OPS_BLOQUEANTES := {
+	0x18: "salto relativo `0x80053770` (`PC += s16@+4`); 217 dos 344 voltam = laço infinito de "
+		+ "thread de AMBIENTE, que o port não sabe rodar em paralelo ao gameplay",
+	0x1A: "fim de quadro de laço `0x80053824` — par do `0x18`",
+	0x1C: "`0x800538c8` — controle de fluxo não decodificado",
+	0x7A: "FMV (`0x8009e0f8[0x7a]`) — o port pularia o filme calado",
+}
+
+
+static func _alvos_de_chamada(vm_sala: ScriptVM, func_id: int) -> Array[int]:
+	## Funções que `func_id` chama: `0x19` (gosub, `0x800537bc`) e `0x03`/`0x04` (thread).
+	## Percurso LINEAR pelo corpo da função — o mesmo do censo, e é o certo aqui: interessa tudo
+	## que a cena PODE executar, não só o ramo desta partida.
+	var fora: Array[int] = []
+	for e: Dictionary in _instrucoes(vm_sala, func_id):
+		var op: int = e["op"]
+		var p: int = e["pc"]
+		if op == 0x19:
+			fora.append(vm_sala.u8(p + 1))
+		elif op == 0x03 or op == 0x04:
+			fora.append(vm_sala.u8(p + 3))
+	return fora
+
+
+static func _instrucoes(vm_sala: ScriptVM, func_id: int) -> Array[Dictionary]:
+	## Decode LINEAR do corpo de uma função: de `func_offsets[func_id]` até o `0x01` (evt_end) ou
+	## o início da função seguinte. Devolve `[{pc, op}]`.
+	var fora: Array[Dictionary] = []
+	if vm_sala == null or func_id < 0 or func_id >= vm_sala.func_offsets.size():
+		return fora
+	var ini: int = vm_sala.func_offsets[func_id]
+	var fim: int = vm_sala.bytes.size()
+	for o: int in vm_sala.func_offsets:
+		if o > ini and o < fim:
+			fim = o
+	var p := ini
+	while p < fim:
+		var op := vm_sala.u8(p)
+		if not ScriptVM.opcode_valido(op):
+			break
+		fora.append({"pc": p, "op": op})
+		if op == 0x01:
+			break
+		var sz := ScriptVM.size_of(op)
+		if sz <= 0:
+			break
+		p += sz
+	return fora
+
+
+static func auditar(vm_sala: ScriptVM, func_id: int) -> Dictionary:
+	## ⭐ "Esta cena pode rodar?" — a resposta vem do BYTECODE, não de tabela de sala.
+	##
+	## Devolve `{ok, funcs, opcodes, bloqueantes, condicoes, inocuos, motivo}`:
+	##   `funcs`       = fechamento de chamadas a partir de `func_id` (gosub + thread)
+	##   `bloqueantes` = opcodes de `OPS_BLOQUEANTES` encontrados
+	##   `condicoes`   = opcodes usados como condição de `while` que o port NÃO avalia
+	##   `inocuos`     = opcodes sem semântica que o intérprete só atravessa (informativo)
+	var vistos: Dictionary = {}
+	var funcs: Array[int] = []
+	var pilha: Array[int] = [func_id]
+	var opcodes: Dictionary = {}
+	var bloq: Dictionary = {}
+	var cond: Dictionary = {}
+	var inocuos: Dictionary = {}
+	while not pilha.is_empty():
+		var f: int = pilha.pop_back()
+		if vistos.has(f):
+			continue
+		vistos[f] = true
+		funcs.append(f)
+		var insns := _instrucoes(vm_sala, f)
+		for i in insns.size():
+			var op: int = insns[i]["op"]
+			opcodes[op] = int(opcodes.get(op, 0)) + 1
+			if OPS_BLOQUEANTES.has(op):
+				bloq[op] = OPS_BLOQUEANTES[op]
+			elif not OPS_IMPLEMENTADOS.has(op):
+				inocuos[op] = int(inocuos.get(op, 0)) + 1
+			if op == 0x10 and i + 1 < insns.size():
+				var c: int = insns[i + 1]["op"]
+				if not OPS_CONDICAO_IMPLEMENTADAS.has(c):
+					cond[c] = int(cond.get(c, 0)) + 1
+			if op == 0x19 or op == 0x03 or op == 0x04:
+				var alvo: int = vm_sala.u8(int(insns[i]["pc"]) + (1 if op == 0x19 else 3))
+				if not vistos.has(alvo):
+					pilha.append(alvo)
+	funcs.sort()
+	var motivo := ""
+	if not bloq.is_empty():
+		var partes: Array[String] = []
+		for k: int in bloq:
+			partes.append("0x%02x (%s)" % [k, bloq[k]])
+		motivo = "opcode bloqueante: " + ", ".join(partes)
+	elif not cond.is_empty():
+		var partes2: Array[String] = []
+		for k: int in cond:
+			partes2.append("0x%02x" % k)
+		motivo = "condição de `while` que o port não avalia: " + ", ".join(partes2)
+	return {"ok": motivo == "", "motivo": motivo, "funcs": funcs, "opcodes": opcodes,
+		"bloqueantes": bloq, "condicoes": cond, "inocuos": inocuos}
+
+
+static func primeira_camera(vm_sala: ScriptVM, func_id: int) -> int:
+	## Primeiro `0x50 cut_chg` da cena, lido do bytecode. `-1` se ela não troca de câmera.
+	##
+	## Serve para a CHEGADA de uma porta roteirizada: o descriptor dela é 32 bytes de ZERO
+	## (`to_cut = 0` é campo vazio, não câmera 0), e a cena de entrada prende a câmera no primeiro
+	## `cut_chg` de qualquer jeito (`0x800548f0` acende o bit `0x80` de `gs+0x77f4`). Então a
+	## câmera da cena é DADO, e emprestar câmera de outra porta não é.
+	for e: Dictionary in _instrucoes(vm_sala, func_id):
+		if int(e["op"]) == 0x50:
+			return vm_sala.u8(int(e["pc"]) + 1) & 0x7F
+	return -1
+
 
 static func gatilho_de_evento(vm_sala: ScriptVM, x: int, z: int) -> Aot:
 	## Primeiro AOT `sce 5` ATIVO que contém o ponto. É o gatilho da cena: o handler
@@ -293,6 +481,15 @@ func rodar(limite := 6000) -> int:
 
 
 # ═══════════════════════════════ chamadas vindas da VM ═══════════════════════════════
+
+func while_estourado(slot_thread: int, pc_while: int, giros: int) -> void:
+	## O FREIO de `while` do `ScriptVM` agiu: a espera foi rompida pelo port, não pelo script.
+	## Fica na linha do tempo e em `debitos` — é dívida declarada, não sucesso.
+	var d := "thread %d: `while` em PC %d rompido depois de %d voltas (espera que o port não sabe satisfazer)" % [slot_thread, pc_while, giros]
+	if not debitos.has(d):
+		debitos.append(d)
+	_evento("while_estourado", {"slot": slot_thread, "pc": pc_while, "giros": giros})
+
 
 func abrir_thread(slot_pedido: int, func_id: int) -> void:
 	pendentes.append({"slot": slot_pedido, "func": func_id})

@@ -147,10 +147,10 @@ func run(t) -> bool:
 	# descreveu. Ver `docs/decomp/notes/cena_r101.md` e `test_cena_r101.gd`.
 	t.eq(w2.cena_func, 3, "no R101 a cinemática de ENTRADA (função 3) assume na hora")
 	t.check(w2.player.em_cena(), "e o corpo continua dirigido por script (agora pelo R101)")
-	# O 7 do fim é a câmera de CHEGADA no R101 (emprestada junto com a chegada), lida no mesmo
-	# tick em que a porta disparou — não é câmera da função 11.
-	t.eq(cams2, [4, 5, 4, 6, 7, 8, 9, 7] as Array[int],
-		"as câmeras da saída chegam ao `world.camera`: 4 -> 5 -> 4 -> 6 -> 7 -> 8 -> 9 (+7 = chegada)")
+	# O 24 do fim é a câmera de CHEGADA no R101, lida no mesmo tick em que a porta disparou — e ela
+	# vem do BYTECODE da cena de entrada do R101 (o primeiro `50 18` da função 3), não emprestada.
+	t.eq(cams2, [4, 5, 4, 6, 7, 8, 9, 24] as Array[int],
+		"as câmeras da saída: 4 -> 5 -> 4 -> 6 -> 7 -> 8 -> 9 (+24 = 1º `cut_chg` da cena do R101)")
 	# As sequências que a cena pede, na ordem (doc §6.1). ⚠ 8 e 10 são DECLARADAS: não estão no
 	# par provado de `subir.gd` (6/7) e `animacoes_player.md` as rotula por render.
 	t.eq(seqs2, [8, 7, 4, 9, 5, 6, 10] as Array[int],
@@ -218,30 +218,55 @@ func run(t) -> bool:
 	# Medido: 135 gatilhos `sce 5` em 58 salas. Só o que está medido está ligado — os outros não
 	# podem abrir cena nenhuma (§7 do doc: há opcodes de cena sem semântica; uma thread presa num
 	# `while` prenderia o jogador para sempre).
-	t.eq(World.CENAS_LIGADAS.size(), 2, "duas salas com cena ligada")
-	t.check(World.CENAS_LIGADAS.has(SALA), "o R10D (entrada 7 + saída 11)")
-	t.check(World.CENAS_LIGADAS.has("R101"), "e o R101 (só a entrada, função 3)")
-	# O próprio R101 é a prova de inércia: ele tem DOIS gatilhos `sce 5` (AOT 11 -> função 12 e
-	# AOT 12 -> função 15, ambos `nFloor = 1`) e nenhum dos dois está ligado.
-	# ⚠ Antes este bloco usava o R102, mas o gatilho `sce 5` que ele tinha era ARTEFATO da
+	# ⭐ 2026-08-08: o critério deixou de ser lista branca. `Cena.auditar()` percorre o bytecode da
+	# cena (fechamento por gosub/thread) e recusa a que use controle de fluxo não decodificado,
+	# FMV, ou condição de `while` que o port não avalia. Ver `cena_generico.md`.
+	t.eq(World.CENAS_METADADOS.size(), 1,
+		"a tabela por sala só guarda METADADO (o `chegada_nivel` do R101), não autorização")
+	var wa := World.new()
+	wa.carregar(SALA, false)
+	t.check(bool(Cena.auditar(wa.vm, FUNC_ENTRADA)["ok"]), "a entrada do R10D passa na auditoria")
+	t.check(bool(Cena.auditar(wa.vm, FUNC_SAIDA)["ok"]), "a saída do R10D também")
+	# A função 41 do R10D é a THREAD DE AMBIENTE da rua (`04 05 19 29` no init): ela acaba em
+	# `18 ff ff 00 d7 ff` = salto relativo de -41 = laço INFINITO por desenho. A auditoria recusa,
+	# e é por isso que abrir toda thread do init como "cena" congelaria o jogo.
+	var a41 := Cena.auditar(wa.vm, 41)
+	t.check(not bool(a41["ok"]), "e a thread de AMBIENTE (função 41) é recusada")
+	t.check(str(a41["motivo"]).contains("0x18"), "pelo `0x18`", str(a41["motivo"]))
+	# O R102 tinha, nas versões antigas deste teste, um gatilho `sce 5` que era ARTEFATO da
 	# polaridade invertida do `0x4c`: ele mora atrás de `4c 03 4a 01` (byte alto != 0 = condição
-	# DIRETA), isto é só existe com a flag 3/0x4a acesa — não numa partida nova.
+	# DIRETA), logo só existe com a flag 3/0x4a acesa — não numa partida nova.
 	var w3 := World.new()
-	if t.check(w3.carregar("R102"), "R102 carrega"):
-		t.check(w3.cena == null, "R102 NÃO abre cinemática na carga")
+	if t.check(w3.carregar("R102", false), "R102 carrega"):
 		t.eq(Cena.gatilho_de_evento(w3.vm, -11500, -27600), null,
 			"e numa partida NOVA o R102 não tem gatilho `sce 5` (fica atrás de `4c 03 4a 01`)")
+	# ── O QUE SUBSTITUIU A LISTA BRANCA: o gatilho do R101 agora RODA, por critério ──
 	var w3b := World.new()
 	if t.check(w3b.carregar("R101", false), "R101 carrega sem reprisar a cinemática"):
 		t.check(w3b.cena == null, "com `com_cena = false` a entrada não roda")
 		var g := Cena.gatilho_de_evento(w3b.vm, -7500, -12000)
 		if t.check(g != null, "o gatilho `sce 5` AOT 11 do R101 existe e contém o ponto"):
 			t.eq(g.evento_func(), 12, "e pede a função 12")
+			t.check(bool(Cena.auditar(w3b.vm, 12)["ok"]),
+				"a função 12 PASSA na auditoria, então ela roda — sem eu ter escrito o R101 numa lista")
 			w3b.player.pos = Vector3i(-7500, -1800, -12000)
 			pad.set_mask(0)
 			w3b.tick(pad)
-			t.check(w3b.cena == null,
-				"pisar nele NÃO abre cena (função %d não medida)" % g.evento_func())
+			t.check(w3b.cena != null, "e pisar nele abre a cena de verdade")
+			# ── O TETO DE SEGURANÇA: qualquer cena devolve o controle ──
+			var qz := 0
+			while w3b.cena != null and qz < World.CENA_MAX_QUADROS + 10:
+				pad.set_mask(0)
+				w3b.tick(pad)
+				qz += 1
+			t.check(w3b.cena == null, "e ela TERMINA (teto de segurança)", "%d quadros" % qz)
+			t.check(not w3b.player.em_cena(), "o controle volta para o jogador")
+			var pz := w3b.player.pos
+			for _i in 30:
+				pad.set_mask(Pad.FWD)
+				w3b.tick(pad)
+			t.check(w3b.player.pos != pz, "e o personagem RESPONDE ao input depois dela",
+				"de %s para %s" % [pz, w3b.player.pos])
 
 	# ═══════════════════════════════════════════════════════════════════════════════════
 	t.group("6. o DEGRAU: subir e descer são AÇÕES DO JOGADOR, e é a descida que abre a cena")

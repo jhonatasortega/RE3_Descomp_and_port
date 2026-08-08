@@ -42,40 +42,35 @@ var _ancora_cena: Aot
 ## DÍVIDAS que a cena deixou registradas (chegada zerada, cena abandonada). O teste lê isto em
 ## vez de eu fingir que está tudo medido.
 var cena_debitos: Array[String] = []
+## Cenas que a AUDITORIA recusou nesta sessão, com o motivo. É a lista que diz o que falta
+## implementar para a cobertura crescer (ver `Cena.auditar()`).
+var cenas_recusadas: Array[String] = []
 
-## Cinemáticas de script LIGADAS no jogo, por sala:
-##   `entrada`  = função que o INIT abre como thread (`0x04 evt_exec`; -1 = nenhuma). O port
-##                **não adivinha**: quem descobre é o próprio init (`vm.threads_pedidas`), e esta
-##                entrada só AUTORIZA a função a rodar (ver `_abrir_cena_de_entrada`).
-##   `gatilhos` = funções que um AOT `sce 5` pode abrir quando o personagem pisa na caixa
-##   `chegada_nivel` = 🟡 nível de piso que a cena de entrada DECLARA para o player
-##                (`0x40` membro `0x0f` = `+0x09`), usado para escolher a chegada emprestada
-##                quando a porta vem com chegada zerada (ver `_chegada_emprestada`)
+## ══════════════════ CINEMÁTICAS DE SCRIPT — LIGADAS POR DADO, não por lista ══════════════════
 ##
-## 🟡 **Lista DECLARADA, e curta de propósito.** Medi que existem **135 gatilhos `sce 5` em 58
-## salas** (varredura com `executar(0)` nas 169); ligar todos faria o port rodar funções cujos
-## opcodes ainda não têm semântica (§7 do doc) e prenderia o jogador numa cena que talvez nunca
-## termine — algumas dessas caixas cobrem a sala inteira (`R30E` tem uma de 24980×24900). Então
-## aqui entram as cenas MEDIDAS e as demais seguem inertes, exatamente como já estavam.
+## Histórico curto, porque explica o critério de hoje. As duas primeiras cenas
+## (`R10D` entrada = função 7 / saída = função 11, `docs/decomp/notes/cena_r10d.md`; `R101`
+## entrada = função 3, `cena_r101.md`) foram portadas UMA A UMA e ficavam numa lista branca
+## `CENAS_LIGADAS`, porque ligar as 135 caixas `sce 5` do jogo prenderia o jogador em cenas cujos
+## opcodes não têm semântica. O dono cortou esse caminho: *"não dá para ficar extraindo as cenas
+## uma por uma, precisa de um padrão"*.
 ##
-## ── `R10D` (`docs/decomp/notes/cena_r10d.md`) ──
-## ENTRADA = **função 7** (`04 ff 19 07` na função 5 do init) · SAÍDA = **função 11** (payload do
-## AOT `sce 5`), e é ela que dispara a porta pelo `0x66`.
+## ⭐ **2026-08-08 — a lista branca CAIU.** O dono pediu padrão em vez de cena-por-cena, e o
+## critério agora é `Cena.auditar()`: a cena roda se o bytecode dela só usar opcodes que o
+## intérprete sabe atravessar, e **não** roda (com o motivo impresso) se usar controle de fluxo
+## não decodificado, FMV, ou uma condição de `while` que o port não avalia. Ver o bloco "O PADRÃO"
+## em `port/script_vm/cena.gd` e o censo em `tools/scd_cena_censo.py`.
 ##
-## ── `R101` (`docs/decomp/notes/cena_r101.md`) — a cena que o dono pediu ──
-## ENTRADA = **função 3**, e é o **único** `0x04` que o init do `R101` executa numa partida nova
-## (medido: `vm.threads_pedidas == [{slot 255, func 3}]`). O `04 ff 19 03` está em
-## `func 0 @+0x0246`, dentro do `if` de `4c 03 0b 00` — "a flag 0x0b do banco 3 **ainda não** está
-## acesa" — e o **primeiro ato da própria função 3** é `4d 03 0b 01`, que acende essa flag. Isto é:
-## **a cena de entrada do `R101` roda uma vez só, na primeira visita**, e o port herda isso de
-## graça porque o `executar(0)` avalia o `0x4c` de verdade. Os dois gatilhos `sce 5` do `R101`
-## (AOT 11 → função 12, AOT 12 → função 15, ambos `nFloor = 1`) ficam **desligados**: nenhum dos
-## dois troca de sala (o `0x66` da função 15 aponta para o AOT 7, que é `sce 2`, não porta) e a
-## função 12 usa `0x81` com rotinas não decodificadas.
-const CENAS_LIGADAS := {
-	"R10D": {"entrada": 7, "gatilhos": [11]},
-	"R101": {"entrada": 3, "gatilhos": [], "chegada_nivel": 2},
+## O que sobra aqui é só **metadado que não está no bytecode da cena**, por sala:
+##   `chegada_nivel` = nível de piso que a cena de entrada declara para o player
+##                     (`0x40` membro `0x0f`), usado quando a porta vem com chegada zerada.
+## Sala sem entrada aqui continua rodando a cena normalmente — esta tabela não autoriza nada.
+const CENAS_METADADOS := {
+	"R101": {"chegada_nivel": 2},
 }
+## Cenas que o port se recusa a rodar mesmo passando na auditoria, com o motivo. Vazio hoje;
+## existe para uma cena que se prove danosa em teste sem precisar mexer no critério.
+const CENAS_VETADAS := {}
 ## Rede de segurança: 4000 quadros a 30 Hz ≈ 2 min 13 s. A cena de saída do `R10D` mede 834
 ## quadros e a de entrada 260, então isto só age se uma thread ficar presa num `while` esperando
 ## um bit que o port não acende. **Declarado** (é limite de port, não do motor).
@@ -283,21 +278,26 @@ func _abrir_cena_de_entrada() -> void:
 	## A tabela `CENAS_LIGADAS` continua sendo o FREIO: só roda o que está medido.
 	if vm == null:
 		return
-	var e: Dictionary = CENAS_LIGADAS.get(room.room_id, {})
-	var autorizada := int(e.get("entrada", -1))
 	for p: Dictionary in vm.threads_pedidas:
 		var fid := int(p["func"])
-		if fid != autorizada:
-			print("[world] %s: o init pediu a thread da função %d (slot %d) — NÃO ligada" % [
-				room.room_id, fid, int(p["slot"])])
-			continue
-		_abrir_cena(fid, "thread do init (`04 %02x 19 %02x`)" % [int(p["slot"]), fid])
-		return
-	if autorizada >= 0:
-		## A cena está na tabela mas o init NÃO a pediu: é o caso normal de revisita (a flag de
-		## "já rodou" está acesa). Não é erro — é o jogo.
-		print("[world] %s: cena de entrada (função %d) não foi pedida pelo init nesta partida" % [
-			room.room_id, autorizada])
+		if cena_autorizada(fid, room.room_id):
+			_abrir_cena(fid, "thread do init (`04 %02x 19 %02x`)" % [int(p["slot"]), fid])
+			return
+
+
+func cena_autorizada(func_id: int, sala: String) -> bool:
+	## O PORTÃO POR DADO. Imprime o motivo quando recusa — é o que o dono pediu ("não roda e o
+	## port avisa qual faltou") e é o que impede uma thread presa num `while` de travar o jogo.
+	if CENAS_VETADAS.has("%s:%d" % [sala, func_id]):
+		print("[world] %s: cena função %d VETADA — %s" % [
+			sala, func_id, CENAS_VETADAS["%s:%d" % [sala, func_id]]])
+		return false
+	var a := Cena.auditar(vm, func_id)
+	if bool(a["ok"]):
+		return true
+	cenas_recusadas.append("%s func %d: %s" % [sala, func_id, str(a["motivo"])])
+	print("[world] %s: cena função %d NÃO roda — %s" % [sala, func_id, str(a["motivo"])])
+	return false
 
 
 ## `nFloor = 0x80` no `+4` do AOT: "qualquer andar" (ver `Aot.floor_id`).
@@ -335,10 +335,7 @@ func _procurar_gatilho_de_cena() -> void:
 		return                                   ## ainda dentro da caixa que já disparou
 	_ancora_cena = g
 	var fid := g.evento_func()
-	var ligadas: Array = (CENAS_LIGADAS.get(room.room_id, {}) as Dictionary).get("gatilhos", [])
-	if not ligadas.has(fid):
-		print("[world] %s: gatilho sce 5 (AOT %d) pede a função %d — cena NÃO ligada (não medida)"
-			% [room.room_id, g.id, fid])
+	if fid < 0 or not cena_autorizada(fid, room.room_id):
 		return
 	_abrir_cena(fid, "gatilho sce 5 (AOT %d)" % g.id)
 
@@ -386,6 +383,20 @@ func _fechar_cena(avisar := true) -> void:
 		## Fim da cena = `player+4` volta a `1`. É o que a função 37 faz (`4d 02 07 00` e
 		## `4d 01 1c 00`, apagando os dois bits que a cena acendeu).
 		player.sair_da_cena()
+		## ⭐ **DESENCRAVE NO FIM DA CENA** — foi assim que apareceu "o personagem não responde ao
+		## input". A cena move o corpo por caminhos que não passam pelo resolver: o `0x81` (destino
+		## do script), a translação manual (`player+0x34 += k`) e o `+0x12d` que a própria cena usa
+		## para ATRAVESSAR o cenário (`cena_r10d.md` §6-4). Se ela termina com o corpo dentro de
+		## uma caixa inflada pelo raio 450, o resolver rejeita TODO movimento e o pad fica morto —
+		## medido: a função 12 do `R101` deixa a Jill em `(-7692, -3600, -11152)`, de onde ela não
+		## anda. É o mesmo problema (e a mesma cura) da chegada de porta: `_desencravar`.
+		if room != null and room.colisao != null:
+			var antes_pos := player.pos
+			player.pos = _desencravar(player.pos)
+			if player.pos != antes_pos:
+				cena_debitos.append(
+					"%s: cena função %d terminou com o corpo encravado em %s; desencravado para %s"
+					% [room.room_id, fid, antes_pos, player.pos])
 	if viva and avisar:
 		cena_terminada.emit(room.room_id if room != null else "", fid)
 
@@ -420,6 +431,11 @@ func _quadro_de_cena(pad: Pad) -> void:
 			push_warning("World: a cena pediu a porta %d mas o destino não carregou" % p.id)
 		return
 	if not cena.viva():
+		## Dívidas que a própria `Cena` acumulou (esperas rompidas pelo freio de `while`).
+		for d: String in cena.debitos:
+			var linha := "%s func %d: %s" % [room.room_id, cena_func, d]
+			if not cena_debitos.has(linha):
+				cena_debitos.append(linha)
 		print("[world] %s: cena função %d terminou em %d quadros" % [
 			room.room_id, cena_func, cena.quadro_atual])
 		_fechar_cena()
@@ -481,6 +497,15 @@ func aplicar_chegada(porta: Aot) -> void:
 	## o valor de campo zerado — mostrar a câmera 0 com o corpo na área de outra câmera deixaria a
 	## Jill fora de quadro). No quadro seguinte o RVD reassume normalmente.
 	var cut: int = int(emp["cam"]) if emp.has("cam") else porta.to_cut
+	## ⭐ Se a sala de destino abre CINEMÁTICA DE ENTRADA, a câmera dela é a da CENA, lida do
+	## bytecode (`0x50 cut_chg`) — não a emprestada. O dono relatou "a câmera está errada ao
+	## chegar no R101"; a emprestada era a **7** (da porta `R102 → R101`) e o primeiro `cut_chg`
+	## da função 3 é **24**. E o `cut_chg` prende a câmera (`gs+0x77f4 |= 0x80`, `0x800548f0`),
+	## então mostrar outra por 55 quadros era só erro do port.
+	if cena != null:
+		var c0 := Cena.primeira_camera(vm, cena_func)
+		if c0 >= 0 and c0 < room.cameras.size():
+			cut = c0
 	camera = cut if cut >= 0 and cut < room.cameras.size() else 0
 	rvd = CameraRVD.Estado.new()
 	rvd.camera = camera
@@ -506,7 +531,7 @@ static func _nivel_da_cena_de_entrada(destino: String) -> int:
 	## `gs+0x2495` = `0x800CCBCD` = `player+0x09`). Nível 2 ⇒ **y = −3600**. A cena não escreve X/Z
 	## em momento nenhum (varri: nenhum `0x40`/`0x41` nos membros `0x09`/`0x0b` do work `1:0` nas 19
 	## funções do `R101`), então a POSIÇÃO continua vindo da porta — mas o ANDAR passa a ser medido.
-	var e: Dictionary = CENAS_LIGADAS.get(destino, {})
+	var e: Dictionary = CENAS_METADADOS.get(destino, {})
 	return int(e.get("chegada_nivel", -1))
 
 

@@ -143,6 +143,24 @@ var sleeps: Array[int] = []
 ## Quadros de laço do `0x0d`(for)/`0x10`(while): `{tipo, inicio, fim, resta}`. No motor são
 ## `obj+0x20` (início) e `obj+0x60` (saída) indexados por profundidade e aninhamento.
 var quadros_laco: Array[Dictionary] = []
+## Voltas que cada `while` já deu (chave = PC do `0x10`). É o FREIO declarado do port — ver o
+## comentário no `case 0x10`.
+var _while_giros: Dictionary = {}
+## Limite de voltas de um `while` de cena — 🟡 DECLARADO, e com DOIS valores, porque a diferença
+## entre eles é medida:
+##   • `WHILE_MAX_SINCRONISMO` vale para `while (4c 04 …)` = espera pelo **banco 4**, o banco de
+##     RASCUNHO que o `0x81` acende na chegada do ator (`0x800169f0` → `0x800788dc(0x800d1fc0)`).
+##     Essa espera o port SABE satisfazer (`Cena.chegou()`), e as medidas reais ficam em 300..640
+##     quadros — 900 dá folga.
+##   • `WHILE_MAX_OUTRO` vale para qualquer outra condição, que tipicamente espera estado que o
+##     MOTOR escreve e o port não modela (o `while (var[26] != 9)` da função 13 do `R101`). Aí não
+##     há o que esperar: 60 quadros (2 s) é o suficiente para não cortar uma espera curta legítima
+##     e não deixa a tela congelada.
+const WHILE_MAX_SINCRONISMO := 900
+const WHILE_MAX_OUTRO := 60
+## Saídas de `switch` empilhadas pelo `0x14` (no motor é `obj+0x60` indexado por profundidade,
+## `0x80053680`), consumidas pelo `0x1b` (break) e pelo `0x16` (esac).
+var switch_stack: Array[int] = []
 ## Objeto de trabalho corrente (`0x47`): `id` = entrada da tabela `0x80010b60`
 ## (1 = `*(0x800ccd94)` = player, 2 = `*(0x800ccd98)`, 3 = `gs+0x265c[n+2]`, 4 = `0x800ca700+…`)
 ## e `n` = o `s8` do operando. É o `obj+0x154` do motor.
@@ -244,6 +262,8 @@ func iniciar(func_id: int) -> bool:
 	block_stack = PackedInt32Array()
 	sleeps = []
 	quadros_laco = []
+	switch_stack = []
+	_while_giros = {}
 	work_id = 1
 	work_n = 0
 	flags_lidos = 0
@@ -361,6 +381,13 @@ func passo() -> void:
 				pc += 4                   # condição verdadeira: entra no bloco
 			else:
 				_falhar_condicao()        # falsa: pula para o alvo empilhado pelo if_begin
+
+		0x4E, 0x43:                       # COMPARA (var / membro do work) e gateia o IF
+			# Mesmos handlers de `_cond_4e()`/`_cond_43()`. Antes estes dois caíam no `_:` e o port
+			# **entrava no bloco por omissão** — 89 salas usam `0x4e` e 44 usam `0x43`.
+			var v_cond := _cond_4e() if op == 0x4E else _cond_43()
+			if not v_cond:
+				_falhar_condicao()
 
 		0x4D:                             # SET/CLEAR flag inline
 			# byte1 = banco · byte2 = bit · byte3 = modo (0 = clear, 1 = set, 2+ = variantes)
@@ -559,8 +586,29 @@ func _passo_cena(op: int) -> bool:
 			pc += 4
 			var cond := _avaliar_condicao()
 			if cond:
+				# ⭐ FREIO DE `while` — 🟡 **DECLARADO, e é do port, não do motor.**
+				# Um `while` de cena espera um estado do jogo: o bit do banco 4 que o `0x81` acende
+				# na chegada (isso o port produz), mas também variáveis que o MOTOR escreve e que o
+				# port não modela. Caso real: a função 13 do `R101` (a que devolve o controle) faz
+				# `10 06 0a 00` / `4e 00 1a 05 09 00` = **`while (var[26] != 9)`**, e ninguém no
+				# script escreve `var[26]` — quem escreve é o motor. Sem freio, a cena inteira morre
+				# na rede de segurança dos 4000 quadros; com freio, ela termina e a dívida fica
+				# registrada. Antes do `0x4e` estar decodificado isso passava batido só porque o
+				# port respondia "falso" a toda condição que não conhecia.
+				var giros := int(_while_giros.get(inicio, 0)) + 1
+				_while_giros[inicio] = giros
+				# `4c <banco> …` na posição da condição: só o banco 4 é sincronismo de ator.
+				var limite := WHILE_MAX_OUTRO
+				if u8(inicio + 4) == 0x4C and u8(inicio + 5) == Cena.BANCO_RASCUNHO:
+					limite = WHILE_MAX_SINCRONISMO
+				if giros > limite:
+					pc = saida
+					if cena != null:
+						cena.call("while_estourado", slot, inicio, giros)
+					return true
 				quadros_laco.append({"tipo": "while", "inicio": inicio, "fim": saida, "resta": 0})
 			else:
+				_while_giros.erase(inicio)
 				pc = saida
 			return true
 
@@ -572,6 +620,114 @@ func _passo_cena(op: int) -> bool:
 				quadros_laco.remove_at(quadros_laco.size() - 1)
 			else:
 				pc += 2
+			return true
+
+		0x12:
+			# ⭐ DO-WHILE, parte de cima (`0x80053464`). O censo dá **67 salas / 47 cenas**, e era o
+			# 2º maior buraco de controle. Antes o port o tratava como LINEAR.
+			#
+			#   12 <?> <len s16@+2>                  ; 4 B
+			#   obj+0x20[prof] = PC + 4              (0x800534a8) = INÍCIO do corpo
+			#   obj+0x60[prof] = PC + 4 + s16@+2     (0x800534b0) = SAÍDA (é o alvo do `0x1b`)
+			#   obj+0x1c       = PC + 4              (0x800534a4)
+			var d_ini := pc + 4
+			var d_sai := pc + 4 + s16(pc + 2)
+			quadros_laco.append({"tipo": "do", "inicio": d_ini, "fim": d_sai, "resta": 0})
+			switch_stack.append(d_sai)
+			pc = d_ini
+			return true
+
+		0x13:
+			# ⭐ DO-WHILE, parte de baixo (`0x800534c8`) — a condição fica no FIM, é um `do {} while`.
+			#
+			#   13 <cond_len>                        ; 2 B
+			#   PC += 2                              (0x800534e4)
+			#   cond = avalia o opcode em PC (0x80053550 despacha e anda o PC sozinho)
+			#   cond != 0 -> PC = obj+0x20[prof]     (0x80053530/38) = volta ao início
+			#   cond == 0 -> prof-- e segue          (0x80053510..18)
+			pc += 2
+			var cond_do := _avaliar_condicao()
+			if cond_do:
+				for i in range(quadros_laco.size() - 1, -1, -1):
+					if str(quadros_laco[i]["tipo"]) == "do":
+						pc = int(quadros_laco[i]["inicio"])
+						break
+			else:
+				for i in range(quadros_laco.size() - 1, -1, -1):
+					if str(quadros_laco[i]["tipo"]) == "do":
+						quadros_laco.remove_at(i)
+						break
+				if not switch_stack.is_empty():
+					switch_stack.remove_at(switch_stack.size() - 1)
+			desvios += 1
+			return true
+
+		0x14:
+			# ⭐ SWITCH (`0x80053638`) — decodificado byte a byte, e é o maior buraco de controle
+			# que faltava (o censo dá **66 salas / 118 cenas**). Antes o port o tratava como
+			# LINEAR, o que numa cena significa executar TODOS os `case`.
+			#
+			#   14 <varidx> <len u16@+2>            ; 4 B de cabeçalho
+			#   a3 = PC + 4                          (0x80053658  addiu $a3,$a3,4)
+			#   obj+0x60[prof] = a3 + u16@+2         (0x80053680/84) = a SAÍDA, lida pelo `0x1b`
+			#   v1 = *(s16*)(0x800d1f46 + varidx*2)  (0x800536a4..ac  lh = ASSINADO)
+			#   laço em a3 (0x800536b0):
+			#     byte@a3 == 0x16 (esac)    -> a3 += 2 ; sai
+			#     byte@a3 == 0x17 (default) -> prof-- ; a3 += 2 ; entra no corpo
+			#     senão (0x15 case): len = u16@(a3+2) ; valor = u16@(a3+4)
+			#       v1 == valor -> a3 += 6 (entra) ; senão a3 += 6 + len (próximo case)
+			#   obj+0x1c = a3                        (0x80053700)
+			var vidx := u8(pc + 1)
+			var saida := pc + 4 + u16(pc + 2)
+			var valor := _var_get_s(vidx)
+			var a3 := pc + 4
+			while a3 < bytes.size():
+				var co := u8(a3)
+				if co == 0x16:                    # esac: nenhum case bateu e não há default
+					a3 += 2
+					break
+				if co == 0x17:                    # default
+					a3 += 2
+					break
+				if co != 0x15:                    # lista malformada: para em vez de fingir
+					erro = "switch com opcode 0x%02x na lista de case (PC %d)" % [co, a3]
+					break
+				var clen := u16(a3 + 2)
+				if valor == s16(a3 + 4):
+					a3 += 6
+					break
+				a3 += 6 + clen
+			switch_stack.append(saida)
+			pc = a3
+			return true
+
+		0x15:
+			# case (`0x8005370c`): quando o fluxo CAI num `0x15` (fim do corpo do case anterior,
+			# sem `0x1b`), o handler só anda 6 e continua — é o fall-through.
+			pc += 6
+			return true
+
+		0x16:
+			# esac (`0x80053724`): fim do switch. `PC += 2` e desempilha a saída.
+			if not switch_stack.is_empty():
+				switch_stack.remove_at(switch_stack.size() - 1)
+			pc += 2
+			return true
+
+		0x17:
+			# default (`0x8005373c`): `obj+8+prof -= 1` (a profundidade) e `PC += 2`.
+			pc += 2
+			return true
+
+		0x1B:
+			# next-case / break (`0x8005387c`): `PC = obj+0x60[prof]` = a SAÍDA que o `0x14`
+			# guardou, e desempilha. É o `break` do switch.
+			if not switch_stack.is_empty():
+				pc = switch_stack[switch_stack.size() - 1]
+				switch_stack.remove_at(switch_stack.size() - 1)
+			else:
+				pc += 2
+			desvios += 1
 			return true
 
 		0x47:
@@ -705,6 +861,50 @@ func _passo_cena(op: int) -> bool:
 	return false
 
 
+## ⭐ Os 7 COMPARADORES do script, tabela `0x80010b78` (usada pelo `0x4e`, sobre VAR) e
+## `0x80010930` (usada pelo `0x43`, sobre MEMBRO do work). As duas têm 7 entradas e a mesma
+## forma; cada linha abaixo é o par de instruções do EXE, com o delay slot já resolvido:
+##   0 `0x8005484c` xor + `sltiu v0,1`      -> a == b
+##   1 `0x80054858` delay `slt v0,b,a`      -> a >  b
+##   2 `0x80054860` slt a,b + `xori 1`      -> a >= b
+##   3 `0x8005486c` delay `slt v0,a,b`      -> a <  b
+##   4 `0x80054874` slt b,a + `xori 1`      -> a <= b
+##   5 `0x80054880` xor + `sltu zero,v0`    -> a != b
+##   6 `0x8005488c` and + `sltu zero,v0`    -> (a & b) != 0
+## `op >= 7` cai em `0x80054894 jr $ra` com `$v0 = 0` (o `sltiu $v0,$a1,7` que testou) = FALSO.
+static func comparar(op: int, a: int, b: int) -> bool:
+	match op:
+		0: return a == b
+		1: return a > b
+		2: return a >= b
+		3: return a < b
+		4: return a <= b
+		5: return a != b
+		6: return (a & b) != 0
+	return false
+
+
+func _cond_4e() -> bool:
+	## `0x4e` (`0x800547f0`, 6 B): `a1 = u16@+2` = (índice de VAR no byte baixo, comparador no
+	## alto); `a2 = s16@+4` = o imediato; a var é lida com **`lh`** (`0x80054824`), assinada.
+	var oper := u16(pc + 2)
+	var b := s16(pc + 4)
+	pc += 6
+	return comparar(oper >> 8, _var_get_s(oper & 0xFF), b)
+
+
+func _cond_43() -> bool:
+	## `0x43` (`0x80053c74`, 6 B): idêntico ao `0x4e`, mas o lado esquerdo é um **MEMBRO do work**
+	## corrente (`0x80053ca0  jal 0x80053fac` = `member_get`, com `a0 = obj+0x154`), não uma var.
+	var oper := u16(pc + 2)
+	var b := s16(pc + 4)
+	pc += 6
+	var a := 0
+	if cena != null:
+		a = int(cena.call("membro_get", work_id, work_n, oper & 0xFF))
+	return comparar(oper >> 8, a, b)
+
+
 func _avaliar_condicao() -> bool:
 	## `0x80053550`: despacha o opcode de check que está no PC (ele mesmo anda o PC) e usa o
 	## VALOR DE RETORNO do handler como condição. O port cobre o `0x4c` (CHECK de flag,
@@ -721,6 +921,10 @@ func _avaliar_condicao() -> bool:
 		flags_lidos += 1
 		var ligado := state.flag_get(banco, bit) if state != null else false
 		return ligado != (alto == 0)
+	if op == 0x4E:
+		return _cond_4e()
+	if op == 0x43:
+		return _cond_43()
 	# opcode de condição não coberto: anda o PC e devolve falso (declarado, não inventado)
 	erro = "condição com opcode 0x%02x não implementada (PC %d)" % [op, pc]
 	pc += size_of(op)
