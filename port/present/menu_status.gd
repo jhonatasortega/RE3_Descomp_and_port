@@ -675,6 +675,55 @@ func _desenhar_submenu(t: float) -> void:
 ## destaca, 2º confirma) pensando em toque de celular, e o próprio usuário apontou que era isso
 ## que atrapalhava — no mouse o esperado é resolver no primeiro clique. As caixas de acerto são as
 ## mesmas do desenho, então não há número novo aqui: é a geometria já medida.
+func pairar(p: Vector2) -> bool:
+	## PASSAR O MOUSE POR CIMA já destaca (pedido do usuário). Move o cursor/seleção para o que
+	## está sob o ponteiro, **sem confirmar** — o clique é que confirma. Devolve `true` se mudou
+	## algo. Quem chama só deve chamar quando o ponteiro se MOVEU, senão o mouse parado prenderia
+	## o cursor e a navegação por teclado não sairia do lugar.
+	if not aberto or _anim > 0:
+		return false
+	# tela de arquivo por cima: grade de documentos
+	if arquivo != null and bool(arquivo.get("aberto")) and not bool(arquivo.get("lendo")):
+		var cel := _celula_arquivo(p)
+		if cel < 0:
+			return false
+		var por := ARQ_COLUNAS * ARQ_LINHAS
+		var alvo := (int(arquivo.get("sel")) / por) * por + cel
+		if alvo == int(arquivo.get("sel")):
+			return false
+		arquivo.set("sel", alvo)
+		arquivo.call("queue_redraw")
+		queue_redraw()
+		return true
+	if not sub_itens.is_empty():
+		for i in sub_itens.size():
+			var y: int = SUB_LINHA_Y[i] if i < SUB_LINHA_Y.size() else SUB_LINHA_Y[-1] + 20 * i
+			if Rect2(159, y, 56, 16).has_point(p) and sub_sel != i:
+				sub_sel = i
+				queue_redraw()
+				return true
+		return false
+	for i in PLACAS.size():
+		var b: Array = PLACAS[i]
+		if Rect2(float(b[0]), float(b[1]), float(b[2]), 16.0).has_point(p):
+			if selecao_botao == i:
+				return false
+			selecao_botao = i
+			queue_redraw()
+			return true
+	var gx := int((p.x - GRADE_ORIGEM.x) / CELULA.x)
+	var gy := int((p.y - GRADE_ORIGEM.y) / CELULA.y)
+	if p.x >= GRADE_ORIGEM.x and p.y >= GRADE_ORIGEM.y 			and gx >= 0 and gx < GRADE_COLUNAS and gy >= 0 and gy < GRADE_LINHAS:
+		var slot := gy * GRADE_COLUNAS + gx
+		if slot == cursor and selecao_botao < 0:
+			return false
+		cursor = slot
+		selecao_botao = -1
+		queue_redraw()
+		return true
+	return false
+
+
 func clicar(p: Vector2) -> String:
 	if not aberto or _anim > 0:
 		return ""

@@ -169,6 +169,11 @@ func _on_tick(_frame: int) -> void:
 	# "não chamar `mundo.tick`": o mundo congela no estado exato, que é o comportamento certo.
 	## CLIQUE/TOQUE no menu: vem antes do `ACAO` porque o botão esquerdo do mouse também alimenta
 	## esse bit. `menu.clicar` seleciona no 1º clique e confirma no 2º no mesmo lugar.
+	## HOVER: passar o mouse por cima destaca o item (pedido do usuário). Só quando o ponteiro
+	## MOVEU — com o mouse parado o cursor ficaria preso e o teclado não sairia do lugar.
+	if menu != null and menu.aberto and (pad.mouse_dx != 0 or pad.mouse_dy != 0):
+		if menu.pairar(_ponto_menu()):
+			menu.queue_redraw()
 	if menu != null and menu.aberto and _clique():
 		if menu.clicar(_ponto_menu()) != "":
 			menu.avancar()
