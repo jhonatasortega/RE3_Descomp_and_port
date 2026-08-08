@@ -249,10 +249,22 @@ STAGES = [
          cmds=[["audio_gog.py", "--voice"]], out=["assets/VOICE/ptbr/*.ogg"],
          doc="docs/formatos/localizacao_ptbr.md",
          nota="DATA_A/VOICE: 441 WAV sem recompressão -> Ogg (310 MB viram uma fração)."),
-    dict(id="fmv", titulo="FMV HD (14 mp4 1280x960) -> Ogg Theora", src="ptbr", deps=[], cmds=[],
-         out=["assets/ZMOVIE/*.ogv"], manual=True,
-         nota="Reencode com tools/ffmpeg; bitrate a definir (P6-05). Os mp4 são dublados PT-BR.",
+    dict(id="fmv", titulo="FMV HD (mp4 1280x960) -> Ogg Theora", src="ptbr", deps=[],
+         cmds=[["video_ogv.py", "--abertura"]], out=["assets/ZMOVIE/*.ogv"],
+         nota="Só a ABERTURA (opn + roop) roda por padrão: o libtheora do ffmpeg é "
+              "monothread e leva ~12x o tempo real (opn: 90,6 s de video -> ~19 min de "
+              "encode, 135 MB de mp4 -> 77 MB de ogv). Para os 14, "
+              "`python tools/video_ogv.py --todos` (cerca de 1 h). Os mp4 sao dublados PT-BR.",
          doc="docs/formatos/audio_video.md"),
+    dict(id="boot", titulo="Fluxo de abertura: telas HD PT-BR + tempos do EXE + legendas",
+         src="hires", deps=[],
+         cmds=[["boot_assets.py"], ["legendas_fmv.py"]],
+         out=["assets/BOOT/*", "data/boot_flow.json", "data/legendas_fmv.json"],
+         nota="Copia as 5 telas HD em PORTUGUES (aviso 4784F00D, CAPCOM 5E54FDD9, titulo "
+              "ED2C2D33, Mercenarios 81AA5030, atlas de rotulos misc/3776D4A3) + o "
+              "INIT_TBL.DAT, e emite os tempos em quadros lidos do EXE e a linha do tempo "
+              "das legendas do prologo/epilogo.",
+         doc="docs/decomp/notes/menu_titulo.md"),
     dict(id="ptbr_text", titulo="Tabelas de texto PT-BR do mod (17 xml + 129 por sala)", src="ptbr",
          deps=[], cmds=[], out=["data/ptbr_text.json"], manual=True,
          nota="Fonte identificada e medida; conversor ainda não escrito (P6-11).",

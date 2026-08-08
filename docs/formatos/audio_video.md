@@ -386,3 +386,31 @@ Verificado por harness headless (`godot/dev/tools_audio_test.gd`, seção do
 estado `playing`. O `AudioManager` carrega em runtime (`load_from_buffer` p/ OGG; parser
 RIFF próprio p/ WAV), então **dispensa `.import`** para funcionar — inclusive headless.
 Evitar `.mp4`/contêineres de vídeo para áudio; usar OGG (BGM) e WAV (SFX one-shot).
+
+## 10. FMV HD tocável no Godot — `.mp4` → Ogg Theora (`tools/video_ogv.py`)
+
+Decisão, custo dos três caminhos e as medições estão em
+[`../decomp/notes/boot_ptbr_hd.md`](../decomp/notes/boot_ptbr_hd.md) §5. Resumo:
+
+- **O Godot 4 só toca Ogg Theora nativamente** (`VideoStreamTheora`), então os `zmovie/*.mp4`
+  do pacote PT-BR (1280×960 h264 29,97 fps, dublados) são transcodificados sem reescalar.
+- **`VideoStreamTheora.file` aceita caminho ABSOLUTO** — sondado em
+  `port/dev/diag_video.gd`, funciona inclusive em `--headless`. Isso é o que permite ler o
+  `.ogv` de fora do `.pck` (`port/assets/` tem `.gdignore`, política P7-06).
+- **Custo medido:** o `libtheora` do ffmpeg é monothread; `opn` (90,62 s / 2716 quadros)
+  levou **~19 min** de encode (≈12× o tempo real) e saiu com **77 MB** contra 135 MB de mp4,
+  em `-q:v 8`. Os 14 vídeos levam cerca de 1 h.
+- **Duração dos 14 mp4 (medida por `ffprobe`)**, que corrige duas linhas da tabela do §4
+  (aquelas eram do `.STR` do PS1 a 15 fps): `opn` 90,62 s · `enda` 62,66 · `endb` 62,70 ·
+  `ins01` 27,14 · `ins02` 15,00 · `ins03` 19,93 · `ins04` 29,63 · `ins05` 12,48 ·
+  `ins06` 31,43 · `ins07` 23,51 · `ins08` 19,19 · `ins09` 16,53 · `roop` 15,49 · `snl` 3,31.
+
+```bash
+NOSTALGIA_OUT=port python tools/video_ogv.py --listar     # inventário + duração + áudio
+NOSTALGIA_OUT=port python tools/video_ogv.py --abertura   # opn + roop
+NOSTALGIA_OUT=port python tools/video_ogv.py --todos      # os 14 (~1 h)
+```
+
+> **Idioma do áudio:** a etiqueta do contêiner diz `eng` nos 14 (valor default do encoder
+> MainConcept), mas os arquivos são do pacote dublado — ver
+> [`localizacao_ptbr.md`](localizacao_ptbr.md) §3. **Não verificado por audição.**

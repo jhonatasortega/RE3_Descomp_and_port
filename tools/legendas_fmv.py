@@ -74,10 +74,11 @@ FPS = 30000.0 / 1001.0                          # 29,97 — a do próprio mp4
 #: `<arquivo do mod>` -> `<vídeo a que a legenda pertence>` e a duração medida do mp4.
 ALVO = {
     "prologue.xml": dict(video="opn", duracao_mp4=90.624),
-    "epilogue.xml": dict(video="enda", duracao_mp4=54.2,
+    "epilogue.xml": dict(video="enda", duracao_mp4=62.66,
                          nota="ALVO DECLARADO: o epílogo é narração de FIM. Casei com "
-                              "`enda` por duração (47,9 s de fala em 54,2 s de vídeo); "
-                              "não medi qual dos dois finais o motor legenda."),
+                              "`enda` por duração (47,8 s de fala em 62,66 s de vídeo, "
+                              "medida do mp4 por ffprobe); `endb` tem 62,70 s e serviria "
+                              "igual — NÃO medi qual dos dois finais o motor legenda."),
 }
 DIRETIVA = re.compile(r"\{(snd|cut|string|color|scroll|branch|clear|timed)\s+(-?\d+)\}")
 #: O XML do mod escreve **trema onde deveria haver til**: "destruiçäo", "näo", "perdäo",

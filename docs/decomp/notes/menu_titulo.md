@@ -1033,3 +1033,39 @@ for i, x in enumerate(b):
     **NÃO SEI**.
 17. **`*(u8*)0x800e0dd0 = 2`** antes de carregar CAPCOM.TIM, e `*(u8*)0x800d4431 = 1`:
     papel **não decodificado**.
+
+---
+
+## 11. IMPLEMENTADO no port → [`boot_ptbr_hd.md`](boot_ptbr_hd.md)
+
+O fluxo desta nota está **implementado e rodando** em `port/scenes/boot.tscn`
+(`present/boot.gd`, `titulo.gd`, `video.gd`), com teste em `port/dev/tests/test_boot.gd`.
+O doc de implementação é [`boot_ptbr_hd.md`](boot_ptbr_hd.md); o que ele acrescenta de
+**evidência nova** a esta nota:
+
+* **§1.1 — a unidade de tempo (item §10.1 acima).** Não foi resolvida, mas foi **corroborada**:
+  a 59,94 Hz o timeout do atrator de 900 ticks dá **15,0 s**, que é um tempo de atração
+  plausível; a 30 Hz daria 30 s. O port converte (2 ticks por quadro de 30 Hz) em vez de
+  reescrever o número medido.
+* **§2 — ⚠ o casamento HD do repo pegou a variante de IDIOMA errada para estas telas.**
+  `port/assets/MENU/01_title/hd/…18CC5627` é a arte **japonesa** ("BIOHAZARD 3 LAST ESCAPE") e
+  `MENU/07_warning/hd/…DC361616` está em **russo**. As variantes em PORTUGUÊS são
+  `hires/bgd/ED2C2D33` (título) e `hires/bgd/4784F00D` (aviso), achadas pelo critério de mtime
+  de `tools/memo_pt.py` (pack russo = jan/2025, pacote PT-BR = jun/2025). O mesmo hash
+  `DC361616` estava servindo DOIS blocos SD (`WARNU` e `WARNJ`) — sintoma de casamento por
+  cenário, não por conteúdo do texto.
+* **§3 — o atlas de rótulos do título existe em HD e em PT-BR:** `hires/misc/3776D4A3.webp`,
+  1024×1024 = 4× a página de VRAM do TIM[2] de `TITLEU.DAT`. As linhas `v` coincidem com as
+  desta nota, e `mod_BH3_Portuguese/xml/title_mapping.xml` **confirma de forma independente**
+  tanto os `v` do atlas quanto os `x,y` de tela que o §3.4 mediu (`heavy mode` em `x=80 y=193`,
+  `light mode` em `x=180 y=193`). Rótulos disponíveis: `CARREG. JOGO`, `MODO FACIL`,
+  `MODO DIFICIL`, `COMEÇAR JOGO`, `SAIR`, `EXTRAS`, `OS MERCENARIOS`, `EPILOGOS`,
+  `ESCOLHA A ROUPA`. **`PRESS ANY BUTTON` não tem contrapartida HD** (a versão de PC não usa
+  essa tela) e o bloco de copyright de 2 linhas (`v=160`) está **vazio** no atlas PT.
+* **§3.3 — o pulso do §3.1 foi REPRODUZIDO**, não só citado: `tools/boot_assets.py` lê os 256
+  bytes assinados de `0x80098828` do EXE e emite os 64 valores do ciclo — amplitude
+  `[−127, 127]`, resultado **86…170**, período **64 ticks**, exatamente como esta nota afirma.
+* **§4 — a legenda dos FMV em PT-BR.** As **oito diretivas** do motor Classic REbirth estão
+  provadas como literais no `ddraw.dll` da instalação (`clear %d` em `+0x2fe180`, `timed %d` em
+  `+0x2fe18c`, …); a semântica "segura N quadros e limpa" é leitura declarada, sustentada pela
+  soma fechar dentro da duração medida do mp4 (prólogo: 1414 quadros = 47,18 s em 90,62 s).

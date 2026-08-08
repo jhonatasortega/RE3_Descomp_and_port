@@ -1,0 +1,17 @@
+[gd_scene format=3 uid="uid://bport1boot"]
+
+; Cena de ABERTURA: aviso legal -> logo CAPCOM -> tela de titulo navegavel ->
+; escolha de dificuldade -> INIT_TBL.DAT -> FMV de abertura com legenda PT-BR -> game.tscn
+;
+; A arvore e montada em codigo por present/boot.gd (mesma politica da game.tscn: a
+; estrutura vive num lugar so, versionavel e revisavel).
+;
+; Para que o jogo ABRA por aqui, trocar em project.godot:
+;     run/main_scene="uid://bport1boot"
+; (deixado como esta de proposito: quem liga e o dono do repo -- trocar agora mudaria o
+; que os outros trabalhos em curso veem ao rodar o projeto.)
+
+[ext_resource type="Script" path="res://present/boot.gd" id="1_boot"]
+
+[node name="Boot" type="Node2D"]
+script = ExtResource("1_boot")

@@ -152,10 +152,14 @@ ROTULOS_PT = {
         celula=(128, 104, 64, 13), origem="title_mapping(load game)", pt="CARREG. JOGO",
         equivale="exato", nota=""),
     "GAME_CONFIG": dict(
-        celula=(0, 128, 60, 12), origem="sprt", pt="GAME CONFIG",
-        equivale="exato",
-        nota="O pacote PT-BR NÃO traduziu esta linha: o atlas tem 'GAME CONFIG' em "
-             "inglês na mesma célula do PS1. Não há variante PT deste rótulo no pack."),
+        celula=(28, 128, 34, 13), origem="title_mapping(configuration)", pt="CONFIG",
+        equivale="declarado",
+        nota="O item do PS1 é 'GAME CONFIG' (célula 0,128,60,12). No atlas PT essa célula "
+             "MISTURA DUAS FONTES: o pacote redesenhou só 'CONFIG' (fonte nova) e deixou "
+             "'GAME' no desenho original — renderizado junto fica visivelmente quebrado "
+             "(conferido em port/_boot_menu.png). Uso só 'CONFIG', que é exatamente a "
+             "célula que title_mapping.xml declara para `configuration`. Não há variante "
+             "PT-BR de 'GAME CONFIG' inteiro no pack."),
     # ── a tela de DIFICULDADE ──
     # O PS1 usa a linha v=176 (EASY MODE / HARD MODE), que no atlas PT continua em INGLÊS.
     # As versões PT existem, mas na linha v=128 (é onde o menu do PC as põe).
@@ -183,6 +187,7 @@ ROTULOS_PT = {
 #: Célula 1:1 com o SPRT do PS1, para quem quiser fidelidade de CÉLULA em vez de sentido.
 ALT_CELULA = {
     "NEW_GAME": ((0, 104, 64, 13), "MODO ORIGINAL"),
+    "GAME_CONFIG": ((0, 128, 60, 12), "GAME CONFIG (duas fontes misturadas no pack)"),
     "diff_EASY_MODE": ((0, 176, 54, 12), "EASY MODE"),
     "diff_HARD_MODE": ((56, 176, 56, 12), "HARD MODE"),
 }
