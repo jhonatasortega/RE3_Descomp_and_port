@@ -285,12 +285,24 @@ func alternar() -> void:
 	if aberto and not _fechando:
 		_fechando = true
 		_anim = ANIM_QUADROS
+		# ao SAIR, nada fica selecionado: o botão, o submenu, a combinação e o texto de exame são
+		# zerados, então reabrir o menu começa limpo na grade.
+		selecao_botao = -1
+		sub_itens.clear()
+		sub_sel = 0
+		combinar_de = -1
+		mensagem = ""
+		mensagem_linha = 0
 	elif not aberto:
 		aberto = true
 		visible = true
 		_fechando = false
 		_anim = ANIM_QUADROS
 		cursor = _state.cursor if _state != null else 0
+		selecao_botao = -1                 ## abre na GRADE, sem botão destacado
+		sub_itens.clear()
+		combinar_de = -1
+		mensagem = ""
 
 
 func avancar() -> void:
@@ -405,7 +417,10 @@ func _draw() -> void:
 	# as duas janelas grandes: a da placa do item e a da mensagem (B141 e B144, POLY_FT4 de
 	# moldura 9-fatias). No modo ARQUIVO entra o painel ALTO (B142) no lugar dos dois.
 	if arquivo != null and arquivo.aberto:
-		_janela(Rect2(ARQ_PAINEL[0], ARQ_PAINEL[1], ARQ_PAINEL[2], ARQ_PAINEL[3]), t)
+		# PRETO, não azul: é o que a captura do original mostra nesse painel.
+		_caixa(Rect2(ARQ_PAINEL[0], ARQ_PAINEL[1], ARQ_PAINEL[2], ARQ_PAINEL[3]), COR_TILE, t)
+		var dj := Rect2(ARQ_PAINEL[0], ARQ_PAINEL[1], ARQ_PAINEL[2], ARQ_PAINEL[3])
+		draw_rect(dj, Color(COR_JANELA.r, COR_JANELA.g, COR_JANELA.b, t), false, 2.0)
 	else:
 		_janela(Rect2(12, 84, 200, 80), t)
 		_janela(Rect2(12, 172, 200, 48), t)
@@ -485,17 +500,24 @@ func _desenhar_arquivo(t: float) -> void:
 					d.size.y *= t
 				draw_texture_rect_region(tex, d, reg)
 		else:
-			# "VAZIO" mede ~35 px nesta fonte e a célula tem 32: desenha em escala 0,8 para caber,
-			# como na captura (lá o glifo é mais estreito). Escolha de apresentação, declarada.
-			draw_set_transform(Vector2(cx, cy + 6), 0.0, Vector2(0.8, 0.8))
-			Texto.desenhar(self, "VAZIO", Vector2i(0, 0), 0, Color(0.45, 0.35, 0.4))
-			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+			# slot livre = o SPRITE "VAZIO" do próprio atlas (última célula da grade 4×8), e não a
+			# palavra escrita com a fonte, que era o que eu fazia.
+			var tv: Texture2D = arquivo.call("icone_do_doc", {})
+			if tv != null:
+				var rv: Rect2i = arquivo.call("regiao_da_celula", 31)
+				var dv := Rect2(cx, cy, ARQ_CELULA.x - 2, ARQ_CELULA.y - 2)
+				if t < 1.0:
+					dv.position.y = 120.0 + (dv.position.y - 120.0) * t
+					dv.size.y *= t
+				draw_texture_rect_region(tv, dv, rv)
 		if idx == sel:
 			draw_rect(Rect2(cx - 1, cy - 1, ARQ_CELULA.x, ARQ_CELULA.y), COR_VERMELHO, false, 1.0)
-	# seta verde de "há mais páginas" (a captura mostra à esquerda do painel)
+	# seta verde de "há mais páginas": na captura do original é um TRIÂNGULO à DIREITA do painel.
+	# Uso o glifo `▶` da própria fonte (código 2 na tabela do EXE), em verde.
 	if docs.size() > ARQ_COLUNAS * ARQ_LINHAS:
-		Texto.desenhar(self, "<", Vector2i(ARQ_PAINEL[0] + 6, ARQ_ORIGEM.y + ARQ_CELULA.y),
-			0, COR_VERDE * 2.0)
+		Texto.desenhar(self, "▶",
+			Vector2i(ARQ_PAINEL[0] + ARQ_PAINEL[2] - 14, ARQ_ORIGEM.y + ARQ_CELULA.y),
+			0, Color8(0, 220, 0))
 	# nome do documento selecionado, na faixa de baixo do painel
 	if sel < docs.size():
 		Texto.desenhar(self, String(arquivo.call("nome_do_doc", docs[sel])),
@@ -737,7 +759,13 @@ func _player() -> Object:
 
 
 func cancelar() -> void:
-	## ESC dentro do menu: cancela a combinação, senão fecha o submenu, senão fecha a tela.
+	## ESC dentro do menu, na ordem do jogo: **primeiro desfaz um passo**, e só fecha a tela quando
+	## não há nada aberto. Antes, no modo EXAMINAR o ESC fechava a tela inteira em vez de voltar.
+	if mensagem != "":
+		mensagem = ""                      ## sai do EXAMINAR e volta para o menu
+		mensagem_linha = 0
+		queue_redraw()
+		return
 	if combinar_de >= 0:
 		combinar_de = -1
 		queue_redraw()

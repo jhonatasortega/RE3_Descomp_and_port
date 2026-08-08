@@ -437,3 +437,27 @@ de sala, item, prompt e menu, mas **não** os documentos. Fica registrado como a
 Detalhe engraçado do caminho: o mod escreve "Näo", "Saläo", "Opçöes" — usando `ä`/`ö` no lugar de
 `ã`/`õ`, porque a fonte alternativa dele não tem os glifos com til. O port usa os glifos certos
 (`ã` = 159, `õ` = 129 no atlas HD), então fica **melhor** que o mod nesse ponto.
+
+
+---
+
+## 17. Ícones do arquivo em HD **e em português** (o par já estava mapeado)
+
+A grade de documentos que eu tinha feito estava errada em três coisas, e o usuário comparou com o
+original: o painel é **preto** (não azul), o `VAZIO` é um **sprite** (não a palavra escrita com a
+fonte) e a seta de página é um **triângulo verde à direita**.
+
+O que resolveu: o `hd_ui_map.json` **já tinha o par** `FILEI → misc/12124B01`
+(NCC 0,903), com a nota *"HD em portugues (mod_BH3_Portuguese: COMO JOGAR/VAZIO)"* — eu não tinha
+olhado. É o atlas de ícones de documento em **512×1024** (4× o `FILEI.TIM` de 128×256), grade
+**4 colunas × 8 linhas** de células de **128×128** em HD, com os rótulos em português batidos na
+arte ("COMO JOGAR", "Diário", "Ficha") e a **última célula (índice 31) sendo o `VAZIO`**.
+
+Ou seja: para os documentos existe PT **em bitmap** — só não existe para as PÁGINAS internas
+(§16). A ordem `célula = doc` ganhou confirmação de brinde: a célula 0 é "COMO JOGAR", que é o
+documento 0 = *Game Instructions A*.
+
+Fluxo, também apontado pelo usuário: no modo EXAMINAR o ESC **volta ao menu** em vez de fechar a
+tela (ele desfaz um passo por vez: exame → combinação → submenu → tela), e ao SAIR nada fica
+selecionado — botão, submenu, combinação e texto são zerados, então reabrir começa limpo na grade.
+Conferido em `port/dev/diag_fluxo_menu.gd`.

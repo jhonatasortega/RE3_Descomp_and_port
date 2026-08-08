@@ -43,6 +43,8 @@ var ultima_acao := ""
 
 var _dados: Dictionary = {}
 var _icones: Texture2D = null
+var _icone_fator := 1                    ## 4 quando o atlas é o HD
+const CEL_VAZIO := 31                    ## última célula da grade 4×8 = o sprite "VAZIO"
 var _state: GameState = null
 
 
@@ -62,7 +64,16 @@ func carregar(state: GameState) -> bool:
 	if not (raw is Dictionary):
 		return false
 	_dados = raw
-	_icones = AssetIO.texture("FILE/FILEI.png")
+	## ÍCONES EM HD **E EM PORTUGUÊS**: `misc/12124B01` (512×1024 = 4× o `FILEI.TIM` de 128×256),
+	## par já confirmado no `hd_ui_map.json` (NCC 0,903) com a nota "HD em portugues
+	## (mod_BH3_Portuguese: COMO JOGAR/VAZIO)". A grade é 4 colunas × 8 linhas; em HD a célula tem
+	## **128×128**. A **última célula (índice 31) é o sprite "VAZIO"** — o papel cinza com a palavra
+	## batida, que é o que o jogo desenha em slot livre (eu estava escrevendo "VAZIO" com a fonte).
+	_icones = AssetIO.texture("FILE/FILEI_hd.webp")
+	_icone_fator = 4
+	if _icones == null:
+		_icones = AssetIO.texture("FILE/FILEI.png")
+		_icone_fator = 1
 	return true
 
 
@@ -152,10 +163,15 @@ func icone_do_doc(doc: Dictionary) -> Texture2D:
 
 
 func regiao_do_doc(doc: Dictionary) -> Rect2i:
-	## Célula do documento no `FILEI.TIM` (grade 4×8 de 32×32). O de-para documento → célula não
-	## foi provado; uso `célula = doc`.
-	var cel := int(doc.get("doc", 0))
-	return Rect2i((cel % ICONE_COLUNAS) * ICONE, int(cel / ICONE_COLUNAS) * ICONE, ICONE, ICONE)
+	## Célula do documento na grade 4×8. O de-para documento → célula não foi provado; uso
+	## `célula = doc`, e o atlas HD confirma a ordem (a célula 0 é "COMO JOGAR", que é o
+	## documento 0 = Game Instructions A).
+	return regiao_da_celula(int(doc.get("doc", 0)))
+
+
+func regiao_da_celula(cel: int) -> Rect2i:
+	var lado := ICONE * _icone_fator
+	return Rect2i((cel % ICONE_COLUNAS) * lado, int(cel / ICONE_COLUNAS) * lado, lado, lado)
 
 
 func nome_do_doc(doc: Dictionary) -> String:
