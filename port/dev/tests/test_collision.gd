@@ -63,6 +63,41 @@ func run(t: Object) -> bool:
 		t.eq(_rect(-1000, -1000, 1000, 1000, f).segmentos().size(), 0,
 			"forma %d não tem segmento (return 0)" % f)
 
+	# ── forma 4: LOSANGO (resposta `0x8004bb4c`) ──
+	# Tabela `0x8009dfec` lida do EXE: forma 4 → `0x8004bb4c`, que classifica o ponto em quadrante
+	# e testa `dx/hx + dz/hz < 1` (o losango), empurrando na PERPENDICULAR da aresta. Antes eu
+	# respondia forma 4 como "linhas médias" e a área do losango ficava ANDÁVEL — era o buraco de
+	# colisão do R10D (registro 32, forma 4, cobrindo onde a Jill nasce).
+	var cl := Collision.new()
+	## máscara SEM `0x1000` (esse bit é "collider girado 45°" e mudaria a geometria do teste)
+	var r4 := _rect(-1000, -1000, 1000, 1000, 4, 0x0FFF)
+	cl.rects.append(r4)
+	var res4: Collision.Resolvido = cl.resolver(0, -2000, 0, -900, 0, 200, 200)
+	t.check(res4.empurrado, "forma 4: entrar pelo topo do losango empurra")
+	t.check(res4.z <= -900, "forma 4: o empurrão é para FORA (z não avança)")
+	var canto: Collision.Resolvido = cl.resolver(1100, 1100, 900, 900, 0, 200, 200)
+	t.check(not canto.empurrado,
+		"forma 4: a QUINA da caixa fica livre — é losango, não caixa cheia")
+	# entrada RASA pela ponta esquerda do losango (hx = hz = 1200 com o raio 200)
+	var meio: Collision.Resolvido = cl.resolver(-2000, 0, -1150, 0, 0, 200, 200)
+	t.check(meio.empurrado and meio.x < -1150, "forma 4: pela ponta empurra de volta")
+	# a mordida diagonal empurra nos DOIS eixos (`sw` em +0x08 e +0x10 do EXE)
+	var diag: Collision.Resolvido = cl.resolver(-900, -900, -400, -400, 0, 200, 200)
+	t.check(diag.empurrado and diag.x < -400 and diag.z < -400,
+		"forma 4: na diagonal corrige x E z (projeção perpendicular)")
+	# a QUINA da caixa está FORA do losango (700/1200 + 700/1200 > 1), então não responde
+	t.check(not cl.resolver(-1200, -1200, -700, -700, 0, 200, 200).empurrado,
+		"forma 4: dx/hx + dz/hz > 1 é fora — a quina não empurra")
+	# passo que exigiria mais de 400 de correção é REJEITADO (`slti 0x191` do EXE)
+	var fundo: Collision.Resolvido = cl.resolver(-2000, 0, -100, 0, 0, 200, 200)
+	t.check(fundo.rejeitado, "forma 4: correção > 400 rejeita o passo em vez de teleportar")
+
+	# ── forma 5: a tabela diz `0x8004c960`, a MESMA de 1/7/8 = caixa cheia ──
+	var cl5 := Collision.new()
+	cl5.rects.append(_rect(-1000, -1000, 1000, 1000, 5, 0x0FFF))
+	t.check(cl5.resolver(0, -2000, 0, -900, 0, 200, 200).empurrado,
+		"forma 5 empurra como caixa (eu tratava como 'sem resposta')")
+
 	# ── forma 0: círculo inscrito ──
 	var r0 := _rect(-500, -500, 500, 500, 0)
 	t.eq(r0.raio(), 500, "raio do círculo = metade da largura")

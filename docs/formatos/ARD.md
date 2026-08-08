@@ -658,6 +658,35 @@ break — um tick pode deslizar em vários colliders):
   lado de ONDE SE VINHA** (a posição do tick anterior). O deslize nasce daí: andando em
   diagonal contra parede alinhada em X, só o X é corrigido. Correção > 2×raio → flag `0x100`
   e o chamador **restaura a posição** (parada seca).
+
+**Tabela `0x8009dfec` lida (16 ponteiros) — e duas correções que saíram dela:**
+
+| forma | resposta | forma | resposta |
+|---|---|---|---|
+| 0 | `0x8004c408` radial | 8 | `0x8004c960` |
+| 1 | `0x8004c960` caixa | 9/10 | `0x8004ce2c` (rampa, só Y) |
+| 2 | `0x8004c57c` | 11/12 | `0x8004d6b0` |
+| 3 | `0x8004c6ec` | 13 | `0x8004ded4` |
+| **4** | **`0x8004bb4c` losango** | 14 | `0x8004deb0` |
+| **5** | **`0x8004c960` caixa** | 15 | `0x8004e38c` |
+| 6 | `0x8004d194` "L" | 7 | `0x8004c960` |
+
+1. A **forma 5 empurra como caixa** (o port a tratava como "sem resposta"). São 3 registros.
+2. A **forma 4 é um LOSANGO** inscrito na caixa inflada, não "as linhas médias". `0x8004bb4c`
+   classifica o ponto num dos 4 quadrantes pelo sinal de `dx`/`dz` (`0x8004bbcc`:
+   `(sinal_z << 1) | sinal_x`) e, no quadrante 0 (`0x8004bc18`), calcula
+   `a2 = -hz·dx/hx`, `a0 = dz - hz` e sai se **não** `a0 < a2` — o que é exatamente
+   **`dx/hx + dz/hz < 1`**, com `hx = (x1+r) - cx` e `hz = (z1+r) - cz`. A penetração
+   `p = a0 - a2` vira empurrão **perpendicular à aresta** por
+   `q = hx·p/hz`, `(Δx, Δz) = (q·p²/(q²+p²), q²·p/(q²+p²))`, gravados em `+0x08`/`+0x10`
+   (`0x8004bddc`/`0x8004bde4`) — com `hx = hz` a conta dá `p/2` em cada eixo, isto é `p/√2`,
+   o perpendicular certo de um muro a 45°. Acima de **400** (`slti 0x191` em `0x8004bcd8` e
+   `0x8004bcf0`) o passo é **rejeitado** com `+0x2e |= 0x100`.
+   São 17 registros em 11 salas — entre elas o **R10D**, onde o registro 32 (forma 4, cobrindo
+   o ponto de spawn) deixava uma área inteira andável: era o buraco de colisão relatado.
+   O **predicado** da mesma forma (`0x8004f6cc`) é outra coisa: testa as duas linhas MÉDIAS
+   (uma cruz — `0x8004f748` vertical em `cx`, `0x8004f770` horizontal em `cz`). Não é
+   incoerência de leitura: são duas rotinas diferentes no jogo, e a do predicado é a barata.
 - Caso "já estava dentro" (`0x8004c85c`): escapa pela face CONTRA o movimento (ou a mais
   próxima, se parado), com teto de 400 (`0x8004cc68`); acima disso rejeita sem mover.
 - `0x8004fe70`/`0x8005003c` **não são resposta**: são a confirmação VERTICAL do predicado

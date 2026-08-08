@@ -33,6 +33,11 @@ const PAG_H := 176
 const ICONE := 32                        ## célula do FILEI (grade 4×8)
 const ICONE_COLUNAS := 4
 const ESCALA := 4
+const COLUNAS_GRADE := 5                 ## a grade de documentos é 5×3 (MenuStatus.ARQ_COLUNAS)
+## A página em HD **e em português** é 1024×768 = 4× de 256×**192** (o SD é 256×176: o conjunto PT
+## foi tipografado de novo numa caixa um pouco mais alta). Desenho no mesmo topo do SD.
+const PAG_PT_W := 256
+const PAG_PT_H := 192
 
 var aberto := false
 var sel := 0                             ## documento selecionado na lista
@@ -107,8 +112,7 @@ func fechar() -> void:
 
 
 func mover_lista(d: int) -> void:
-	## W/S (ou ↑/↓) andam na LISTA de documentos — e **não** viram página: no jogo a página é
-	## trocada com esquerda/direita, que é o que o usuário apontou.
+	## Anda um documento na lista (usado pelos diags e pelo movimento vertical da grade).
 	if not aberto or lendo:
 		return
 	sel = posmod(sel + d, maxi(1, docs.size()))
@@ -116,8 +120,20 @@ func mover_lista(d: int) -> void:
 	queue_redraw()
 
 
+func mover_grade(dx: int, dy: int) -> void:
+	## A grade é 5×3 (`MenuStatus.ARQ_COLUNAS/LINHAS`), então **A/D andam na coluna e W/S na
+	## linha** — é a navegação WSAD que o usuário pediu; antes A/D não faziam nada na grade e só
+	## W/S andavam, um documento por vez.
+	if not aberto or lendo or docs.is_empty():
+		return
+	var passo := dx + dy * COLUNAS_GRADE
+	sel = clampi(sel + passo, 0, docs.size() - 1)
+	pagina = 0
+	queue_redraw()
+
+
 func virar_pagina(d: int) -> void:
-	## A/D (esquerda/direita) viram a página do documento aberto.
+	## Vira a página do documento aberto. Recebe A/D **e** W/S (WSAD), como pedido.
 	if not aberto or not lendo:
 		return
 	var doc: Dictionary = docs[sel]
@@ -212,15 +228,23 @@ func _desenhar_pagina(doc: Dictionary) -> void:
 		var idx := pagina - 1
 		if idx < tp.size():
 			rel = "FILE/pag_%03d.png" % int(tp[idx])
-	## ── POR QUE A PÁGINA NÃO ESTÁ EM HD (medido, não desistência) ──
-	## O pack tem `memo/` com 280 imagens 1024×768 (= 4× de 256×192, e não de 128×256: o HD
-	## REDESENHOU a página em paisagem). Tentei casar por conteúdo (`port/dev/hd_memo.gd`,
-	## normalizando as duas em 32×32 e comparando luminância com atribuição global): fechou 137 de
-	## 183, MAS o resultado é **inconfiável** — a `pag_002`, que é "GAME INSTRUCTIONS A", casou com
-	## uma tabela de pólvora. Pior: as páginas HD estão em **RUSSO** (o pack Seamless é o russo),
-	## então nem seriam ganho num port PT. Fica o SD em inglês, que é correto, até aparecer o
-	## `FILEG` traduzido (o mod PT traduz textos por XML, e a página é bitmap).
-	var tex := AssetIO.texture(rel)
+	## ── PÁGINA EM HD E EM PORTUGUÊS ──
+	## O `hires/memo` do usuário são **dois** conjuntos de 1024×768: 137 arquivos de jan/2025 em
+	## **russo** (o pack Seamless é russo — foi o que meu casamento por conteúdo pegou antes, e por
+	## isso dava página trocada) e **143 de jun/2025 em PORTUGUÊS**, tipografados de novo. O de-para
+	## está em `data/hd_memo_pt.json`, feito lendo as 143 páginas e casando com a página SD; ele se
+	## fecha em três contas independentes (`tools/memo_pt.py` explica). As 9 páginas SD sem PT são 6
+	## em branco + 3 rabichos de uma linha, e nessas cai no SD.
+	var tex: Texture2D = null
+	if pagina > 0:
+		var tp2: Array = doc.get("text_pages", [])
+		if pagina - 1 < tp2.size():
+			tex = AssetIO.texture("FILE/pt/pag_%03d.webp" % int(tp2[pagina - 1]))
+	if tex != null:
+		draw_texture_rect(tex, Rect2(32, 32, PAG_PT_W, PAG_PT_H), false)
+		Texto.desenhar(self, "%d/%d" % [pagina + 1, n], Vector2i(270, 220))
+		return
+	tex = AssetIO.texture(rel)
 	if tex == null:
 		Texto.desenhar(self, "pagina ausente", Vector2i(100, 110))
 		return

@@ -461,3 +461,54 @@ Fluxo, também apontado pelo usuário: no modo EXAMINAR o ESC **volta ao menu** 
 tela (ele desfaz um passo por vez: exame → combinação → submenu → tela), e ao SAIR nada fica
 selecionado — botão, submenu, combinação e texto são zerados, então reabrir começa limpo na grade.
 Conferido em `port/dev/diag_fluxo_menu.gd`.
+
+## 18. As páginas de documento EM HD E EM PORTUGUÊS existem — o `memo` do pack são dois conjuntos
+
+Na §16 eu havia concluído que as páginas HD não serviam porque estavam em **russo**. Estava certo
+sobre o que eu tinha olhado e **errado sobre o conjunto**: o `hires/memo` tem **280 arquivos de
+1024×768 que são DOIS conjuntos**, separáveis por data de modificação e por luminância:
+
+| conjunto | arquivos | luminância máx | idioma |
+|---|---|---|---|
+| 2025-01-17 (veio com o pack) | 137 | 214 | russo |
+| 2025-06-07/09/10 (adicionado depois) | **143** | 255 | **português** |
+
+O conjunto de junho é tipografado de novo (fonte serifada proporcional, não a bitmap do PS1) e traz
+até as **tabelas de pólvora redesenhadas** com renders HD dos itens. Foi o conjunto russo que meu
+casamento por conteúdo pegou antes — e é por isso que a `pag_002` ("GAME INSTRUCTIONS A") caía numa
+tabela de pólvora.
+
+### Por que o de-para não sai de graça
+
+- **O nome do arquivo é hash.** Testei CRC32 e Adler32 sobre o TIM inteiro, sobre o corpo de
+  pixels e sobre o CLUT, tanto do `FILEGU.PIX` do PS1 quanto do `FILEGJ.PIX` do PC (186 TIMs):
+  **zero acertos**. O hash é do bloco como sobe para a "VRAM" no wrapper, não do arquivo.
+- **A ordem de mtime não é a ordem de leitura.** O tradutor fez páginas fora de ordem (no Diário
+  da Jill, 15/ago antes de 7/ago).
+- **A tradução não copiou a paginação.** 143 ≠ 183.
+
+### Como o de-para foi feito (`tools/memo_pt.py`, `data/hd_memo_pt.json`)
+
+Montei folhas de contato com o topo das 143 páginas em ordem de mtime, li todas e casei cada uma
+com a página SD em inglês (`assets/FILE/pag_NNN.png`). O resultado **se auto-valida em três contas
+independentes**:
+
+1. **143 = 146 − 3.** Das 152 páginas de texto do SD, **6 estão em branco** (112, 138, 143, 151,
+   155, 160) → 146 com conteúdo; o conjunto PT não traduziu página em branco e faltam exatamente
+   **3 rabichos** de uma linha (SD 56, 75, 86).
+2. **Cada documento fecha**: a contagem por documento bate com (páginas de texto − brancas) em 28
+   dos 31 documentos, e nos outros 3 falta o rabicho do item 1.
+3. **A sequência bate frase a frase.** Diário da Jill: SD 177 "August 7th" = PT "7 de Agosto";
+   SD 179 "…gave me a wink" = PT "apenas piscou para mim"; SD 183 "somewhere in Europe" = PT "em
+   algum lugar da Europa". As fotos fecham pelo verso ("SCOOP!" = "FURO DE REPORTAGEM!").
+
+O leitor usa `FILE/pt/pag_NNN.webp` quando existe (1024×768 = 4× de 256×**192**; o SD é 256×176) e
+cai no SD nas 9 páginas sem PT. A **capa continua SD**: o `memo` só tem páginas de texto, e não há
+bloco HD no tamanho da capa em nenhuma pasta do pack (varri as 15).
+
+### Navegação WSAD
+
+Na **grade**, W/S andam uma LINHA (5 documentos, que é `ARQ_COLUNAS`) e A/D andam uma COLUNA —
+antes A/D não faziam nada ali e só W/S andavam de um em um. Na **leitura**, W/A voltam e S/D
+avançam a página. As 9 páginas de um documento longo são todas alcançáveis (conferido em
+`port/dev/diag_ler.gd`, que aperta as teclas pelo caminho real do `_on_tick`).

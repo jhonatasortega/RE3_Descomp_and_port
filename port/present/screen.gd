@@ -164,14 +164,29 @@ func _on_tick(_frame: int) -> void:
 			menu_arquivo.confirmar()
 		elif pad.just_pressed(Pad.PAUSA) or pad.just_pressed(Pad.MENU):
 			menu_arquivo.cancelar()
+		## Navegação **WSAD** na tela de arquivo, nos dois modos:
+		##   grade  → W/S andam na LINHA (5 documentos), A/D andam na COLUNA;
+		##   leitura → W/A voltam página, S/D avançam.
 		elif pad.just_pressed(Pad.FWD) or pad.just_pressed(Pad.HELD_UP):
-			menu_arquivo.mover_lista(-1)       ## W/↑ e S/↓ andam na LISTA
+			if menu_arquivo.lendo:
+				menu_arquivo.virar_pagina(-1)
+			else:
+				menu_arquivo.mover_grade(0, -1)
 		elif pad.just_pressed(Pad.BACK) or pad.just_pressed(Pad.HELD_DOWN):
-			menu_arquivo.mover_lista(1)
+			if menu_arquivo.lendo:
+				menu_arquivo.virar_pagina(1)
+			else:
+				menu_arquivo.mover_grade(0, 1)
 		elif pad.just_pressed(Pad.HELD_LEFT):
-			menu_arquivo.virar_pagina(-1)      ## A/D viram a PÁGINA, como no jogo
+			if menu_arquivo.lendo:
+				menu_arquivo.virar_pagina(-1)
+			else:
+				menu_arquivo.mover_grade(-1, 0)
 		elif pad.just_pressed(Pad.HELD_RIGHT):
-			menu_arquivo.virar_pagina(1)
+			if menu_arquivo.lendo:
+				menu_arquivo.virar_pagina(1)
+			else:
+				menu_arquivo.mover_grade(1, 0)
 		_atualizar_hud()
 		return
 	if menu != null and menu.aberto:

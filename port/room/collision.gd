@@ -424,20 +424,29 @@ func resolver(prev_x: int, prev_z: int, nx: int, nz: int, nivel: int,
 
 func _responder(r: Rect, res: Resolvido, prev_x: int, prev_z: int,
 		rx: int, rz: int, girado: bool) -> bool:
-	## Resposta POR FORMA (tabela `0x8009dfec` do EXE):
-	##   • 1/7/8 → caixa cheia (`0x8004c960` — desassemblada);
-	##   • 0 → radial (aprox. declarada de `0x8004c408`);
-	##   • 6 "L" → SÓ as duas arestas; 2/3/4 → SÓ a(s) linha(s) média(s) — respondê-las como
+	## Resposta POR FORMA — a tabela `0x8009dfec` foi LIDA do EXE (16 ponteiros):
+	##   forma 0 → `0x8004c408` radial          forma 8 → `0x8004c960`
+	##   forma 1 → `0x8004c960` caixa cheia     forma 9/10 → `0x8004ce2c`
+	##   forma 2 → `0x8004c57c`                 forma 11/12 → `0x8004d6b0`
+	##   forma 3 → `0x8004c6ec`                 forma 13 → `0x8004ded4`
+	##   forma 4 → **`0x8004bb4c`** losango     forma 14 → `0x8004deb0`
+	##   forma 5 → `0x8004c960` caixa cheia     forma 15 → `0x8004e38c`
+	##   forma 6 → `0x8004d194`                 forma 7 → `0x8004c960`
+	## Duas correções que saíram dessa leitura (eu tinha atribuído `0x8004c6ec` à forma 4, que é
+	## da forma 3, e tratava a forma 5 como "sem resposta"): **a forma 5 empurra como caixa** e a
+	## **forma 4 é um LOSANGO**, não duas linhas médias — ver `_responder_losango`.
+	##   • 6 "L" → SÓ as duas arestas; 2/3 → SÓ a(s) linha(s) média(s) — respondê-las como
 	##     caixa cheia selava salas inteiras: 17 chegadas de porta nasciam PRESAS dentro de
 	##     caixas forma 6 (R10B, R207, R209, R303, R305, R20B…) e o usuário batia em "paredes"
 	##     onde o jogo só tem uma mureta ("problema de colisão geral, em diversas cenas");
-	##   • 5 → sem resposta (3 registros; o predicado ainda barra a linha de visão);
 	##   • 9..15 → rampas/escadas, não empurram no plano (`0x8004ce2c` cuida do Y).
-	if r.forma >= 9 or r.forma == 5:
+	if r.forma >= 9:
 		return false
 	if r.forma == 0:
 		return _responder_circulo(r, res, prev_x, prev_z, rx)
-	if r.forma in [2, 3, 4, 6]:
+	if r.forma == 4:
+		return _responder_losango(r, res, rx, rz, girado)
+	if r.forma in [2, 3, 6]:
 		return _responder_arestas(r, res, prev_x, prev_z, rx, rz, girado)
 	if (r.mask & 0x0F00) == 0 and r.forma in [1, 5, 7, 8]:       # `0x8004c988`: sem arestas
 		return false
@@ -487,6 +496,63 @@ func _responder(r: Rect, res: Resolvido, prev_x: int, prev_z: int,
 		corr_x = 0
 	if corr_z != 0 and (n.y + rz - r.f1 < 0 or n.y + rz - r.f1 >= h + 2 * rz):
 		corr_z = 0
+	_aplicar(res, corr_x, corr_z, girado)
+	return corr_x != 0 or corr_z != 0
+
+
+func _responder_losango(r: Rect, res: Resolvido, rx: int, rz: int, girado: bool) -> bool:
+	## Forma 4 = **LOSANGO** inscrito na caixa INFLADA pelo raio — `0x8004bb4c`, desassemblada.
+	##
+	## O EXE tira o centro da caixa (`(x0+x1)/2`, `(z0+z1)/2`), classifica o ponto em um dos 4
+	## QUADRANTES pelo sinal de `dx`/`dz` (`0x8004bbcc`: `(sinal_z << 1) | sinal_x`) e cada
+	## quadrante tem seu bloco. No quadrante 0 (`0x8004bc18`) ele calcula
+	##
+	##     a2 = (cz - (z1+r)) * dx / ((x1+r) - cx) = -hz*dx/hx
+	##     a0 = pz - (z1+r)                        =  dz - hz
+	##     se NÃO (a0 < a2): sai sem colisão
+	##
+	## e `a0 < a2` é, com hx = (x1+r)-cx e hz = (z1+r)-cz, exatamente
+	## **dx/hx + dz/hz < 1** — o teste do losango. A penetração vertical é `p = a0 - a2` (negativa
+	## dentro), e o empurrão sai da PROJEÇÃO PERPENDICULAR na aresta:
+	##
+	##     q  = hx*p/hz                       (`0x8004bc44`)
+	##     ax = q*p²/(q²+p²)   az = q²*p/(q²+p²)     (`0x8004bc64`..`0x8004bcc8`)
+	##     x -= ax             z -= az               (`0x8004bddc`/`0x8004bde4`)
+	##
+	## Conferido na álgebra: com hx = hz a conta dá (p/2, p/2), ou seja |empurrão| = p/√2, que é o
+	## perpendicular certo para um muro a 45°. Passo maior que **400** é REJEITADO e o EXE acende
+	## `ator+0x2e |= 0x100` (`0x8004bcd8`/`0x8004bcf0`: `slti 0x191`).
+	##
+	## O PREDICADO da mesma forma (`0x8004f6cc`) é outra coisa: ele testa as duas linhas MÉDIAS
+	## (uma cruz, `0x8004f748`/`0x8004f770`) — aproximação barata da Capcom para linha de visão.
+	## Isso não é incoerência minha: são duas rotinas diferentes no jogo.
+	var n := Vector2i(res.x, res.z)
+	if girado:
+		n = girar_para_rect(res.x, res.z, r)
+	var cx := r.f0 + (r.f2 - r.f0) / 2
+	var cz := r.f1 + (r.f3 - r.f1) / 2
+	var hx := r.f2 + rx - cx
+	var hz := r.f3 + rz - cz
+	if hx <= 0 or hz <= 0:
+		return false
+	var sx := 1 if n.x >= cx else -1
+	var sz := 1 if n.y >= cz else -1
+	var ax := absi(n.x - cx)
+	var az := absi(n.y - cz)
+	var a2 := -(hz * ax) / hx
+	var a0 := az - hz
+	if a0 >= a2:
+		return false                       ## fora do losango
+	var p := a0 - a2                       ## penetração vertical (negativa)
+	var q := (hx * p) / hz
+	var den := q * q + p * p
+	if den == 0:
+		return false
+	var corr_x := -sx * ((q * p * p) / den)
+	var corr_z := -sz * ((q * q * p) / den)
+	if absi(corr_x) > 400 or absi(corr_z) > 400:      ## `slti 0x191`
+		res.rejeitado = true
+		return true
 	_aplicar(res, corr_x, corr_z, girado)
 	return corr_x != 0 or corr_z != 0
 
