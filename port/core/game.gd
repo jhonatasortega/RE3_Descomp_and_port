@@ -19,6 +19,7 @@ var clock: Clock
 var state: GameState
 var pad: Pad
 var audio: Audio
+var sfx: Sfx                         ## efeitos sonoros pelo de-para provado (core/sfx.gd)
 
 
 func _ready() -> void:

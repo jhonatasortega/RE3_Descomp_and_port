@@ -225,6 +225,30 @@ def hires_root(argv_valor=None):
     return argv_valor or os.environ.get("NOSTALGIA_HIRES") or HIRES_PADRAO
 
 
+#: `ETC/INIT_TBL.DAT` (índice 0x30, 2312 B) é o que o TITLE lê ao começar um JOGO NOVO
+#: (`0x80196068`, destino `0x800d1d28`). O LAYOUT NÃO FOI DECODIFICADO — o port copia o
+#: arquivo e confere tamanho + sha1 para provar que é o certo, e nada mais.
+INIT_DATS = ["INIT_TBL.DAT", "INIT_SUB.DAT"]
+
+
+def copiar_init_tbl(destino):
+    """Copia `ETC/INIT_TBL.DAT`/`INIT_SUB.DAT` de `extracted/` para `assets/BOOT/`."""
+    import hashlib
+    os.makedirs(destino, exist_ok=True)
+    rel = {}
+    for nome in INIT_DATS:
+        src = paths.cd_data("ETC", nome)
+        if not os.path.exists(src):
+            rel[nome] = dict(ok=False, motivo="não existe: %s" % src)
+            continue
+        b = open(src, "rb").read()
+        shutil.copy2(src, os.path.join(destino, nome))
+        rel[nome] = dict(ok=True, arquivo="BOOT/%s" % nome, tamanho=len(b),
+                         sha1=hashlib.sha1(b).hexdigest(),
+                         bytes_nao_zero=sum(1 for x in b if x))
+    return rel
+
+
 def copiar_hd(hires, destino, forcar=False):
     """Copia os 5 arquivos HD/PT para `<out>/assets/BOOT/`. Devolve o relatório."""
     os.makedirs(destino, exist_ok=True)
@@ -273,7 +297,7 @@ def medir_tinta(hires, argv_hires=None):
 
 # ─────────────────────────────── JSON ───────────────────────────────
 
-def montar_json(rel_assets, tinta):
+def montar_json(rel_assets, tinta, rel_init=None):
     tab = tabela_seno() if os.path.exists(EXE) else []
     tempos = {n: dict(ticks=t, sitio=s) for n, t, s in TEMPOS}
     # posição de tela dos sprites: a tabela do SPRT de `title_sprites.py`, sem cópia
@@ -339,9 +363,12 @@ def montar_json(rel_assets, tinta):
                              sitio="0x80196068 cd_read_file(0x30, 0x800d1d28, 0, 'INIT_TBL')",
                              decodificado=False,
                              nota="NÃO ABERTO: 2312 bytes de estado inicial. O port carrega "
-                                  "o arquivo e registra o SHA, mas o layout não foi medido."),
+                                  "o arquivo e confere tamanho+sha1, mas o layout não foi "
+                                  "medido — o inventário de jogo novo continua vindo do "
+                                  "template do EXE (0x800a018c, já em GameState.novo_jogo)."),
             "INIT_SUB": dict(indice=0x2F, destino="0x800d1d28", tamanho=2312,
                              sitio="0x80195fac (só no Mercenaries)", decodificado=False),
+            "copiados": rel_init or {},
         },
         "fmv_abertura": {
             "overlay": "OPENING (ovl 5)",
@@ -374,8 +401,9 @@ def main():
     hires = hires_root(a.hires)
     destino = paths.assets("BOOT")
     rel = copiar_hd(hires, destino, a.forcar)
+    rel_init = copiar_init_tbl(destino)
     tinta = medir_tinta(hires)
-    d = montar_json(rel, tinta)
+    d = montar_json(rel, tinta, rel_init)
 
     os.makedirs(paths.data(), exist_ok=True)
     saida = paths.data("boot_flow.json")
@@ -387,6 +415,11 @@ def main():
         marca = "ok " if r.get("ok") else "FALTA"
         pt = "PT" if r.get("conjunto_pt") else "?? (fora do conjunto PT)"
         print("  %-5s %-12s %-22s %s" % (marca, nome, r.get("hires", r.get("motivo", "")), pt))
+    for nome, r in rel_init.items():
+        print("  %-5s %-12s %s" % ("ok " if r.get("ok") else "FALTA", nome,
+                                   "%d B sha1 %s (%d bytes não-zero)"
+                                   % (r["tamanho"], r["sha1"][:12], r["bytes_nao_zero"])
+                                   if r.get("ok") else r["motivo"]))
     print("-> %s" % saida)
     def soma(prefixo):
         return sum(t for n, t, _s in TEMPOS if n.startswith(prefixo))
@@ -414,8 +447,10 @@ def main():
         print("  pulso (64 ticks): min=%d max=%d" % (min(pulso(tab)), max(pulso(tab))))
         print("  0x800cc858 bit EASY = 0x%03x (escrito em 0x80195dcc / limpo em 0x80195db8)"
               % BITS_G["easy_mode"])
-        for addr, esp in [(0x80185480, "fade do aviso"), (0x8019427c, "contador do CAPCOM")]:
-            print("  %08x %s: %s" % (addr, esp, exe.u32(addr) if exe.valid_vaddr(addr) else "?"))
+        # os fades do aviso/CAPCOM vivem nos OVERLAYS (0x80184000 / 0x80194000), fora do EXE:
+        # para relê-los use `python tools/boot_flow.py --calls WARNING` / `--calls TITLE`.
+        print("  tabela de overlays 0x8009c944[1] (WARNING) file_index = 0x%02x"
+              % exe.u32(0x8009C944 + 12))
 
 
 if __name__ == "__main__":

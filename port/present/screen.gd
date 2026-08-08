@@ -45,7 +45,7 @@ const CROP_H := 720                        ## altura do recorte 16:9 (perde 240 
 ## que não foi implementada — e está declarada como escolha.
 @export var actor_ps1 := Vector3i(11560, 0, -16528)
 @export var actor_anim := "arm02"          ## idle ARMADO (em pé com a arma)
-## Malha da arma a anexar no punho (P1-08). Vazio = arma "pintada na pele" (caso da W00).
+## Malha de arma a anexar no punho. **Vazio de propósito**: ver a nota em `_montar_arma`.
 @export var weapon_model := ""
 ## Oclusão por atlas HD (P1-07). OVERLAY desenha todos os sprites (valida o mapeamento).
 @export var occlusion_mode: Occlusion.Modo = Occlusion.Modo.PROFUNDIDADE
@@ -300,6 +300,18 @@ func _anexar_arma() -> void:
 	## na destra. Dos 84 PLW, **63 têm malha separável** (`*_WPN.glb`) e **21 não têm slot**:
 	## as pistolas W00 e as armas de PL09/PL0A são PINTADAS na pele do modelo, então para elas
 	## não há nada a anexar (não é bug, é o dado).
+	## ── POR QUE A ARMA NÃO APARECE NA MÃO (medido, 2026-08-08) ──
+	## O usuário apontou: "não mostra arma equipada na mão". Duas coisas somadas:
+	## 1. O modelo do ator é o **`PL00.glb`**, que é a malha do `.PLD` = Jill **DESARMADA**. Para a
+	##    pistola W00 a arma é **pintada na pele** (a nota abaixo, dos 84 PLW: 63 têm malha
+	##    separável e 21 não têm slot), e essa malha com a arma é o **`PL00W00.glb`** — que tem
+	##    malha e **zero clipes** (as animações vivem no `PL00.glb`). Então o conserto é TROCAR a
+	##    malha do ator pela da arma equipada e transplantar as animações, não anexar nada.
+	## 2. Para as armas COM malha separável (`*_WPN.glb`, W01 em diante) o anexo funciona — testei
+	##    e o log confirma "anexada em bone04 (osso 4/15)" —, mas a malha está em **espaço de
+	##    MODELO** (AABB medida: origem em `x = -0,538`, tamanho `0,64`), então sem aplicar a
+	##    inversa do rest do osso a arma fica FLUTUANDO longe da mão. Por isso `weapon_model` está
+	##    vazio: prefiro sem arma a arma solta no ar.
 	if weapon_model == "":
 		return
 	var esq := _achar_skeleton(actor_mesh)
@@ -655,6 +667,16 @@ func _atualizar_hud() -> void:
 		teclas += "D "
 	if m & Pad.RUN:
 		teclas += "SHIFT "
+	if m & Pad.AIM:
+		teclas += "MIRA "
+	if m & Pad.TIRO:
+		teclas += "TIRO "
+	## Estado da mira no HUD: é o que diz, numa captura, se o bit do mouse chegou e em que
+	## sub-estado da rotina 7 o player está.
+	var pl: Player = mundo.player
+	var mira := "mira: arma=0x%02x sub=%d alvo=%d recuo=%d %s" % [pl.equipped_weapon,
+		pl.mira_sub, pl.mira_alvo, pl.recuo,
+		["FACIL", "NORMAL", "DIFICIL"][clampi(int(pl.dificuldade), 0, 2)]]
 	hud.text = ("sala %s  câmera %d/%d (attr %d, fov %.1f)
 "
 		+ "pos PS1 %s  ângulo %d  ação %d  clipe %s
@@ -662,6 +684,8 @@ func _atualizar_hud() -> void:
 		+ "pad 0x%03x [%s]  tick %d  fps %d
 "
 		+ "trilha %s   %s
+"
+		+ "%s
 "
 		+ "E ação · F1 hud · F2 porta · F3 listar · F4 gatilhos · F7 grade · F10 colisão · F5/F6 trilha · [ ] câmera · F9 tela") % [
 		room_id, camera_index, room.cameras.size(),
@@ -671,7 +695,7 @@ func _atualizar_hud() -> void:
 		g.clock.frame if g != null and g.clock != null else 0,
 		Engine.get_frames_per_second(),
 		g.audio.faixa_atual() if g != null and g.audio != null else "-",
-		_dica_acao()]
+		_dica_acao(), mira]
 
 
 func _dica_acao() -> String:
