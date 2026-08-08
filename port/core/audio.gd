@@ -92,6 +92,22 @@ func tocar_bgm_da_sala(room_id: String) -> void:
 	print("[audio] %s -> faixa '%s' (%s)" % [room_id, faixa, rel])
 
 
+func tocar_faixa(faixa: String, loop := true) -> bool:
+	## Toca uma faixa PELO NOME (sem passar pelo de-para de sala). É o que a abertura precisa: o
+	## boot pede `main38` direto, e o de-para sala → faixa não vale ali.
+	if faixa == "" or faixa == _faixa_atual:
+		return faixa != ""
+	var s2 := _carregar_ogg("%s/%s.ogg" % [BGM_DIR, faixa])
+	if s2 == null:
+		return false
+	if s2 is AudioStreamOggVorbis:
+		(s2 as AudioStreamOggVorbis).loop = loop
+	_faixa_atual = faixa
+	bgm_player.stream = s2
+	bgm_player.play()
+	return true
+
+
 func parar_bgm() -> void:
 	bgm_player.stop()
 	_faixa_atual = ""

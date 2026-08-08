@@ -94,7 +94,27 @@ var _pad_antes := 0
 var _fim := false
 
 
+func _ligar_som() -> void:
+	## ENGATE que o agente do boot deixou para mim: os sinais `pediu_bgm`/`pediu_sfx` do fluxo de
+	## abertura agora caem no `Audio`/`Sfx` do jogo. Os ids de SFX são os provados em `0x800746c0`
+	## (4 cursor, 5 cancelar, 6 confirmar) e o de-para id → amostra está em
+	## `docs/decomp/notes/exe_audio.md`.
+	var laco := Engine.get_main_loop()
+	if laco == null:
+		return
+	var g: Node = (laco as SceneTree).root.get_node_or_null("/root/Game")
+	if g == null:
+		return
+	var au: Object = g.get("audio")
+	var sf: Object = g.get("sfx")
+	if au != null:
+		pediu_bgm.connect(func(faixa: String) -> void: au.call("tocar_faixa", faixa))
+	if sf != null:
+		pediu_sfx.connect(func(id: int) -> void: sf.call("tocar_id", 0, id))
+
+
 func _ready() -> void:
+	_ligar_som()
 	preparar()
 
 

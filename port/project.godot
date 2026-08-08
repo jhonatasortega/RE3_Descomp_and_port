@@ -12,7 +12,7 @@ config_version=5
 
 config/name="RE3 Nemesis — Port 1:1"
 config/description="Port 1:1 de Resident Evil 3: Nemesis (PS1 NTSC-U) com assets HD do Seamless HD Project. Estudo pessoal — assets NAO distribuidos."
-run/main_scene="uid://bport1game"
+run/main_scene="uid://bport1boot"
 config/features=PackedStringArray("4.7")
 
 [autoload]
