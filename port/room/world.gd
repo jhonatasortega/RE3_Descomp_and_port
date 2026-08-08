@@ -17,6 +17,10 @@ extends RefCounted
 ## (present/screen.gd) ouve os sinais.
 
 signal sala_trocada(de: String, para: String, porta: Aot)
+## Cinemática de script começou/terminou. A APRESENTAÇÃO ouve isto (ver a nota em `_abrir_cena`:
+## o fade do `0x46` e a moldura sem HUD são trabalho de quem desenha, não deste arquivo).
+signal cena_iniciada(sala: String, func_id: int)
+signal cena_terminada(sala: String, func_id: int)
 
 var state: GameState
 var room: RoomData
@@ -26,6 +30,38 @@ var rvd := CameraRVD.Estado.new()
 var camera := 0
 var trocas := 0
 var historico: Array[String] = []
+
+# ═══════════════════════ CINEMÁTICAS DE SCRIPT (cena_r10d.md §6.2) ═══════════════════════
+## A cinemática em curso, ou `null`. Enquanto ela vive, o `tick` NÃO lê o pad, NÃO roda o RVD e
+## NÃO testa porta/item: quem manda é o script da sala (é o `task_suspend` do motor).
+var cena: Cena
+var cena_func := -1
+## Gatilho `sce 5` que já disparou: bloqueia o re-disparo até o personagem sair da caixa
+## (mesma ideia do `_ancora_porta`).
+var _ancora_cena: Aot
+## DÍVIDAS que a cena deixou registradas (chegada zerada, cena abandonada). O teste lê isto em
+## vez de eu fingir que está tudo medido.
+var cena_debitos: Array[String] = []
+
+## Cinemáticas de script LIGADAS no jogo, por sala:
+##   `entrada` = função que o INIT abre como thread (`0x04 evt_exec`; -1 = nenhuma)
+##   `gatilhos` = funções que um AOT `sce 5` pode abrir quando o personagem pisa na caixa
+##
+## 🟡 **Lista DECLARADA, e curta de propósito.** As duas cenas do `R10D` são as únicas MEDIDAS
+## (`docs/decomp/notes/cena_r10d.md`, teste `-- cena`): a de ENTRADA é a **função 7**, aberta
+## pelo `04 ff 19 07` da função 5 do init, e a de SAÍDA é a **função 11**, que o AOT `sce 5`
+## pede no payload. Medi que existem **135 gatilhos `sce 5` em 58 salas** (varredura com
+## `executar(0)` nas 169); ligar todos faria o port rodar funções cujos opcodes ainda não têm
+## semântica (§7 do doc) e prenderia o jogador numa cena que talvez nunca termine — algumas
+## dessas caixas cobrem a sala inteira (`R30E` tem uma de 24980×24900). Então aqui entram as
+## cenas PROVADAS e as outras 134 seguem inertes, exatamente como já estavam.
+const CENAS_LIGADAS := {
+	"R10D": {"entrada": 7, "gatilhos": [11]},
+}
+## Rede de segurança: 4000 quadros a 30 Hz ≈ 2 min 13 s. A cena de saída do `R10D` mede 834
+## quadros e a de entrada 260, então isto só age se uma thread ficar presa num `while` esperando
+## um bit que o port não acende. **Declarado** (é limite de port, não do motor).
+const CENA_MAX_QUADROS := 4000
 
 ## Cache de salas já carregadas (o RDT é pequeno; o pesado são as imagens, que ficam no AssetIO)
 var _cache: Dictionary = {}
@@ -60,8 +96,11 @@ func _init(estado: GameState = null) -> void:
 		return fora
 
 
-func carregar(room_id: String) -> bool:
+func carregar(room_id: String, com_cena := true) -> bool:
 	## Carrega a sala, roda o script (que instala os AOT) e prepara colisão/câmera.
+	##
+	## `com_cena = false` só para o LOAD de save: recarregar a sala não deve reprisar a
+	## cinemática de entrada dela.
 	var r: RoomData = _cache.get(room_id)
 	if r == null:
 		r = RoomData.load_room(room_id)
@@ -111,7 +150,142 @@ func carregar(room_id: String) -> bool:
 			print("[world] %s: init mudou %d collider(s) (opcode 0x6e)" % [
 				room_id, vm.colliders_mudados])
 	historico.append(room_id)
+	# O BANCO 4 é o de RASCUNHO da sala — as threads de uma cena se sincronizam por ele (o `0x81`
+	# acende um bit dele na chegada do ator, `cena_r10d.md` §3.2) e o motor o ZERA na carga:
+	# `0x80052350  sw $zero, 0x7888($s0)` (`gs+0x7888` = `0x800d1fc0` = entrada 4 da tabela de
+	# bancos `0x8009e3f8`). Sem isto, um bit aceso numa cena anterior soltaria o `while (não
+	# flag)` da próxima antes da hora.
+	for bit in GameState.BITS_PER_BANK:
+		state.flag_set(Cena.BANCO_RASCUNHO, bit, false)
+	_fechar_cena(false)
+	if com_cena:
+		_abrir_cena_de_entrada()
 	return true
+
+
+# ═════════════════════════ as três linhas da §6.2 de cena_r10d.md ═════════════════════════
+# Era o que faltava para a Jill SAIR do R10D: a sala tem UMA porta e ela é impossível de tocar
+# (caixa `(0,0,0,0)`) — quem a dispara é o opcode `0x66` no fim da **função 11**, a cinemática de
+# saída, que o AOT `sce 5` abre quando o personagem pisa na caixa a oeste.
+
+
+func _abrir_cena_de_entrada() -> void:
+	## A cena de ENTRADA não tem gatilho: o INIT da sala a abre como thread. Prova, opcode por
+	## opcode (`cena_r10d.md` §2): `func 0` faz `19 02` → `func 2` faz `19 05` → `func 5` começa
+	## com **`04 ff 19 07`** = `evt_exec(slot 0xff, função 7)`. O port não roda `0x04` no modo de
+	## CARGA (só a `Cena` abre thread), então quem sabe disso é a tabela `CENAS_LIGADAS`.
+	var e: Dictionary = CENAS_LIGADAS.get(room.room_id, {})
+	var fid := int(e.get("entrada", -1))
+	if fid >= 0:
+		_abrir_cena(fid, "thread do init (func 5: `04 ff 19 07`)")
+
+
+func _procurar_gatilho_de_cena() -> void:
+	## Um quadro de busca de gatilho: primeiro AOT `sce 5` ATIVO que contém o personagem. O
+	## handler `0x800512bc` só faz `evt_exec` com o payload — "pisar na caixa" **é** "abrir a
+	## thread" (`Aot.evento_func()`).
+	if vm == null or room == null:
+		return
+	var g := Cena.gatilho_de_evento(vm, player.pos.x, player.pos.z)
+	if g == null:
+		_ancora_cena = null
+		return
+	if g == _ancora_cena:
+		return                                   ## ainda dentro da caixa que já disparou
+	_ancora_cena = g
+	var fid := g.evento_func()
+	var ligadas: Array = (CENAS_LIGADAS.get(room.room_id, {}) as Dictionary).get("gatilhos", [])
+	if not ligadas.has(fid):
+		print("[world] %s: gatilho sce 5 (AOT %d) pede a função %d — cena NÃO ligada (não medida)"
+			% [room.room_id, g.id, fid])
+		return
+	_abrir_cena(fid, "gatilho sce 5 (AOT %d)" % g.id)
+
+
+func _abrir_cena(func_id: int, motivo: String) -> bool:
+	## Abre a cinemática e entrega o corpo a ela. O que ainda é da APRESENTAÇÃO e **não** dá para
+	## fazer aqui (registrado em vez de editado, `port/present/screen.gd` não é meu):
+	##   • o FADE do `0x46` (`cena.fade_ativo` traz `abr`, `c0`, `c1`, `T` e o `t` corrente) —
+	##     é o relâmpago da rua na entrada e o escurecer de 48 ticks antes da porta;
+	##   • esconder o HUD/menu enquanto `cena_iniciada`..`cena_terminada`.
+	## A CÂMERA já funciona sem tocar em nada lá: o `screen.gd` compara `mundo.camera` com a
+	## câmera montada todo tick, e este arquivo passa a escrever nela o `cut_chg` da cena.
+	if vm == null:
+		return false
+	var c := Cena.new()
+	if not c.iniciar(vm, func_id, state):
+		push_warning("World: cena %s função %d não iniciou" % [room.room_id, func_id])
+		return false
+	## Quem ANDA é o `player.gd` (estado CENA): a `Cena` só simula o deslocamento do `0x81`
+	## quando ninguém chama `chegou()` — ver `Cena.VELOCIDADE_DECLARADA`.
+	c.simular_movimento = false
+	c.por_ator(1, 0, player.pos, player.facing)
+	cena = c
+	cena_func = func_id
+	player.entrar_em_cena(c)
+	print("[world] %s: CENA função %d ligada — %s" % [room.room_id, func_id, motivo])
+	cena_iniciada.emit(room.room_id, func_id)
+	return true
+
+
+func _fechar_cena(avisar := true) -> void:
+	var fid := cena_func
+	var viva := cena != null
+	if viva and player != null and player.cena_ir_ignorados > 0:
+		## O `0x81` com destino (0,0) — ver a nota em `Player._consumir_eventos_da_cena`.
+		cena_debitos.append(
+			"%s: cena função %d tem %d `0x81` com destino (0,0) — rotina do 0x81 não medida"
+			% [room.room_id if room != null else "?", fid, player.cena_ir_ignorados])
+	cena = null
+	cena_func = -1
+	_ancora_cena = null
+	if player != null:
+		## Fim da cena = `player+4` volta a `1`. É o que a função 37 faz (`4d 02 07 00` e
+		## `4d 01 1c 00`, apagando os dois bits que a cena acendeu).
+		player.sair_da_cena()
+	if viva and avisar:
+		cena_terminada.emit(room.room_id if room != null else "", fid)
+
+
+func _quadro_de_cena(pad: Pad) -> void:
+	## Um quadro de cinemática: a `Cena` roda as threads do script (tempo, laços, câmera, fade,
+	## ator) e o `player.gd`, no estado `CENA`, consome os eventos `anim`/`ir` e devolve a chegada
+	## por `cena.chegou(bit)`.
+	## O corpo do port entra na cena ANTES das threads: o script mexe na posição de forma
+	## relativa (`player+0x34 += 70`), então ele tem de ler o valor corrente, não o do quadro em
+	## que a cena foi aberta.
+	player.sincronizar_com_a_cena()
+	cena.quadro()
+	player.tick(pad)                             ## em CENA o pad é ignorado (a cena manda)
+	# O Y continua sendo rederivado do piso todo quadro, como no jogo normal (`0x80033b88`).
+	if room.colisao != null:
+		player.pos.y = room.colisao.floor_height(player.pos.x, player.pos.z, player.pos.y)
+	# `0x50 cut_chg` PRENDE a câmera (`gs+0x77f4 |= 0x80`, `0x800548f0`): durante a cena o RVD
+	# não decide nada. Ao terminar, a câmera fica onde a cena deixou — no `R10D` a última é a
+	# `cut_chg 0`, exatamente a que o port já usa ao entrar na sala.
+	if cena.camera >= 0 and cena.camera < room.cameras.size():
+		camera = cena.camera
+		rvd.camera = camera
+	# ★ A PORTA ROTEIRIZADA: `0x66 sce_aot_exec` disparou o AOT de porta. Sai pelo caminho normal.
+	var p := cena.porta_pedida()
+	if p != null:
+		if bool(cena.troca_de_sala.get("chegada_zerada", false)):
+			cena_debitos.append("%s: porta roteirizada (AOT %d) com chegada ZERADA no dado"
+				% [room.room_id, p.id])
+		_fechar_cena()
+		if not atravessar(p):
+			push_warning("World: a cena pediu a porta %d mas o destino não carregou" % p.id)
+		return
+	if not cena.viva():
+		print("[world] %s: cena função %d terminou em %d quadros" % [
+			room.room_id, cena_func, cena.quadro_atual])
+		_fechar_cena()
+		return
+	if cena.quadro_atual >= CENA_MAX_QUADROS:
+		cena_debitos.append("%s: cena função %d abandonada em %d quadros (rede de segurança)"
+			% [room.room_id, cena_func, cena.quadro_atual])
+		push_warning(cena_debitos[cena_debitos.size() - 1])
+		_fechar_cena()
 
 
 ## Raio de busca (unidades PS1) ao desencravar uma chegada que cai dentro de colisão.
@@ -132,14 +306,39 @@ func aplicar_chegada(porta: Aot) -> void:
 	## levantava a Jill do chão (o "flutuando" relatado).
 	if porta == null:
 		return
+	var emp: Dictionary = {}
 	if porta.to_pos != Vector3i.ZERO:
 		player.pos = _desencravar(porta.to_pos)
+	elif porta.box.size == Vector2i.ZERO:
+		# ── PORTA ROTEIRIZADA com chegada ZERADA: chegada EMPRESTADA e etiquetada ──
+		# Caixa `(0,0,0,0)` **e** chegada `(0,0,0)` é a assinatura da porta que só o script
+		# dispara (`0x66`, `cena_r10d.md` §4): 1 porta no jogo inteiro, `R10D → R101`. Aqui a
+		# posição de chegada NÃO existe no dado, e `(0,0,0)` não é ponto válido no `R101`.
+		# 🟡 O mecanismo real **não foi medido** — o candidato é o GRUPO DO RVD
+		# (`descriptor+0xb` → `gs+0x2495`, §4.2 do doc) e ninguém decodificou o RVD desse lado.
+		# Para o jogo não travar sem inventar coordenada, o port EMPRESTA a chegada de outra
+		# porta que entra na MESMA sala: é um ponto **medido** (está em `data/room_graph.json`,
+		# gerado do SCD), só não é o desta porta. Fica registrado em `cena_debitos`.
+		emp = _chegada_emprestada(porta.to_room_id())
+		if emp.is_empty():
+			player.pos = _desencravar(player.pos)
+		else:
+			player.pos = _desencravar(emp["pos"])
+			cena_debitos.append(
+				"chegada DECLARADA em %s: emprestada da porta %s (%s) — a desta porta é (0,0,0)"
+				% [porta.to_room_id(), emp["src"], emp["pos"]])
+			push_warning("World: %s" % cena_debitos[cena_debitos.size() - 1])
 	else:
 		# porta "mantém posição" (to_pos zerado — elevador/escada no mesmo ponto): a posição
 		# atual pode ser ilegal na sala NOVA; desencrava do mesmo jeito
 		player.pos = _desencravar(player.pos)
-	player.facing = PS1Math.wrap_angle(porta.to_facing)
-	camera = porta.to_cut if porta.to_cut >= 0 and porta.to_cut < room.cameras.size() else 0
+	player.facing = PS1Math.wrap_angle(int(emp["facing"]) if emp.has("facing")
+		else porta.to_facing)
+	## Com a chegada emprestada, a CÂMERA vem emprestada junto (a `to_cut` desta porta é 0, que é
+	## o valor de campo zerado — mostrar a câmera 0 com o corpo na área de outra câmera deixaria a
+	## Jill fora de quadro). No quadro seguinte o RVD reassume normalmente.
+	var cut: int = int(emp["cam"]) if emp.has("cam") else porta.to_cut
+	camera = cut if cut >= 0 and cut < room.cameras.size() else 0
 	rvd = CameraRVD.Estado.new()
 	rvd.camera = camera
 	# Carga de sala também ancora/exclui a supressora da câmera de chegada (`0x80049728`).
@@ -148,6 +347,44 @@ func aplicar_chegada(porta: Aot) -> void:
 	# específico (0..31) são todas rejeitadas e a câmera simplesmente não troca — foi o que o
 	# usuário viu na R101, cujas zonas da câmera 0 usam grupos 0x01 e 0x04.
 	rvd.grupo = porta.to_grupo
+
+
+## Grafo de portas do jogo (`tools/room_graph_build.py` + `tools/scd_door_dest.py`): 453 arestas
+## com caixa, chegada e câmera. É de onde sai a chegada EMPRESTADA da porta roteirizada.
+static var _grafo: Variant = null
+
+
+static func _chegada_emprestada(destino: String) -> Dictionary:
+	## Chegada MEDIDA de outra porta que entra em `destino` — a de menor sala de origem, para ser
+	## determinístico. 🟡 **DECLARADA como substituta**: é um ponto que o jogo comprovadamente usa
+	## para entrar nessa sala, mas **não é** a chegada da porta roteirizada (que vem `(0,0,0)`).
+	## Devolve `{}` quando não há de quem emprestar.
+	if destino == "":
+		return {}
+	if _grafo == null:
+		_grafo = AssetIO.json("room_graph.json")
+	if not (_grafo is Dictionary):
+		return {}
+	var candidatas: Array[Dictionary] = []
+	for e: Variant in (_grafo as Dictionary).get("edges", []):
+		if not (e is Dictionary):
+			continue
+		var E: Dictionary = e
+		if str(E.get("to_room_id", "")) != destino:
+			continue
+		var a: Dictionary = E.get("arrival", {})
+		if int(a.get("x", 0)) == 0 and int(a.get("z", 0)) == 0:
+			continue                             ## outra chegada zerada não serve de referência
+		candidatas.append({
+			"src": str(E.get("src", "")),
+			"pos": Vector3i(int(a.get("x", 0)), int(a.get("y", 0)), int(a.get("z", 0))),
+			"facing": int(a.get("facing", 0)),
+			"cam": int(E.get("to_camera", 0))})
+	if candidatas.is_empty():
+		return {}
+	candidatas.sort_custom(func(x: Dictionary, y: Dictionary) -> bool:
+		return str(x["src"]) < str(y["src"]))
+	return candidatas[0]
 
 
 func _desencravar(p: Vector3i) -> Vector3i:
@@ -314,6 +551,15 @@ func tick(pad: Pad) -> void:
 	## `player+0x46` = ARMA EQUIPADA, e a mira exige `!= 0` (`0x80039714`: `lbu v0,0x46`). O port
 	## guarda aqui o **item id** da arma equipada — o índice `w` do EXE não tem tabela achada
 	## (ver `tools/exe_aim_shoot.py`), e para o teste de "tem arma" o id serve igual.
+	##
+	## ── CINEMÁTICA DE SCRIPT primeiro (as três linhas da §6.2 de `cena_r10d.md`) ──
+	## Enquanto uma cena vive, o mundo é dela: nada de pad, nada de RVD, nada de porta/item. É o
+	## equivalente ao `task_suspend` que o motor faz com a task do jogo.
+	if cena == null:
+		_procurar_gatilho_de_cena()
+	if cena != null:
+		_quadro_de_cena(pad)
+		return
 	var eq := state.equipped_item_id()
 	player.equipped_weapon = eq if Itens.categoria(eq) == Itens.CAT_ARMA else 0
 	_banco_da_arma(eq)
@@ -393,7 +639,7 @@ func carregar_save(caminho: String) -> bool:
 		return false
 	var M: Dictionary = m
 	var sala := str(M.get("sala", ""))
-	if sala == "" or not carregar(sala):
+	if sala == "" or not carregar(sala, false):     ## load de save não reprisa a cinemática
 		return false
 	var p: Array = M.get("pos", [0, 0, 0])
 	if p.size() >= 3:

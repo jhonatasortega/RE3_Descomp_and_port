@@ -11,7 +11,11 @@
 >
 > **Código:** [`port/script_vm/cena.gd`](../../../port/script_vm/cena.gd) (novo) +
 > os opcodes de cena em [`port/script_vm/vm.gd`](../../../port/script_vm/vm.gd).
-> **Teste:** `port/dev/tests/test_cena.gd` (108 asserts).
+> **Engate no jogo (§9):** [`port/room/world.gd`](../../../port/room/world.gd) +
+> [`port/actors/player.gd`](../../../port/actors/player.gd) — ✅ **as duas cenas rodam no jogo e a
+> saída troca de sala**.
+> **Teste:** `port/dev/tests/test_cena.gd` (108 asserts) + `test_cena_world.gd` (46) = 154 no
+> filtro `-- cena`.
 > **Sonda:** `port/dev/dump_cena.gd` (imprime a linha do tempo).
 > **Tabela de opcodes:** `tools/scd_decode.py` (`OPCODE_SEM`) → `port/data/scd_opcodes.json`.
 
@@ -314,7 +318,7 @@ do `R10D` não passa pela rotina 9 nem pelo agregador de objetos:
 `subir.gd`: ele continua sendo a rotina 9 de verdade, e as salas onde ela mostra algo continuam
 sendo `R210`, `R219`, `R315` e `R50D`.
 
-### 6.1 O que o `player.gd` (que não é meu) precisa ganhar
+### 6.1 O que o `player.gd` (que não é meu) precisa ganhar — ✅ **LIGADO** (ver §9)
 
 Um estado **`CENA`** para a **ação 4**, dirigido de fora, com quatro pontos:
 
@@ -331,7 +335,7 @@ Um estado **`CENA`** para a **ação 4**, dirigido de fora, com quatro pontos:
 4. **Sair:** quando `cena.viva()` virar `false`, `player+4` volta a `1` (é o que a função 37
    faz: `4d 02 07 00` e `4d 01 1c 00`, apagando os dois bits que a cena acendeu).
 
-### 6.2 O que falta em `world.gd` (que também não é meu) — três linhas
+### 6.2 O que falta em `world.gd` (que também não é meu) — ✅ **LIGADO** (ver §9)
 
 ```gdscript
 # 1) por quadro, procurar o gatilho de evento
@@ -379,7 +383,7 @@ O mesmo vale para a cena de ENTRADA, que não tem gatilho: basta
 
 ---
 
-## 8. Como reproduzir
+## 8. Como reproduzir (ver também §9.6)
 
 ```bash
 # a linha do tempo das duas cenas
@@ -398,3 +402,107 @@ NOSTALGIA_OUT=port python tools/scd_export.py
 # o disassembly cru de uma função (o que gerou este doc)
 python tools/scd_decode.py extracted/ntsc-u/CD_DATA/STAGE1/R10D.ARD
 ```
+
+---
+
+## 9. ⭐ O ENGATE — as duas cenas rodando NO JOGO (2026-08-08)
+
+> **O que este bloco fecha:** o §6.1/§6.2 eram receita; agora estão **ligados**. Rodando o port
+> em `R10D`, a cinemática de entrada roda e devolve o controle na câmera 0, e andar até a caixa a
+> oeste roda a de saída e **troca para `R101` pelo caminho normal de porta**. Era o
+> "não consigo sair da primeira sala".
+>
+> **Código:** [`port/room/world.gd`](../../../port/room/world.gd) (gatilho, quadro, câmera,
+> porta) + [`port/actors/player.gd`](../../../port/actors/player.gd) (estado `CENA` = **ação 4**).
+> **Teste:** `port/dev/tests/test_cena_world.gd` (46 asserts, roda no filtro `-- cena`, que passa
+> a somar **154**). `-- world` (as 453 portas + 40 salas com ida e volta) segue verde, e a suíte
+> inteira também (1913 asserts).
+
+### 9.1 Onde cada peça entrou
+
+| peça | onde | o que faz |
+|---|---|---|
+| cena de ENTRADA | `World.carregar()` → `_abrir_cena_de_entrada()` | abre a função 7 depois do `executar(0)` |
+| gatilho `sce 5` | `World.tick()` → `_procurar_gatilho_de_cena()` | `Cena.gatilho_de_evento()` + âncora anti-redisparo (a mesma ideia de `_ancora_porta`) |
+| quadro | `World._quadro_de_cena()` | sincroniza o corpo, roda `cena.quadro()`, roda o player, escreve `world.camera` |
+| porta | idem | `cena.porta_pedida()` → `atravessar()` |
+| corpo | `Player` estado `Acao.CENA` | consome `anim`/`ir`, chama `cena.chegou(bit)`, escolhe o clipe |
+| banco 4 | `World.carregar()` | zerado na carga, como o motor faz (`0x80052350 sw $zero, 0x7888($s0)`) |
+
+Duas coisas **não** precisaram de `present/screen.gd`: a **câmera** (o `screen.gd` já compara
+`mundo.camera` com a montada todo tick, e agora é a cena que escreve nela) e o **clipe** (ele já
+toca `player.clipe_atual()`). O que **falta** lá está em §9.5.
+
+### 9.2 As decisões DECLARADAS deste engate (nenhuma medição nova)
+
+1. **Só as cenas provadas estão ligadas.** `World.CENAS_LIGADAS = {"R10D": {entrada 7,
+   gatilhos [11]}}`. Medi que existem **135 gatilhos `sce 5` em 58 salas** (varredura das 169 com
+   `executar(0)`); ligar todos faria o port rodar funções cujos opcodes não têm semântica (§7) e
+   prender o jogador — algumas caixas cobrem a sala inteira (`R30E` tem uma de 24980×24900).
+   As outras 134 seguem **inertes, como já estavam**, e o port imprime qual função ignorou.
+2. **A velocidade do `0x81`** continua a de §7-1: `VEL_ANDAR = 78`, o mesmo número de
+   `Cena.VELOCIDADE_DECLARADA`. Quem anda é o `player.gd` (`Cena.simular_movimento = false`) e é
+   ele que chama `chegou(bit)`.
+3. **O clipe** é `anim%02d` (banco do `PL00.PLD`), o mesmo de-para de `subir.gd`. As **SEQ 8 e 10
+   não estão no par provado 6/7** e `animacoes_player.md` rotula as duas **por render**: ficam
+   declaradas. Qual banco o motor usa (`animNN` vs `armNN`) segue em aberto, como em `subir.gd`.
+4. **Durante o `0x81` o port toca `arm00`** (o andar armado) e **vira o corpo para o rumo do
+   passo**: o opcode carrega uma ROTINA (`byte@+2`), e a jump-table de movimento `0x80010be8`
+   não foi decodificada.
+5. **A chegada da porta roteirizada é EMPRESTADA e etiquetada.** §4.2 continua valendo: a chegada
+   é `(0,0,0)` no dado e o mecanismo real (grupo do RVD, `descriptor+0xb`) **não foi medido**. Em
+   vez de inventar coordenada, `World.aplicar_chegada()` reconhece a assinatura "caixa `(0,0,0,0)`
+   **e** chegada `(0,0,0)`" — **1 porta no jogo inteiro** — e empresta a chegada de outra porta que
+   entra na mesma sala (`data/room_graph.json`): `R100 → R101` em **(-18808,-7200,-11475)**, câmera
+   6. É um ponto **medido** (o jogo entra ali), só **não é o desta porta**. Fica registrado em
+   `world.cena_debitos` e o teste cobra o registro.
+6. **Rede de segurança**: `World.CENA_MAX_QUADROS = 4000` (≈2 min a 30 Hz). A saída mede 834
+   quadros e a entrada 260, então isto só age se uma thread ficar presa num `while`.
+7. **Load de save não reprisa cinemática**: `carregar(sala, com_cena = false)`.
+
+### 9.3 ⚠ ACHADO NOVO — o `0x81` da ENTRADA vem com destino `(0,0)`
+
+A §5.1 não registrava nenhum movimento do player na cena de entrada. Rodando o engate:
+
+```
+q 128..147   translação MANUAL do player: +22 em X e -98 em Z por 20 quadros (com a SEQ 20)
+q 218        0x81 no PLAYER: rotina 6, bit 32, destino x=0 z=0     ← campo ZERADO
+```
+
+O destino `(0,0)` é o **mesmo padrão** da chegada da porta roteirizada: campo que o motor não usa
+por aquele caminho. Andar até `(0,0)` arrasta a Jill ~1500 unidades para fora do beco (medido no
+engate). Como a rotina do `0x81` não está decodificada, o port **não anda e não acende o bit**,
+conta em `player.cena_ir_ignorados` e registra a dívida — e a cena fecha nos **mesmos 260
+quadros** com ou sem esse bit (nenhuma thread da entrada o espera). Os 20 quadros de translação
+manual, esses, são escrita explícita do script e o port os aplica.
+
+### 9.4 O que ficou PROVADO pelo engate (e não era óbvio)
+
+- a linha do tempo da §5.2 se confirma quadro a quadro pelo caminho do jogo: câmeras
+  `4→5→4→6→7→8→9` e as SEQ **8, 7, 4, 9, 5, 6, 10** nessa ordem;
+- **o subir aparece de verdade**: os 10 quadros de `+70` em X / `+40` em Z e os 10 de `+5` em X
+  saem do script e movem o corpo (o teste conta os 20 quadros, um a um). Medido no jogo:
+  `(-14070,-13753)` → `(-13320,-13353)`, exatamente `+750` X e `+400` Z;
+- a porta do `0x66` entra no `atravessar()` de sempre: `[screen] porta: R10D -> R101`.
+
+### 9.5 O que ainda é da APRESENTAÇÃO (`port/present/screen.gd` não é meu)
+
+1. **O fade do `0x46`** não é desenhado. `cena.fade_ativo` já traz `abr`, `c0`, `c1`, `T` e o `t`
+   corrente por quadro — é o relâmpago da rua na entrada (2 fades aditivos de 4 e 16 ticks) e o
+   escurecer de 48 ticks antes da porta. O `world.gd` emite `cena_iniciada`/`cena_terminada` para
+   quem quiser ligar isso (e esconder o HUD durante a cena).
+2. **Som da cena**: `0x55`/`0x56` seguem só registrados (§7-5).
+3. Se um dia a câmera precisar de tratamento próprio durante a cena (ela hoje entra pelo
+   `mundo.camera` normal), é lá que muda — aqui não se mexeu.
+
+### 9.6 Como reproduzir o engate
+
+```bash
+godot --headless --audio-driver Dummy --path port \
+    --script res://dev/run_tests.gd -- cena      # 154 asserts (108 da Cena + 46 do engate)
+godot --headless --audio-driver Dummy --path port \
+    --script res://dev/run_tests.gd -- world     # as 453 portas + 40 salas ida/volta
+```
+
+No jogo: entre no `R10D` (é a sala inicial do `screen.gd`), veja a abertura devolver o controle na
+câmera 0 e ande para **oeste** até a caixa `x[-8585..-5285] z[-15000..-11300]`.

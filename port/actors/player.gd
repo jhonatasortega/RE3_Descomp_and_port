@@ -41,7 +41,7 @@ const GIRO_POR_FRAME := 39
 ## Quick-turn do RE clássico: 180° em ~0,25 s = ~8 ticks -> 2048/8 = 256 unidades por tick
 const QUICKTURN_POR_FRAME := 256
 
-enum Acao { PARADO, ANDANDO, CORRENDO, RE, GIRANDO, QUICKTURN, MIRANDO }
+enum Acao { PARADO, ANDANDO, CORRENDO, RE, GIRANDO, QUICKTURN, MIRANDO, CENA }
 
 var pos := Vector3i.ZERO                  ## unidades PS1 (y = chão)
 var facing := 0                           ## ângulo PS1 de 12 bits
@@ -203,6 +203,15 @@ func velocidade_do_tick(clipe: String, media: int) -> int:
 func tick(pad: Pad) -> void:
 	## Um passo de gameplay (30 Hz). Tank controls: frente/ré andam na direção atual,
 	## esquerda/direita GIRAM no lugar, correr só vale para frente.
+	##
+	## ── AÇÃO 4 (roteirizada) vem ANTES de tudo ──
+	## Numa cinemática de script o corpo não é do jogador: o motor põe `player+4 = (rotina<<8)|4`
+	## e o script escreve a animação e a posição. Ver `_tick_cena`.
+	if cena != null:
+		if cena.viva():
+			_tick_cena()
+			return
+		sair_da_cena()
 	var frente := pad.pressed(Pad.FWD)
 	var re := pad.pressed(Pad.BACK)
 	var correr := pad.pressed(Pad.RUN)
@@ -299,6 +308,197 @@ func _set_acao(a: Acao) -> void:
 		frame_da_acao = 0
 
 
+# ═══════════════ ESTADO CENA — a AÇÃO 4 do motor, "roteirizada" (0x80056dc0) ═══════════════
+# Durante uma cinemática de script quem dirige o corpo é a `Cena` (`port/script_vm/cena.gd`),
+# que roda as threads do SCD da sala. No motor isso é `player+4 = (rotina << 8) | 4` — **ação
+# 4** — com o índice de sequência do EDD escrito DIRETO em `player+0xc8`; não há detecção de
+# contato nem gate de colisão (é o que permite a Jill subir na lixeira do `R10D`, onde nenhum
+# objeto é escalável). Os quatro pontos da §6.1 de `docs/decomp/notes/cena_r10d.md`:
+#
+#   1. ENTRAR   `entrar_em_cena()` — o pad deixa de ser lido, a cena manda;
+#   2. CLIPE    evento `anim` -> `cena_seq` (o `player+0xc8`) -> clipe `anim%02d`;
+#   3. ANDAR    evento `ir` -> anda até (x,z) e chama **`cena.chegou(bit)`** na chegada, que é o
+#               que acende o bit do banco 4 e solta o `while (não flag)` da thread (§3.2);
+#   4. SAIR     `sair_da_cena()` — `player+4` volta a `1`, como faz a função 37.
+
+## Chave do WORK do player na `Cena`: `0x47 01 00` = tabela `0x80010b60` entrada 1
+## (`*(0x800ccd94)` = o player) com `n = 0`.
+const CENA_WORK_PLAYER := "1:0"
+## Membro `0x0d` = `player+0x6e` = ÂNGULO (a cena gira o corpo por aqui: `41 0d …`).
+const CENA_MEMBRO_ANGULO := 0x0D
+## De-para SEQ do EDD -> clipe, o MESMO que `subir.gd` usa: `anim%02d` = as 22 sequências do
+## banco embutido no `PL00.PLD`.
+## 🟡 **DECLARADO, e com uma ressalva honesta**: a cena de saída do `R10D` pede as SEQ
+## **8, 7, 4, 9, 5, 6 e 10** nessa ordem, e só o par **6/7** está PROVADO (`subir.gd` §3, pelos
+## stores `0x8003b39c`/`0x8003b3c4`). As **SEQ 8 e 10 não estão nesse par** e
+## `docs/formatos/animacoes_player.md` rotula as duas **por render, não por prova** (8 =
+## "abaixar e apanhar", 10 = "correr"). Qual dos dois bancos o motor usa aqui — `animNN` do PLD
+## ou `armNN` (banco 0 do PLW) — também segue em aberto, exatamente como em `subir.gd`.
+const CENA_CLIPE_FMT := "anim%02d"
+## Enquanto o `0x81` leva o corpo até um ponto, o script **não** manda SEQ: o opcode carrega uma
+## ROTINA (`byte@+2`) e a tabela de animação por rotina não foi decodificada. O port toca o andar
+## armado. **DECLARADO** (escolha do port, não medição).
+const CENA_CLIPE_ANDAR := "arm00"
+
+## Cinemática que está dirigindo o corpo, ou `null`. Instalada pelo `world.gd`.
+var cena: Cena = null
+## O `player+0xc8` que o `0x80` gravou (-1 = nenhum).
+var cena_seq := -1
+## O `byte@+1` do `0x80` / `byte@+2` do `0x81`: a ROTINA que o motor põe no byte alto de
+## `player+4`. Guardado para diagnóstico — a tabela de animação por rotina não foi medida.
+var cena_rotina := 0
+## Destino do `0x81` (`w+0xd4`/`w+0xd6`) e o BIT do banco 4 a acender na chegada (`w+0x146`).
+var cena_destino := Vector3i.ZERO
+var cena_bit := -1
+## Quantos `0x81` foram IGNORADOS por vir com destino (0,0) — ver `_consumir_eventos_da_cena`.
+var cena_ir_ignorados := 0
+var _cena_lidos := 0                      ## eventos da linha do tempo já consumidos
+var _cena_espelho := Vector3i.ZERO        ## o que este tick escreveu na cena no quadro anterior
+var _cena_espelho_ang := 0
+var _cena_tem_espelho := false
+
+
+func entrar_em_cena(c: Cena) -> void:
+	cena = c
+	cena_seq = -1
+	cena_rotina = 0
+	cena_bit = -1
+	cena_destino = Vector3i.ZERO
+	cena_ir_ignorados = 0
+	_cena_lidos = 0
+	_cena_tem_espelho = false
+	_set_acao(Acao.CENA)
+
+
+func sair_da_cena() -> void:
+	## Fim da cena: `player+4 = 1` (a função 37 do `R10D` apaga os dois bits que a cena acendeu,
+	## `4d 02 07 00` e `4d 01 1c 00`). O corpo volta ao repouso e o pad volta a valer.
+	if cena == null:
+		return
+	cena = null
+	cena_seq = -1
+	cena_rotina = 0
+	cena_bit = -1
+	_cena_tem_espelho = false
+	_set_acao(Acao.PARADO)
+
+
+func em_cena() -> bool:
+	return cena != null
+
+
+func sincronizar_com_a_cena() -> void:
+	## Instala a posição/ângulo do port no ator da cena **antes** de as threads rodarem, e guarda
+	## o espelho. É obrigatório porque o script mexe na posição de forma RELATIVA (`0x42` →
+	## `0x20` → `0x41`, isto é `player+0x34 += k`): se a cena tiver sido aberta antes de o spawn
+	## ser aplicado — é o caso da cinemática de ENTRADA, que abre na carga da sala — o `+=` do
+	## primeiro quadro sairia de uma posição velha e o corpo apareceria no lugar errado.
+	if cena == null:
+		return
+	cena.por_ator(1, 0, pos, facing)
+	_cena_espelho = pos
+	_cena_espelho_ang = facing
+	_cena_tem_espelho = true
+
+
+func _tick_cena() -> void:
+	if acao != Acao.CENA:
+		_set_acao(Acao.CENA)
+	# 1) POSIÇÃO/ÂNGULO que o SCRIPT escreveu à mão nos membros (`0x40`/`0x41` sobre `0x09`/`0x0b`
+	#    /`0x0d`). É assim que a subida do `R10D` acontece: 10 quadros de `+70` em X e `+40` em Z,
+	#    mais 10 de `+5` em X — `cena_r10d.md` §6.3. Só se aceita o valor da cena quando ele MUDOU
+	#    em relação ao que este tick escreveu no quadro anterior; senão o dono da posição continua
+	#    sendo o port (a cena de entrada, por exemplo, é aberta na carga da sala, antes de o spawn
+	#    ser aplicado — sem esta guarda o corpo saltaria para a posição velha).
+	var p: Vector3i = cena.ator_pos(1, 0)
+	if _cena_tem_espelho and (p.x != _cena_espelho.x or p.z != _cena_espelho.z):
+		pos.x = p.x
+		pos.z = p.z
+	var ang: int = cena.membro_get(1, 0, CENA_MEMBRO_ANGULO)
+	if _cena_tem_espelho and ang != _cena_espelho_ang:
+		facing = PS1Math.wrap_angle(ang)
+	# 2) eventos novos da linha do tempo (só os do WORK do player)
+	_consumir_eventos_da_cena()
+	# 3) o deslocamento do `0x81`
+	if cena_bit >= 0:
+		_andar_na_cena()
+	# 4) devolve o corpo para a cena: as threads leem X/Z/ângulo por `member_get` para decidir o
+	#    que já aconteceu. E guarda o espelho para a comparação do próximo quadro.
+	cena.por_ator(1, 0, pos, facing)
+	_cena_espelho = pos
+	_cena_espelho_ang = facing
+	_cena_tem_espelho = true
+	frame_da_acao += 1
+
+
+func _consumir_eventos_da_cena() -> void:
+	var evs: Array[Dictionary] = cena.eventos
+	while _cena_lidos < evs.size():
+		var e: Dictionary = evs[_cena_lidos]
+		_cena_lidos += 1
+		if str(e.get("work", "")) != CENA_WORK_PLAYER:
+			continue                          ## `anim`/`ir` de outro ator (as 5 entidades da rua)
+		match str(e.get("tipo", "")):
+			"anim":
+				cena_seq = int(e.get("seq", -1))
+				cena_rotina = int(e.get("rotina", 0))
+				frame_da_acao = 0
+			"ir":
+				# NÃO cancela um `ir` anterior por causa de um `anim`: no motor o `0x80` só
+				# escreve `+0xc8`/`+4`, o destino do `0x81` (`+0xd4`/`+0xd6`) continua lá.
+				var dx := int(e.get("x", 0))
+				var dz := int(e.get("z", 0))
+				if dx == 0 and dz == 0:
+					## ⚠ **ACHADO DO ENGATE** (não estava no doc): o `0x81` que a cena de ENTRADA
+					## do `R10D` manda para o player no quadro 218 vem com destino **(0,0)** e
+					## `rotina 6` — campo ZERADO, o mesmo padrão da chegada da porta roteirizada.
+					## Andar até (0,0) arrasta a Jill ~1500 unidades para FORA do beco (medido no
+					## engate). A ROTINA do `0x81` (`byte@+2`, jump-table `0x80010be8`) **não foi
+					## decodificada**, então aqui o port não anda e não acende o bit: só conta.
+					## Nenhuma thread da entrada espera por esse bit — a cena fecha nos mesmos
+					## 260 quadros com ou sem ele (medido).
+					cena_ir_ignorados += 1
+					continue
+				cena_rotina = int(e.get("rotina", 0))
+				cena_bit = int(e.get("bit", 0))
+				cena_destino = Vector3i(dx, pos.y, dz)
+				frame_da_acao = 0
+
+
+func _andar_na_cena() -> void:
+	## O `0x81` (`0x80056e5c`) grava só DESTINO e rotina; a velocidade sai de uma tabela por
+	## classe (`0x8009e52c`/`0x8009e5cc`, indexada por `w+0x4a`) que **não foi decodificada**.
+	## 🟡 Uso `VEL_ANDAR` (78) — o mesmo número de `Cena.VELOCIDADE_DECLARADA`, para não haver
+	## dois no port. **Sem colisão**: a cena carrega o corpo por cima do cenário (ela até apaga o
+	## gate `player+0x12d`, §6.4), então aqui não passa pelo `_mover`.
+	var dx := cena_destino.x - pos.x
+	var dz := cena_destino.z - pos.z
+	var d := int(sqrt(float(dx * dx + dz * dz)))
+	if d <= VEL_ANDAR:
+		pos.x = cena_destino.x
+		pos.z = cena_destino.z
+		var bit := cena_bit
+		cena_bit = -1
+		## O que o motor faz na chegada: `0x800169f0  jal 0x800788dc` com `a0 = 0x800d1fc0`
+		## (banco 4) e `a1 = w+0x146` — acende o bit e solta o `while (não flag)` da thread.
+		cena.chegou(bit)
+		return
+	## O corpo olha para onde anda. **DECLARADO**: o `0x81` tem uma rotina de giro que eu não
+	## decodifiquei. `facing = 0` aponta para -Z, então o Z entra NEGADO em `angle_of_xz`.
+	facing = PS1Math.angle_of_xz(dx, -dz)
+	pos.x += dx * VEL_ANDAR / d
+	pos.z += dz * VEL_ANDAR / d
+
+
+func clipe_da_cena() -> String:
+	## Clipe do quadro corrente de cinemática. Ver `CENA_CLIPE_FMT` para o que é declarado aqui.
+	if cena_bit >= 0:
+		return CENA_CLIPE_ANDAR
+	if cena_seq < 0:
+		return "arm02"                        ## sem SEQ ainda: idle armado
+	return CENA_CLIPE_FMT % cena_seq
+
+
 ## Resolver de colisão da sala (Collision.resolver). Injetado pelo World ao trocar de sala.
 var resolver: Callable = Callable()
 
@@ -345,6 +545,9 @@ func _livre(x: int, z: int) -> bool:
 func clipe_atual() -> String:
 	## Clipe de animação da ação atual (bancos ARMADOS: a Jill anda sempre com arma).
 	match acao:
+		Acao.CENA:
+			## AÇÃO 4: quem escolhe o clipe é o script (`0x80` -> `player+0xc8`).
+			return clipe_da_cena()
 		Acao.ANDANDO:
 			return "arm00"
 		Acao.CORRENDO:
