@@ -260,7 +260,10 @@ func _process(_dt: float) -> void:
 	_frente.offset = global_position
 	# Tela modal aberta (status/arquivo): a camada da frente ficaria POR CIMA dela.
 	# (escondo os nós de dentro, não o `CanvasLayer`, para não depender da versão)
-	var ver := not _modal_aberto()
+	# `visible` deste nó também vale para a camada da frente: um `CanvasLayer` NÃO herda a
+	# visibilidade do pai, e sem isto "apagar o fogo" (o A/B dos scripts de `dev/`) deixava
+	# as chamas da frente acesas.
+	var ver := visible and not _modal_aberto()
 	_frente_raiz.visible = ver
 	_frente_cobre.visible = ver
 
