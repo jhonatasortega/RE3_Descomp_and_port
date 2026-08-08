@@ -60,6 +60,7 @@ var world: SubViewport
 var esp: EspBrilho
 var menu: MenuStatus
 var menu_arquivo: MenuArquivo
+var _mouse_antes := false               ## borda do botão esquerdo (clique = toque no menu)
 var cam3d: Camera3D
 var sun: DirectionalLight3D
 var room: RoomData
@@ -158,6 +159,13 @@ func _on_tick(_frame: int) -> void:
 	# No jogo, abrir o menu SUSPENDE a task do mundo (`task_suspend(0)` em `0x8006d97c`) e
 	# retomá-la é o `task_resume(0)` de `0x8006e248` — os dois únicos sítios do EXE. Aqui isso é
 	# "não chamar `mundo.tick`": o mundo congela no estado exato, que é o comportamento certo.
+	## CLIQUE/TOQUE no menu: vem antes do `ACAO` porque o botão esquerdo do mouse também alimenta
+	## esse bit. `menu.clicar` seleciona no 1º clique e confirma no 2º no mesmo lugar.
+	if menu != null and menu.aberto and _clique():
+		if menu.clicar(_ponto_menu()) != "":
+			menu.avancar()
+			_atualizar_hud()
+			return
 	if menu_arquivo != null and menu_arquivo.aberto:
 		menu.queue_redraw()               ## a moldura desenha a grade de documentos
 		if pad.just_pressed(Pad.ACAO):
@@ -563,6 +571,21 @@ func _montar_hud() -> void:
 	hud.add_theme_color_override("font_color", Color(1, 1, 0.6))
 	hud.add_theme_font_size_override("font_size", 18)
 	cl.add_child(hud)
+
+
+func _clique() -> bool:
+	## Borda de subida do botão esquerdo (ou do toque). Guarda o estado entre ticks.
+	var agora := Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+	var subiu := agora and not _mouse_antes
+	_mouse_antes = agora
+	return subiu
+
+
+func _ponto_menu() -> Vector2:
+	## Ponteiro no espaço 320×240 do menu (o nó tem escala 4).
+	if menu == null:
+		return Vector2(-1, -1)
+	return menu.to_local(menu.get_global_mouse_position())
 
 
 func _atualizar_hud() -> void:

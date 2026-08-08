@@ -89,22 +89,44 @@ func abrir() -> void:
 	## `0x800d212c` que o handler de "ler arquivo" acende (kind 3 do menu); o port ainda não
 	## acompanha esse bit, então lista os documentos cujo ITEM está no inventário (categoria 7 =
 	## arquivo no descritor). Declarado: é subconjunto do critério real, não invenção.
-	docs = []
-	var todos: Array = _dados.get("documentos", [])
-	for d: Dictionary in todos:
-		var item := int(d.get("item_id", 0))
-		## Entra na lista quem já foi **LIDO** (pegar do chão conta; os dois iniciais precisam de
-		## USAR) — regra apontada pelo usuário. Antes eu listava quem estivesse no inventário, e
-		## por isso as Instruções A/B apareciam sem nunca terem sido abertas.
-		if _state != null and _state.arquivo_lido(item):
-			docs.append(d)
-	if docs.is_empty() and OS.get_environment("ARQ_TODOS") != "":
-		docs = todos.duplicate()               ## modo de inspeção dos diags
+	## ── A GRADE TEM SLOT FIXO POR DOCUMENTO ──
+	## O usuário apontou duas coisas: no jogo os documentos têm posição fixa, e **o cursor anda pela
+	## grade mesmo com slot vazio**. Então `docs` é a lista COMPLETA dos 31 documentos, na ordem do
+	## `FILEGU` (que é a ordem do atlas `FILEI`, já confirmada pela semântica dos ícones), e o que
+	## muda por documento é ter sido **LIDO** ou não: lido mostra o ícone, não lido mostra o `VAZIO`.
+	## Só entra na leitura quem foi lido — pegar do chão conta, e os dois iniciais (`0x83`/`0x84`)
+	## precisam de USAR.
+	docs = (_dados.get("documentos", []) as Array).duplicate()
 	sel = 0
 	pagina = 0
 	lendo = false
 	aberto = true
 	visible = true
+	queue_redraw()
+
+
+func lido(i: int) -> bool:
+	## O documento do slot `i` já foi lido? (é o que decide ícone × VAZIO e se dá para abrir)
+	if i < 0 or i >= docs.size() or _state == null:
+		return false
+	return _state.arquivo_lido(int((docs[i] as Dictionary).get("item_id", 0)))
+
+
+func n_lidos() -> int:
+	var n := 0
+	for i in docs.size():
+		if lido(i):
+			n += 1
+	return n
+
+
+func ir_para_doc(doc: int) -> void:
+	## Cursor no slot do documento e abre a LEITURA (é o que USAR faz).
+	if doc < 0 or doc >= docs.size():
+		return
+	sel = doc
+	lendo = true
+	pagina = 0
 	queue_redraw()
 
 
@@ -141,6 +163,7 @@ func mover_grade(dx: int, dy: int) -> void:
 	##     captura mostra: seta verde `▶` à direita na página 1 e `◀` à esquerda na página 2.
 	if not aberto or lendo or docs.is_empty():
 		return
+	## Anda por SLOT, não por documento lido — a grade é fixa, então o cursor passa pelos vazios.
 	var por_pagina := COLUNAS_GRADE * LINHAS_GRADE
 	var pag := sel / por_pagina
 	var idx := sel % por_pagina
@@ -193,9 +216,11 @@ func confirmar() -> void:
 		return
 	if lendo:
 		fechar()
-	else:
+	elif lido(sel):
 		lendo = true
 		pagina = 0
+	else:
+		ultima_acao = "slot vazio: documento ainda não foi lido"
 	queue_redraw()
 
 
@@ -215,7 +240,7 @@ func _draw() -> void:
 	if not aberto or not lendo:
 		return
 	draw_rect(Rect2(0, 0, 320, 240), Color.BLACK)
-	if docs.is_empty():
+	if docs.is_empty() or not lido(sel):
 		return
 	_desenhar_pagina(docs[sel])
 

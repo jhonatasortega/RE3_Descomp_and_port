@@ -522,7 +522,7 @@ func _desenhar_arquivo(t: float) -> void:
 		var idx := base + i
 		var cx := ARQ_ORIGEM.x + (i % ARQ_COLUNAS) * ARQ_CELULA.x
 		var cy := ARQ_ORIGEM.y + int(i / ARQ_COLUNAS) * ARQ_CELULA.y
-		if idx < docs.size():
+		if idx < docs.size() and bool(arquivo.call("lido", idx)):
 			var doc: Dictionary = docs[idx]
 			var tex: Texture2D = arquivo.call("icone_do_doc", doc)
 			if tex != null:
@@ -556,7 +556,7 @@ func _desenhar_arquivo(t: float) -> void:
 		Texto.desenhar_seta(self, Texto.SETA_DIREITA,
 			Vector2i(ARQ_ORIGEM.x - 15, y_seta), COR_SETA, 1.0, true)
 	# nome do documento selecionado, na faixa de baixo do painel
-	if sel < docs.size():
+	if sel < docs.size() and bool(arquivo.call("lido", sel)):
 		Texto.desenhar(self, String(arquivo.call("nome_do_doc", docs[sel])),
 			Vector2i(ARQ_PAINEL[0] + 8, ARQ_PAINEL[1] + ARQ_PAINEL[3] - 18))
 
@@ -656,6 +656,77 @@ func _desenhar_submenu(t: float) -> void:
 			y + 2 + int((14.0 - 14.0 * esc) / 2.0)), 0, Color.WHITE, esc)
 
 
+## ── CLIQUE / TOQUE ──
+## Pedido do usuário, pensando no port de celular: **clicar seleciona**. A regra é a de toque:
+## o 1º clique move o cursor para o que está embaixo do ponteiro, e o 2º clique no MESMO lugar
+## confirma (abre o submenu, ativa o botão, entra no documento). As caixas de acerto são as mesmas
+## do desenho, então não há número novo aqui — é a geometria já medida.
+func clicar(p: Vector2) -> String:
+	if not aberto or _anim > 0:
+		return ""
+	# tela de ARQUIVO por cima: grade de documentos ou página aberta
+	if arquivo != null and bool(arquivo.get("aberto")):
+		if bool(arquivo.get("lendo")):
+			## metade direita avança, metade esquerda volta (é onde ficam as setas verdes)
+			arquivo.call("virar_pagina", 1 if p.x > 160 else -1)
+			return "página"
+		var cel := _celula_arquivo(p)
+		if cel < 0:
+			return ""
+		var por := ARQ_COLUNAS * ARQ_LINHAS
+		var pag: int = int(arquivo.get("sel")) / por
+		var alvo := pag * por + cel
+		if alvo == int(arquivo.get("sel")):
+			arquivo.call("confirmar")
+			return "abriu documento"
+		arquivo.set("sel", alvo)
+		arquivo.call("queue_redraw")
+		return "documento %d" % alvo
+	# submenu aberto: as três placas
+	if not sub_itens.is_empty():
+		for i in sub_itens.size():
+			var y: int = SUB_LINHA_Y[i] if i < SUB_LINHA_Y.size() else SUB_LINHA_Y[-1] + 20 * i
+			if Rect2(159, y, 56, 16).has_point(p):
+				if sub_sel == i:
+					return confirmar()
+				sub_sel = i
+				queue_redraw()
+				return "submenu %d" % i
+		return ""
+	# botões SAIR / ARQ. / MAPA
+	for i in PLACAS.size():
+		var b: Array = PLACAS[i]
+		if Rect2(float(b[0]), float(b[1]), float(b[2]), 16.0).has_point(p):
+			if selecao_botao == i:
+				return confirmar()
+			selecao_botao = i
+			queue_redraw()
+			return "botão %d" % i
+	# grade de itens (2 colunas × 5 linhas de 40×30 em (224,66))
+	var gx := int((p.x - GRADE_ORIGEM.x) / CELULA.x)
+	var gy := int((p.y - GRADE_ORIGEM.y) / CELULA.y)
+	if p.x >= GRADE_ORIGEM.x and p.y >= GRADE_ORIGEM.y 			and gx >= 0 and gx < GRADE_COLUNAS and gy >= 0 and gy < GRADE_LINHAS:
+		var slot := gy * GRADE_COLUNAS + gx
+		if slot == cursor and selecao_botao < 0:
+			return confirmar()
+		cursor = slot
+		selecao_botao = -1
+		queue_redraw()
+		return "slot %d" % slot
+	return ""
+
+
+func _celula_arquivo(p: Vector2) -> int:
+	## Célula 0..14 da grade de documentos sob o ponto, ou -1.
+	var cx := int((p.x - ARQ_ORIGEM.x) / ARQ_CELULA.x)
+	var cy := int((p.y - ARQ_ORIGEM.y) / ARQ_CELULA.y)
+	if p.x < ARQ_ORIGEM.x or p.y < ARQ_ORIGEM.y:
+		return -1
+	if cx < 0 or cx >= ARQ_COLUNAS or cy < 0 or cy >= ARQ_LINHAS:
+		return -1
+	return cy * ARQ_COLUNAS + cx
+
+
 func confirmar() -> String:
 	## Enter/ação. Devolve o que aconteceu (também fica em `ultima_acao`).
 	if not aberto or _anim > 0:
@@ -733,11 +804,14 @@ func _usar() -> String:
 	var id := int(slot.get("id", 0))
 	## USAR num DOCUMENTO = ler: marca no arquivo e abre a leitura naquele documento. É o que faz
 	## as Instruções A/B entrarem na lista (elas começam no inventário e nunca foram "pegas").
-	if Itens.categoria(id) == Itens.CAT_ARQUIVO:
+	## USAR num DOCUMENTO = ler. Vale para os `0x85..0xa3` (categoria 7) **e para os dois itens
+	## iniciais `0x83`/`0x84`, que são categoria 6** — era esse o furo do "usar não funciona nos
+	## files".
+	if Itens.eh_documento(id):
 		_state.marcar_arquivo_lido(id)
 		if arquivo != null:
 			arquivo.call("abrir")
-			arquivo.call("ir_para_item", id)
+			arquivo.call("ir_para_doc", Itens.doc_do_item(id))
 		return "leu o documento"
 	var pl := _player()
 	if pl == null:

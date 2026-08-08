@@ -150,6 +150,38 @@ static func cura_de(item_id: int, hp_max: int) -> Dictionary:
 		"gasta_um": item_id == ITEM_FAID_BOX}
 
 
+## ── DOCUMENTO A PARTIR DO ITEM ──
+## O nome do documento na tela de arquivo sai de **`item = doc + 0x85`** (provado em `0x8006bcb8`:
+## `addiu a3, s0, 0x85` alimentando o desenhador de string com o índice do documento em `s0`), e o
+## descritor confirma a faixa: `0x85..0xa3` são os 31 documentos, todos categoria **7**.
+##
+## Os DOIS itens que o jogo novo dá são outros: **`0x83` "Game Inst. A"** e **`0x84` "Game Inst. B"**,
+## ambos categoria **6** — é por isso que USAR neles não fazia nada (meu teste era `categoria == 7`).
+## O de-para deles para o documento NÃO está no descritor (os bytes 2 e 3 são 0 nos dois) e não há
+## comparação com `0x83`/`0x84` na faixa dos menus, então uso o pareamento óbvio pelo ícone e pelo
+## nome — livro AZUL = Instruções A = doc 0 (item 0x85) e livro VERMELHO = Instruções B = doc 28
+## (item 0xa1), os dois "COMO JOGAR" do atlas `FILEI`. **Declarado: inferido, não medido.**
+const ITEM_DOC_BASE := 0x85
+const DOC_DE_ITEM_ESPECIAL := {0x83: 0, 0x84: 28}
+
+
+static func doc_do_item(id: int) -> int:
+	## Índice do documento (0..30) desse item, ou -1 se o item não é documento.
+	if DOC_DE_ITEM_ESPECIAL.has(id):
+		return int(DOC_DE_ITEM_ESPECIAL[id])
+	if categoria(id) == CAT_ARQUIVO:
+		return id - ITEM_DOC_BASE
+	return -1
+
+
+static func item_do_doc(doc: int) -> int:
+	return ITEM_DOC_BASE + doc
+
+
+static func eh_documento(id: int) -> bool:
+	return doc_do_item(id) >= 0
+
+
 static func condicao(hp: int, flags: int) -> int:
 	## `0x8006e598`: VIRUS `& 0x100` → 5 · POISON `& 0x200` → 4 · `hp >= 101` → 0 (FINE) ·
 	## `>= 41` → 1 · `>= 21` → 2 · resto → 3 (DANGER).

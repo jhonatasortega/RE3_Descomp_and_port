@@ -55,20 +55,35 @@ func run(t: Object) -> bool:
 	a.carregar(st)
 	# ── REGRA: só entra na lista o documento LIDO (pegar do chão conta; os dois iniciais precisam
 	# de USAR). Antes bastava estar no inventário, e as Instruções A/B apareciam sem ter sido abertas.
+	## A grade tem SLOT FIXO: são sempre os 31 documentos (o cursor anda por cima dos vazios, como
+	## o usuário pediu); o que muda é ter sido lido.
 	a.abrir()
-	t.eq(a.docs.size(), 0,
-		"jogo novo tem as Instruções A/B no inventário mas NENHUM documento no arquivo")
-	st.marcar_arquivo_lido(0x85)
+	t.eq(a.docs.size(), 31, "a grade é fixa: 31 slots sempre")
+	t.eq(a.n_lidos(), 0, "jogo novo tem as Instruções A/B no inventário mas NADA lido")
+	t.check(not a.lido(0), "slot 0 (Instruções A) começa não lido")
+	## Os dois itens iniciais são `0x83`/`0x84` (categoria **6**), e é por isso que USAR neles não
+	## fazia nada: o de-para é 0x83 → doc 0 e 0x84 → doc 28.
+	t.eq(Itens.doc_do_item(0x83), 0, "item 0x83 (Game Inst. A) é o documento 0")
+	t.eq(Itens.doc_do_item(0x84), 28, "item 0x84 (Game Inst. B) é o documento 28")
+	t.eq(Itens.doc_do_item(0x85), 0, "item 0x85 também é o documento 0 (`doc + 0x85`)")
+	t.eq(Itens.doc_do_item(0xa3), 30, "item 0xa3 é o documento 30")
+	t.eq(Itens.doc_do_item(0x21), -1, "erva não é documento")
+	st.marcar_arquivo_lido(0x83)               ## USAR nas Instruções A
 	a.abrir()
-	t.eq(a.docs.size(), 1, "depois de ler as Instruções A, ela aparece")
+	t.eq(a.n_lidos(), 1, "depois de ler as Instruções A, ela conta")
+	t.check(a.lido(0), "e o slot 0 fica lido")
 	st.marcar_arquivo_lido(0x21)
-	a.abrir()
-	t.eq(a.docs.size(), 1, "marcar uma ERVA não cria documento (só categoria 7)")
+	t.eq(a.n_lidos(), 1, "marcar uma ERVA não cria documento")
 	for id in [0x86, 0x87, 0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f,
 			0x90, 0x91, 0x92, 0x93, 0x94, 0x95]:
 		st.marcar_arquivo_lido(id)
 	a.abrir()
-	t.eq(a.docs.size(), 17, "17 documentos lidos entram na lista")
+	t.eq(a.n_lidos(), 17, "17 documentos lidos")
+	# confirmar em slot NÃO lido não entra na leitura
+	a.sel = 30
+	a.confirmar()
+	t.check(not a.lendo, "Enter em slot não lido não abre nada")
+	a.sel = 0
 	t.check(a.aberto, "abrir() liga a tela")
 	t.eq(a.sel, 0, "abre no primeiro documento")
 	a.mover_grade(1, 0)
@@ -85,8 +100,7 @@ func run(t: Object) -> bool:
 	a.mover_grade(-1, 0)
 	t.eq(a.pagina_grade(), 0, "A na primeira coluna volta para a página 1")
 	t.eq(a.sel, 4, "de volta na última coluna da mesma linha")
-	t.eq(a.n_paginas_grade(), 2, "17 documentos = 2 páginas de 15")
-	a.sel = 0
+	t.eq(a.n_paginas_grade(), 3, "31 slots = 3 páginas de 15")
 	a.sel = 0
 	a.confirmar()
 	t.check(a.lendo, "Enter entra no documento")

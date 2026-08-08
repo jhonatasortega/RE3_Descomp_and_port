@@ -236,12 +236,16 @@ var arquivos_lidos: Dictionary = {}
 
 
 func marcar_arquivo_lido(item_id: int) -> void:
-	if Itens.categoria(item_id) == Itens.CAT_ARQUIVO:
-		arquivos_lidos[item_id] = true
+	## Guarda sempre o item CANÔNICO do documento (`doc + 0x85`), porque os dois itens iniciais são
+	## `0x83`/`0x84` e apontam para os documentos 0 e 28.
+	var doc := Itens.doc_do_item(item_id)
+	if doc >= 0:
+		arquivos_lidos[Itens.item_do_doc(doc)] = true
 
 
 func arquivo_lido(item_id: int) -> bool:
-	return arquivos_lidos.has(item_id)
+	var doc := Itens.doc_do_item(item_id)
+	return doc >= 0 and arquivos_lidos.has(Itens.item_do_doc(doc))
 
 
 func add_item(item_id: int, qtd: int = 1, flags: int = 0, box: bool = false) -> int:
