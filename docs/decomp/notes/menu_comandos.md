@@ -600,9 +600,15 @@ munição "E" para eles. As contagens fecham: 8 pares (16 registros) + 5 receita
 mas lendo a resposta em `gs+0x7848`: `0` = prossegue (troca o modelo e reexecuta `0x80068024`),
 `1` = aborta (`ctx[0x11] = 3`).
 
-Sobre `flag_test(0x800cc858, 0x17)` que **DOBRA** a quantidade: `0x800cc858` é o banco 0 da
-tabela `0x8009e3f8`. **NÃO descobri quem seta o bit 0x17** — minha hipótese (dificuldade EASY)
-NÃO está provada; trate como flag externa.
+Sobre `flag_test(0x800cc858, 0x17)` que **DOBRA** a quantidade: **PROVADO em 2026-08-08 — é a
+dificuldade FÁCIL.** `0x800cc858` é o banco 0 da tabela `0x8009e3f8`, e o bitset (`0x80078930`)
+indexa `word = banco + ((id>>5)*4)` com `bit = 0x80000000 >> (id & 0x1f)`. Para `id = 0x17 = 23`:
+`word = 0x800cc858` e `bit = 0x80000000 >> 23` = **`0x100`** — que é exatamente o bit gravado pela
+tela de dificuldade (`0x80195dcc` liga para EASY, `0x80195db8` limpa para HARD; ver
+`boot_ptbr_hd.md` §12). Confirmação independente: os handlers de colocação de item
+(`0x800574f4`/`0x800576c4`) leem `0x800cc858 & 0x100` e usam o mesmo bit para (a) suprimir a Fita
+de tinta e (b) **dobrar** a munição posta no chão — o mesmo "dobra no fácil", em outro lugar do
+binário. Detalhe completo em [`menu_inventario.md`](menu_inventario.md) §16.
 
 Sobre o remap `0x80010e7c[bonus]` para as munições E: os alvos são labels
 (`0x80068140` → `bonus=1`, `0x80068148` → `bonus=3`, `0x80068150` → `bonus=5`,
@@ -855,8 +861,9 @@ for i, x in enumerate(W):
    coordenadas e duração NÃO MEDIDOS.
 2. **Página de textura dos POLY_FT4** de sombra das linhas de comando (registros
    `0x8009fe6c..0x8009ff28`, `v` = 184..216): não é a `STMOJIU` (72 px de altura). NÃO SEI qual é.
-3. **Quem seta `flag_test(0x800cc858, bit 0x17)`** que DOBRA a quantidade de munição criada com
-   pólvora. Hipótese "dificuldade EASY" **NÃO PROVADA**.
+3. ~~**Quem seta `flag_test(0x800cc858, bit 0x17)`** que DOBRA a quantidade de munição criada com
+   pólvora.~~ **RESOLVIDO (2026-08-08): é a dificuldade FÁCIL** — `bit 0x17 do banco 0` ≡ `0x100`
+   de `0x800cc858`, gravado em `0x80195dcc`. Ver §5.6.
 4. **Bits `0x04` e `0x08` de `slot.flags`**: aparecem nos defaults do descritor (0x05/0x09/0x0d/
    0x12/0x16) mas não achei quem os lê. NÃO MEDIDO.
 5. **`gs+0x2474` (`0x800ccbac`)**: bitfield "item usável aqui" testado no USE de key_item.

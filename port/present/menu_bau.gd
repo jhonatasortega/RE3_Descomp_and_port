@@ -532,6 +532,8 @@ func _fator_paleta(i: int) -> int:
 
 
 func _icone(item_id: int) -> Texture2D:
+	## MESMO de-para da grade da tela de status: `hd/itema/NNN.webp` casado por **hash exato**
+	## (`tools/hd_match.py hash`, 121 dos 134 `item_id`), com o PNG do `ITEMA.SLD` como queda.
 	if _icones.has(item_id):
 		return _icones[item_id]
 	var rel_hd := "MENU/status/hd/itema/%03d.webp" % item_id

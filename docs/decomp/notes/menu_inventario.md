@@ -1037,3 +1037,95 @@ estático do JSON; e, no mesmo espírito, a **placa** do item (448×288) passou 
 `MenuStatus._placas`, porque o LRU do `AssetIO` tem só **24** entradas (`MAX_CACHE`) e a tela toca
 em mais textura que isso por quadro — sem guardar a referência, a placa podia ser redecodificada
 do disco quadro a quadro.
+
+---
+
+## 18. Rodada de 2026-08-08 (2ª) — ícone da grade trocado e a fita de tinta no modo fácil
+
+### 18.1 O relato e o diagnóstico
+
+> "Na grade do inventário, a **Fita de tinta (`0x81`)** aparece com o ícone de **caixa de munição
+> de escopeta**. O painel de pré-visualização ao lado mostra a arte CERTA."
+
+O dono separou o sintoma direito: a **placa grande** (`ETC/ITEMG.PIX`, via `hd/plate/NNN.webp`)
+estava certa e o **ícone 40×30 da grade** (`ETC/ITEMA.SLD`, via `hd/itema/NNN.webp`) estava errado.
+Logo o defeito não era o item nem o `item_id` — era o **de-para do arquivo HD do ícone**.
+
+Auditoria dos 134 `item_id` (não só o `0x81`), contra o de-para exato por hash: no mapa antigo
+(106 entradas) havia **20 ERRADOS**, 22 faltando e 7 apontando para `.webp` que não pertence a
+nenhum ícone. Os errados que aparecem em jogo normal:
+
+| item | ícone que estava | ícone certo |
+|---|---|---|
+| `0x03` Pistola | SIGPRO (`8D5D7AA5`, que é do `0x02`) | `9765DFA9` |
+| `0x04` Escopeta | lança-granadas (`DAEFC169`, do `0x06`) | `CDE4F632` |
+| `0x0b` Metralhadora | chave da enfermaria | `A082D012` |
+| `0x0e`/`0x0f` Fuzil | óleo aditivo / EAGLE | `6028FCCC` |
+| `0x16` Balas de Magnum | bola âmbar | `0CFBC68E` |
+| `0x1e` B. de pistola melhores | minas | `83BAD936` |
+| `0x20` Spray medicinal | isqueiro | `23F6F682` |
+| `0x32` Gancho de fogo | célula vazia | `4D3ECD1F` |
+| `0x36` Óleo aditivo | disco do sistema | `5351F138` |
+| `0x46` Bola âmbar | fita de tinta | `7B17E61A` |
+| `0x48` Bola cristalina | pólvora B | `1A085AD4` |
+| `0x62`/`0x65` Pólvora B/BB | pólvora BB / CCC | `8CCB6734` / `9F7A3BD8` |
+| `0x70` Disco do sistema | c. de escopeta melhores | `9BE181D4` |
+| `0x75` Chave emblema | metralhadora | `310FA90A` |
+| **`0x81` Fita de tinta** | **`0980451F` = os Cartuchos de escopeta `0x17`** | **`733CC610`** |
+
+### 18.2 A causa e a correção: o hash do pack HD **é** calculável
+
+Método, prova, tabela de cobertura e as duas armadilhas (órfão no disco, arquivos do pack que não
+são hash) estão em [`../../port/telas_e_hd.md`](../../port/telas_e_hd.md) §7.1-bis. Em resumo: o
+nome do `.webp` é o `zlib.crc32` do bloco SD em **BGRA** com expansão 5→8 bits por replicação de
+bits altos; casa **121 dos 134** ícones e as outras 3 CLUTs do `STMAIN0U` dão **zero** acertos.
+Ferramenta: `python tools/hd_match.py hash --apply`.
+
+Os dois furos do casamento por semelhança que produziram o erro: (a) limiar 0,12 **sem margem** —
+e 6 dos 121 pares certos têm erro **acima** de 0,12, então o par verdadeiro era rejeitado e o
+arquivo sobrava para o item errado; (b) atribuição global **injetiva**, que é falsa no dado
+(`8D5D7AA5` serve 8 `item_id`, `DAEFC169` serve os 4 lança-granadas).
+
+### 18.3 A FITA DE TINTA SÓ EXISTE FORA DO MODO FÁCIL — provado
+
+O dono também disse que a fita de tinta só existe no difícil. **Está no binário.** Varredura das
+10 referências ao offset `c858` no EXE: só **duas** o leem com `andi 0x100`, e são os handlers que
+colocam item no mundo — `0x800574f4` (opcode SCD `0x67`, 22 B) e `0x800576c4` (opcode `0x68`,
+30 B). O bloco é idêntico nos dois:
+
+```
+800575ac  lw    v0, 0x800cc858
+800575b4  andi  v0, v0, 0x100        ; MODO FÁCIL?
+800575b8  beqz  v0, 0x800575fc       ; não é fácil -> pula o bloco inteiro
+800575bc  addiu v0, zero, 0x81       ; (delay slot)  0x81 = FITA DE TINTA
+800575c0  lbu   s3, 0xe(s0)          ; item_id do opcode  (0x67 -> +0x0e ; 0x68 -> +0x16)
+800575c8  bne   s3, v0, 0x800575e0   ; não é fita? pula o "marcar como pego"
+800575d4  jal   0x800788dc           ; flag_set(banco, flag do item)
+800575e0  sltiu v0, v0, 0xb          ; (item_id - 0x15) < 0xb  ->  faixa de MUNIÇÃO 0x15..0x1f
+800575f4  sll   v0, v0, 1            ; DOBRA a quantidade
+```
+
+Os três primitivos de bitset, identificados: `0x800788dc` = **set**
+(`banco[(id>>5)*4] |= 0x80000000 >> (id&0x1f)`), `0x80078904` = **clear**, `0x80078930` = **get**.
+O banco (`s2`) é `*(0x8009e418)` = `0x800d2028` ou `*(0x8009e414)` = `0x800d2008`, escolhido por
+`0x800d1f76 < 2` e pelo bit `0x80` de `0x800cc858` — é o bitset de "item já pego", indexado pela
+flag do próprio opcode (`0x67` `+0x12`, `0x68` `+0x1a`).
+
+Sequência completa: no fácil o handler **liga a flag "já pego" da fita** e, logo abaixo, chama o
+**get** da mesma flag; como ela acabou de ser ligada, o fluxo cai em `0x80057610`, que faz
+`sb zero, ($v0)` no registro do AOT — **o AOT não é instalado**. Ou seja: a fita de tinta não
+aparece no modo fácil. Coerente com o jogo salvar sem consumir fita no fácil.
+
+As **17** colocações de fita de tinta (todas `0x67`, `amount = 3`) estão em R100, R105, R116,
+R117, R11B, R120, R210, R219, R21B, R307, R30C, R313, R401, R403, R414, R501 e R505 — as salas de
+máquina de escrever. Desmontei o bytecode em volta de cada uma: **nenhuma** tem teste de
+dificuldade (em R100 a função 6 é uma lista linear de `0x67`+`0x7f`). A regra é do handler.
+
+**Brinde do mesmo bloco:** no modo fácil a **munição posta no chão vem em dobro** — a faixa
+`0x15..0x1f` (11 ids, o `sltiu 0xb`) tem a quantidade deslocada 1 bit à esquerda. É o mesmo bit
+`0x100` que, como flag `0x17` do banco 0, dobra a munição fabricada com pólvora
+([`menu_comandos.md`](menu_comandos.md) §5.6) — o que fecha aquela pendência.
+
+**No port:** a regra está em `Itens.item_no_chao(item_id, qtd, facil)`, testada em
+`test_itens.gd`. A **chamada** dela na instalação do AOT fica com o agente de cenas, porque
+`port/script_vm/vm.gd` e `port/script_vm/aot.gd` não são território deste trabalho.

@@ -26,6 +26,19 @@ extends Node2D
 ## **CLUT (0,485)** = linha 1 do STMAIN0U depois do upload. As 134 entradas descomprimem para
 ## exatamente 1200 B = 40×30 — é o critério de aceite do descompressor.
 ##
+## ── DE-PARA DO ÍCONE HD: agora é EXATO, por HASH (correção de 2026-08-08) ──
+## O ícone pequeno da grade estava trocado (o dono viu a **Fita de tinta `0x81`** com o ícone da
+## caixa de munição de escopeta `0x17`). A causa não era o item nem a arte grande: era o
+## casamento dos `.webp` do pack HD, que era por SEMELHANÇA DE COR com limiar 0.12 e atribuição
+## global INJETIVA. Dois furos: (a) sem margem, par errado passava; (b) a injetividade é falsa no
+## dado — vários `item_id` compartilham o MESMO bitmap de ícone (os 4 lança-granadas `0x06..0x09`,
+## os pares arma/arma-melhorada, os 8 ids que usam o ícone da SIGPRO), e forçar 1:1 obrigava a dar
+## arquivo errado aos duplicados, propagando o erro em cascata.
+## Agora o nome do `.webp` é **calculado**: é o `zlib.crc32` do bloco SD em **BGRA**, com 5→8 bits
+## por replicação de bits altos (`(c<<3)|(c>>2)`) e `A=0xFF`. Casa **121 dos 134** `item_id`
+## (`tools/hd_match.py hash`), e as outras 3 linhas de CLUT do STMAIN0U dão **zero** acerto — não
+## há falso positivo. Os 12 sem par são itens `BOTU`/não usados; esses caem no PNG do PS1.
+##
 ## ── Geometria (medida, com os registros de onde saiu) ──
 ## Grade **2 colunas × 5 linhas**, célula **40×30**, origem **(224,66)**, passo +40/+30:
 ## B27 = `(0,72,80,120,224,66)` desenha as 4 primeiras linhas de uma vez, B28/B29 são os slots
@@ -237,6 +250,12 @@ var arquivo: Object = null
 ## Slot que espera o segundo item da COMBINAÇÃO (-1 = não está combinando). No jogo é o
 ## 2º marcador (B147, `u=160`), desenhado enquanto `ctx+0x18 & 0x02000000`.
 var combinar_de := -1
+## Resultado da última combinação (o EXE pede SE **6** em `0x80068a10` quando a receita fecha e
+## **7** em `0x800687b0` quando não fecha). Vem do resolvedor, não de prefixo de texto.
+var _combinou_ok := false
+## NÍVEL DE MISTURA por grupo de munição (`inv + 0x12c + grupo*2`, 4 grupos u16). Espelho local
+## enquanto o `GameState` (outro território) não tiver o campo — ver `_niveis_mistura`.
+var _niveis: Array = [0, 0, 0, 0]
 ## Texto na caixa de mensagem (vazio = mostra só o nome do item selecionado).
 var mensagem := ""
 var mensagem_linha := 0                 ## primeira linha visível do texto de exame
@@ -843,7 +862,9 @@ func confirmar() -> String:
 		##   • **id 7** em `0x800687b0` quando NÃO fecha.
 		var feito := _combinar(combinar_de, cursor)
 		if som != null:
-			if feito.begins_with("combinou") or feito.begins_with("recarregou"):
+			## `_combinou_ok` vem do resolvedor (`Itens.combinar`), não de prefixo de texto:
+			## com os 7 kinds ligados há sucesso que não começa com "combinou" nem "recarregou".
+			if _combinou_ok:
 				som.combinar_ok()              ## id 6 (`0x80068a10`)
 			else:
 				som.combinar_erro()            ## id 7 (`0x800687b0`)
@@ -1016,51 +1037,53 @@ func _usar() -> String:
 
 
 func _combinar(slot_a: int, slot_b: int) -> String:
-	## `combine_find` (`0x8006a898`): busca LINEAR e SIMÉTRICA na tabela de 125 receitas.
-	## Os tipos de receita estão em `Itens` (recarregar arma, simples, pólvora → munição,
-	## upgrade de arma, troca de granada, pólvora → granada, munição infinita).
+	## Agora a REGRA TODA está em `Itens.combinar` (os 7 kinds, o slot que sobrevive, o bônus de
+	## perícia da pólvora e o dobro do modo fácil). Aqui só se aplica o que ele devolve — é o que
+	## deixa a regra testável sem tela e impede que a UI invente aritmética.
+	_combinou_ok = false
 	if _state == null or slot_a == slot_b:
 		return "combinação cancelada"
-	var a: Dictionary = _state.main_slots[slot_a]
-	var b: Dictionary = _state.main_slots[slot_b]
-	var ida := int(a.get("id", 0))
-	var idb := int(b.get("id", 0))
-	if ida == 0 or idb == 0:
-		return "slot vazio"
-	var r := Itens.receita(ida, idb)
-	if r.is_empty():
-		return "não combina"
-	var tipo := int(r.get("kind", -1))
-	var c := int(r.get("c", 0))
-	var n := int(r.get("n", 0))
-	match tipo:
-		Itens.REC_SIMPLES:
-			# a + b -> c, gastando um de cada (ervas)
-			_state.main_slots[slot_a] = {"id": c, "qtd": maxi(1, n), "flags": 0}
-			_state.main_slots[slot_b] = {"id": 0, "qtd": 0, "flags": 0}
-			queue_redraw()
-			return "combinou -> item 0x%02x" % c
+	var r := Itens.combinar(_state.main_slots, slot_a, slot_b, {
+		## `GameState.difficulty` espelha o bit `0x100` de `0x800cc858` (o MODO FÁCIL).
+		"facil": int(_state.get("difficulty")) == 1,
+		"niveis": _niveis_mistura(),
+		## A PERGUNTA "normal ou melhorada?" (`0x80067d80`, mensagem `0xd` do canal `0x1400`) é
+		## uma caixa de diálogo que esta tela ainda não tem. Enquanto ela não existir, respondo
+		## `1` = MUNIÇÃO NORMAL, que é o registro que a busca linear já devolve — ou seja, o
+		## comportamento é o do jogo com o jogador escolhendo "normal". DECLARADO, não escondido.
+		"melhorada": false,
+	})
+	if not bool(r.get("ok", false)):
+		return String(r.get("motivo", "não combina"))
+	var mudancas: Dictionary = r.get("mudancas", {})
+	for i: int in mudancas:
+		_state.main_slots[i] = mudancas[i]
+	_niveis = r.get("niveis", _niveis)
+	_combinou_ok = true
+	queue_redraw()
+	var kind := int(r.get("kind", -1))
+	var qtd := int(r.get("qtd", 0))
+	match kind:
 		Itens.REC_RECARREGAR:
-			# arma + munição: enche a arma até o `max` do descritor e desconta da munição
-			var arma_slot := slot_a if Itens.categoria(ida) == Itens.CAT_ARMA else slot_b
-			var mun_slot := slot_b if arma_slot == slot_a else slot_a
-			var arma: Dictionary = _state.main_slots[arma_slot]
-			var mun: Dictionary = _state.main_slots[mun_slot]
-			var cap := Itens.maximo(int(arma["id"]))
-			var falta := maxi(0, cap - int(arma.get("qtd", 0)))
-			var passa := mini(falta, int(mun.get("qtd", 0)))
-			if passa <= 0:
-				return "a arma já está cheia"
-			arma["qtd"] = int(arma.get("qtd", 0)) + passa
-			mun["qtd"] = int(mun.get("qtd", 0)) - passa
-			if int(mun["qtd"]) == 0:
-				_state.main_slots[mun_slot] = {"id": 0, "qtd": 0, "flags": 0}
-			queue_redraw()
-			return "recarregou %d (arma com %d)" % [passa, int(arma["qtd"])]
+			return "recarregou %d" % qtd
+		Itens.REC_POLVORA_MUNICAO, Itens.REC_POLVORA_GRANADA:
+			var novo: Dictionary = mudancas.get(int(r.get("sobrevive", -1)), {})
+			return "fabricou %d de munição 0x%02x" % [qtd, int(novo.get("id", 0))]
+		Itens.REC_MUNICAO_INFINITA:
+			return "munição infinita ligada"
 		_:
-			# pólvora, upgrade, granada e munição infinita têm regras próprias (bônus por
-			# quantidade, grupo de munição, troca de tipo) que ainda não foram ligadas.
-			return "receita do tipo %s ainda não ligada" % r.get("kind_nome", tipo)
+			var n2: Dictionary = mudancas.get(int(r.get("sobrevive", -1)), {})
+			return "combinou -> item 0x%02x" % int(n2.get("id", 0))
+
+
+func _niveis_mistura() -> Array:
+	## Contador do NÍVEL DE MISTURA (`inv + 0x12c + grupo*2`, 4 grupos). O lugar durável dele é
+	## um campo do `GameState` (que não é território deste agente); enquanto ele não existir, a
+	## tela lê de lá se o campo aparecer e cai no espelho local. **DECLARADO.**
+	var do_estado: Variant = _state.get("niveis_mistura") if _state != null else null
+	if do_estado is Array and (do_estado as Array).size() >= Itens.N_GRUPOS_MUNICAO:
+		return do_estado
+	return _niveis
 
 
 func _player() -> Object:
@@ -1190,12 +1213,13 @@ func _desenhar_placa(t: float) -> void:
 	var id := int(slot.get("id", 0))
 	if id == 0:
 		return
-	# HD primeiro (`hd/plate/NNN.webp` = 448×288, 4× a placa do PS1), SD como queda. O de-para
-	# saiu de casamento por CONTEÚDO (`port/dev/hd_casar.gd`): 96 das 134 placas, com o 2º
-	# colocado ao menos 8% pior. Como a imagem é desenhada inteira no retângulo de destino, o
-	# 4× não exige conta nenhuma aqui.
+	# HD primeiro (`hd/plate/NNN.webp` = 448×288, 4× a placa do PS1), SD como queda. Como a imagem
+	# é desenhada inteira no retângulo de destino, o 4× não exige conta nenhuma aqui.
+	# O de-para (`tools/hd_match.py hash`) é **86 das 134 por HASH EXATO** (o nome do `.webp` é o
+	# `crc32` do bloco SD em BGRA) + **33 pelo resíduo por conteúdo**, com a margem medida contra o
+	# pool ainda livre e marcada em `hd_status_map.json.placa[*].confianca`. 15 ficam sem par.
 	# `exists` antes de `texture`: pedir um HD que não existe faria o AssetIO logar aviso a cada
-	# quadro (só 96 das 134 placas têm par HD), e aviso repetido some no meio do log.
+	# quadro, e aviso repetido some no meio do log.
 	## CACHE LOCAL (como `_icone`): o `AssetIO` tem LRU de **24** entradas (`MAX_CACHE`), e a tela
 	## de status toca em muito mais textura que isso por quadro (chrome, retratos, 5 paletas do
 	## STMOJIU, 10 ícones, a placa, os ícones do arquivo). Sem guardar a referência aqui, a placa
@@ -1335,9 +1359,12 @@ func _fator_paleta(i: int) -> int:
 func _icone(item_id: int) -> Texture2D:
 	if _icones.has(item_id):
 		return _icones[item_id]
-	## HD primeiro (`hd/itema/NNN.webp` = 160×120), SD como queda. Casados por conteúdo: 49 dos
-	## 134 — os ícones pequenos são muito redesenhados no pack HD, então a margem só fecha em 49.
-	## Os outros continuam no SD, e isso fica visível na tela em vez de escondido.
+	## HD primeiro (`hd/itema/NNN.webp` = 160×120), SD como queda. De-para **exato por hash**:
+	## 121 dos 134 `item_id` (ver o cabeçalho e `tools/hd_match.py hash`). Os 12 sem par continuam
+	## no PNG do PS1, e isso fica visível na tela em vez de escondido.
+	## ⚠ Quem regerar o mapa TEM de apagar os `.webp` órfãos: este `exists` acha o arquivo antigo
+	## antes do PNG, então um par removido do JSON mas deixado no disco continuaria aparecendo
+	## (foi assim que o ícone errado do `0x81` sobreviveria a uma correção só no JSON).
 	var rel_hd := "MENU/status/hd/itema/%03d.webp" % item_id
 	var tex := AssetIO.texture(rel_hd) if AssetIO.exists(rel_hd) else 		AssetIO.texture("MENU/status/itema/%03d.png" % item_id)
 	_icones[item_id] = tex

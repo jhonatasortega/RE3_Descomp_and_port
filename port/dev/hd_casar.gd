@@ -1,4 +1,16 @@
 extends SceneTree
+## ⚠ **OBSOLETO PARA `itema` E `placa` — NÃO RODE SEM `HD_SO_MOLDURA=1`.**
+## Este script reescreve `data/hd_status_map.json` inteiro pelo método de SEMELHANÇA DE COR, e
+## foi ele que trocou os ícones da grade (a Fita de tinta `0x81` ficou com o `.webp` dos
+## Cartuchos de escopeta `0x17`). Dois furos: limiar 0.12 **sem margem**, e atribuição global
+## **injetiva** — que é falsa no dado, porque vários `item_id` compartilham o mesmo bitmap de
+## ícone. O de-para de ícone e placa agora é EXATO, por hash:
+##
+##     python tools/hd_match.py hash --apply
+##
+## O que ainda só existe aqui é a MOLDURA (bloco de VRAM, `HD_SO_MOLDURA=1`), que não tem hash
+## reproduzível porque o bloco blitado depende das coordenadas do engine.
+##
 ## Casa os assets HD do Seamless (nomes de HASH) com os do PS1 que o port já extraiu, POR
 ## CONTEÚDO — sem chute e sem depender do dump do plugin.
 ##
@@ -19,15 +31,24 @@ const HIRES := "C:/Program Files (x86)/GOG Galaxy/Games/Resident Evil 3/hires"
 
 
 func _initialize() -> void:
-	var saida := {}
+	## TRAVA: sem `HD_SO_MOLDURA=1` este script sobrescreveria `itema`/`placa` com o método
+	## errado. Quem precisa desses dois usa `python tools/hd_match.py hash --apply`.
 	if OS.get_environment("HD_SO_MOLDURA") == "":
-		saida["itema"] = _casar_categoria("item", "MENU/status/itema", 134, Vector2i(40, 30), "itema")
-		saida["placa"] = _casar_categoria("info", "ETC/items", 134, Vector2i(112, 72), "plate")
+		print("[hd] OBSOLETO para itema/placa. Use `python tools/hd_match.py hash --apply`.")
+		print("[hd] Para recasar SÓ a moldura: HD_SO_MOLDURA=1 godot ... --script res://dev/hd_casar.gd")
+		quit(1)
+		return
+	## PRESERVA o que não é desta ferramenta: `itema`/`placa` vêm do casamento por hash.
+	var saida := {}
+	var atual: Variant = JSON.parse_string(
+		FileAccess.get_file_as_string("res://data/hd_status_map.json"))
+	if atual is Dictionary:
+		saida = atual
 	saida["moldura"] = _casar_moldura()
 	saida["moldura_por_bloco"] = _casar_moldura_por_bloco()
 	var f := FileAccess.open("res://data/hd_status_map.json", FileAccess.WRITE)
 	f.store_string(JSON.stringify(saida, "  "))
-	print("[hd] escrito data/hd_status_map.json")
+	print("[hd] escrito data/hd_status_map.json (só a moldura)")
 	quit(0)
 
 

@@ -85,9 +85,11 @@ título).
 
 ## 7. MÉTODO: casar os assets HD do Seamless (nomes de hash)
 
-O pack HD nomeia por **hash do bloco de VRAM blitado**, não por asset, e o hash não é
-reproduzível estaticamente (depende das coordenadas de blit do engine). O de-para completo
-exigiria rodar o plugin com dump ligado. **Não é preciso**: dá para casar por conteúdo.
+O pack HD nomeia por **hash do bloco de VRAM blitado**, não por asset. Para background e bloco de
+VRAM o hash de fato não sai estaticamente (depende das coordenadas de blit do engine) e o caminho
+é casar por conteúdo. **Para o ícone de item e para a placa o hash SAI** — o bloco blitado é a
+imagem inteira. Ver §7.1-bis: é ele que resolve esses dois, e foi ele que consertou o de-para
+errado dos ícones.
 
 ### 7.1 Todo asset HD é exatamente 4× o SD
 
@@ -105,20 +107,82 @@ Medido nas 6.900 imagens do pack. Isso dá a chave do de-para pelas dimensões:
 Como é 4× exato, **o mesmo registro de 12 bytes serve para SD e HD**: só se multiplica o
 retângulo de origem por 4. O destino (320×240) não muda.
 
-### 7.2 Casar por conteúdo, com ATRIBUIÇÃO GLOBAL
+### 7.1-bis O HASH **É** REPRODUZÍVEL (2026-08-08) — e é isso que casa ícone e placa
 
-Ferramenta: [`../../port/dev/hd_casar.gd`](../../port/dev/hd_casar.gd). Reduz o HD ao tamanho SD
-e compara pixel a pixel (erro absoluto médio, só onde o SD é opaco).
+> **Isto revoga o §7.2 para `item/` e `info/`.** O `hd_ui_map.json` dizia
+> `reproducivel_estaticamente: false`, com o argumento "a unidade de hash é o sub-retângulo
+> blitado, e isso depende das coordenadas do engine". O argumento vale para background e para
+> bloco de VRAM. **Não vale para o ícone de item nem para a placa**: nesses dois o bloco blitado
+> É a imagem inteira, então o hash dá para calcular — e calcula.
+
+```
+nome do .webp = zlib.crc32( bloco em BGRA, linha a linha ), em MAIÚSCULA
+5 bits -> 8 bits por REPLICAÇÃO DE BITS ALTOS:   c8 = (c5 << 3) | (c5 >> 2)
+ordem dos bytes: B, G, R, A   com A = 0xFF
+```
+
+A conversão de cor não é gosto: das **24** combinações testadas (3 expansões × 2 alphas ×
+4 ordens de byte), só esta acerta. `c5 * 255 // 31` e `c5 << 3` dão **zero** acertos nos 120
+arquivos.
+
+| fonte SD | como | casa |
+|---|---|---|
+| ícones 40×30 | `ETC/ITEMA.SLD` descomprimido, offsets `0x8009F678`, **CLUT linha 1** do `STMAIN0U.TIM` | **121 de 134** `item_id`, usando 107 dos 120 `.webp` de `hires/item/` |
+| placas 112×72 | `ETC/ITEMG.PIX`, cada slot de 10240 B com a CLUT dele | **86 de 134**, usando 73 dos 106 `.webp` de `hires/info/` |
+
+Sanidade que fecha a prova: as **outras 3 linhas de CLUT** do STMAIN0U dão **0 acertos** — não
+existe falso positivo possível nesse teste, porque um CRC-32 casual em 120 nomes tem chance
+desprezível. Ferramenta: `python tools/hd_match.py hash [--apply]`.
+
+**Por que o casamento por conteúdo tinha errado** (o bug que o dono viu: Fita de tinta `0x81`
+com o ícone da caixa de munição de escopeta `0x17`):
+
+1. **Sem margem.** O limiar era 0,12 e bastava ficar abaixo dele. Pior: a medição contra o mapa
+   novo mostra que **6 dos 121 pares CERTOS têm erro > 0,12** (o pior é 0,133, o Isqueiro
+   `0x43`) — ou seja, o limiar rejeitava o par verdadeiro e depois sobrava `.webp` livre para
+   entregar ao item errado.
+2. **Injetividade falsa.** A atribuição global forçava 1 `.webp` por `item_id`, e isso é falso no
+   dado: `8D5D7AA5` é o ícone de **8** ids (`0x02`, `0x11` e seis `BOTU`), `DAEFC169` é o dos **4**
+   lança-granadas `0x06..0x09`, e há mais 4 pares (`0x03`/`0x12`, `0x04`/`0x13`, `0x0c`/`0x14`,
+   `0x0e`/`0x0f`). Cada duplicata obrigava a dar arquivo alheio a alguém, e o erro andava em
+   cascata pela lista ordenada.
+
+**Auditoria do mapa antigo** (121 pares exatos × 106 entradas que existiam):
+**20 ERRADOS**, 22 faltando, 7 apontando para `.webp` que não é de nenhum item. Entre os errados,
+itens que o jogador vê sempre: `0x03` Pistola (levava o ícone da SIGPRO), `0x04` Escopeta
+(lança-granadas), `0x20` Spray medicinal, `0x62`/`0x65` Pólvoras, `0x81` Fita de tinta.
+
+Duas armadilhas para quem regerar isso:
+
+* **apagar os órfãos.** A tela pede `hd/itema/NNN.webp` e só cai no PNG do PS1 se o arquivo não
+  existir. Corrigir só o JSON não conserta nada: o `.webp` errado continua no disco e continua
+  aparecendo. O `hd_match.py hash --apply` remove os órfãos e o `test_itens.gd` confere que os 6
+  que perderam par saíram do disco.
+* **`hires/` tem 2 arquivos que não são hash**: `info/5F5D30DF  .webp` (com dois espaços, conteúdo
+  diferente do `5F5D30DF.webp`) e `info/chris jill.webp`. O de espaços era o que estava na entrada
+  `014` do mapa antigo, duplicando o `003`. O filtro agora é `^[0-9A-F]{8}$`.
+
+### 7.2 Casar por conteúdo, com ATRIBUIÇÃO GLOBAL (ainda vale para o RESÍDUO e para a moldura)
+
+Ferramenta: [`../../port/dev/hd_casar.gd`](../../port/dev/hd_casar.gd) — **hoje travado para
+`itema`/`placa`**, só roda a moldura com `HD_SO_MOLDURA=1`. A mesma métrica sobrevive dentro do
+`hd_match.py hash` para o **resíduo**: os `item_id` que o hash não resolve contra os `.webp` que o
+hash não consumiu, agora com **margem medida contra o pool ainda livre** e gravada em
+`hd_status_map.json` (`metodo: "conteudo"`, `margem`, `confianca`). Nos ícones o resíduo é 1
+entrada (um `BOTU`); nas placas são 33, das quais 5 saem marcadas `confianca: baixa` (as pólvoras
+AAA/AAB/BBA/BBB, cujas placas são frascos quase idênticos).
+
+Reduz o HD ao tamanho SD e compara pixel a pixel (erro absoluto médio, só onde o SD é opaco).
 
 **O detalhe que multiplica o resultado por 2:** não casar item por item. Percorrer os itens em
 ordem, cada um levando o melhor HD ainda livre, é guloso na ordem errada — o item 3 leva o par do
 item 90 e deixa 90 sem par. O certo é calcular **todos** os pares, ordenar do melhor para o pior
 e ir fixando enquanto os dois lados estiverem livres:
 
-| | item-por-item | atribuição global |
-|---|---|---|
-| ícones | 49 de 134 | **106 de 120** |
-| placas | 96 de 134 | **106 de 107** |
+| | item-por-item | atribuição global | **hash exato (§7.1-bis)** |
+|---|---|---|---|
+| ícones | 49 de 134 | 106 de 120 (20 deles ERRADOS) | **121 de 134, 0 errados** |
+| placas | 96 de 134 | 106 de 107 (2 errados + 1 duplicado) | **86 por hash + 33 por resíduo** |
 
 Os casamentos conferidos ficam com erro **0,03..0,05** (ex.: item 001 = Faca →
 `info/D43691FB`, que é uma faca em HD). O limiar de aceite é 0,12.
@@ -147,6 +211,7 @@ aparecem no topo: 1º `E45B0400` (russo: "ОРУЖИЕ", "Состояние"), 
 
 ```bash
 python tools/status_assets.py --all        # STMAIN0U (4 paletas), STMOJIU (9), 134 ícones do SLD
+NOSTALGIA_OUT=port python tools/hd_match.py hash --apply   # de-para HD de ÍCONE e PLACA (§7.1-bis)
 python tools/esp_decode.py dump port/assets/ESP    # sprites de efeito (o brilho do item)
 python tools/menu_texto.py --file          # 183 páginas de documento + 31 capas
 python tools/omodel2gltf.py --all --out port/assets/OMODEL   # 712 objetos 3D de sala
